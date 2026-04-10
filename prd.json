@@ -65,8 +65,8 @@
         "Commit all changes with message: feat: US-004 - Microphone permission + WASAPI capture"
       ],
       "priority": 4,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented on 2026-04-10. NAudio.Wasapi 2.2.1 added to Clicky.Audio. MicrophoneCapture wraps WasapiCapture on the default device, downmixes + linearly resamples to 16 kHz mono PCM16 LE, and yields 50 ms frames (1600 bytes) via IAsyncEnumerable<ReadOnlyMemory<byte>>. MicrophonePermissions.ProbeAsync does a one-shot WasapiCapture start/stop as the Win10/11 privacy gate check. App.OnStartup probes in the background and updates CompanionViewModel.HasMicrophonePermission. 5 PcmResampler unit tests (incl. the required 48 kHz → 16 kHz sample-count check). dotnet build + dotnet test: 0 warnings, 6/6 passing."
     },
     {
       "id": "US-005",

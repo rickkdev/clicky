@@ -34,6 +34,15 @@ Reset: Fri Apr 10 21:20 CEST 2026 (full Windows-port restart)
 - `TrayIconManager.BuildContextMenu`: "Open" menu item now raises the same `TrayIconClicked` event so left-click and right-click → Open behave identically.
 - **Build:** .NET 8.0.419 SDK is available on this Windows host. `dotnet build windows/Clicky.sln` succeeds with 0 warnings / 0 errors.
 
+### US-004 — Microphone permission + WASAPI capture (2026-04-10)
+- Added `NAudio.Wasapi` 2.2.1 package reference to `Clicky.Audio.csproj` (pulls in `NAudio.Core` transitively).
+- `Clicky.Audio.PcmResampler` — pure-managed helpers: `ResampleLinearMono` (linear interpolation with integer output length = `input.Length * outputRate / inputRate`), `DownmixToMono` (average across N interleaved channels), `FloatToPcm16LE` (clip to ±1 then encode signed 16-bit little-endian). Linear resampling is quality-sufficient for speech and lets the test suite run without a MediaFoundation dependency.
+- `Clicky.Audio.MicrophoneCapture` — wraps `NAudio.CoreAudioApi.WasapiCapture` on the default capture device. Asserts the device format is `WaveFormatEncoding.IeeeFloat` (WASAPI shared mode default on modern Windows), then for each `DataAvailable` event: downmix → resample to 16 kHz → PCM16 LE → buffer and flush as 50 ms (1600-byte / 800-sample) frames into an unbounded `Channel<byte[]>`. `CaptureFramesAsync` is an `async IAsyncEnumerable<ReadOnlyMemory<byte>>` that yields until the caller cancels; cleanly stops and disposes the capture device in `finally`. Constants `TargetSampleRate=16_000`, `FrameDurationMilliseconds=50`, `SamplesPerFrame=800`, `BytesPerFrame=1600`.
+- `Clicky.Audio.MicrophonePermissions.ProbeAsync()` — one-shot `WasapiCapture` start/stop on a thread pool thread, returns `false` on any exception. Mirrors Mac's `AVCaptureDevice.requestAccess` probe. The Windows 10/11 mic privacy gate causes `StartRecording` to throw when blocked, so catching broadly is the correct check. Avoids `Windows.Security.Authorization.AppCapabilityAccess` because it requires a packaged identity that Clicky does not have during the dev loop.
+- `Clicky.App/App.xaml.cs` — `OnStartup` now fires `ProbeMicrophonePermissionAsync()` in the background and marshals the result back onto the UI dispatcher to set `CompanionViewModel.HasMicrophonePermission`, so the panel row from US-003 reflects real state.
+- `Clicky.Tests/PcmResamplerTests.cs` — five xUnit facts cover: 48 kHz → 16 kHz sample count (4800 → 1600, the acceptance criterion), same-rate copy fast path, stereo downmix averaging, PCM16 LE encoding of ±1.0 and 0.0, and clipping of out-of-range samples.
+- **Build + test:** `dotnet build windows/Clicky.sln` → 0 warnings / 0 errors. `dotnet test` → 6 passed / 0 failed.
+
 ### US-002 — Tray-only host with no main window (2026-04-10)
 - Added `Hardcodet.NotifyIcon.Wpf` (v1.1.0) and `System.Drawing.Common` (v8.0.0) NuGet packages to Clicky.App
 - Created hidden `MainWindow.xaml` with `ShowInTaskbar=False`, `WindowStyle=None`, `Visibility=Hidden`

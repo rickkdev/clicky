@@ -1,4 +1,5 @@
 using System.Windows;
+using Clicky.Audio;
 using Clicky.Companion;
 
 namespace Clicky.App;
@@ -28,6 +29,23 @@ public partial class App : Application
 
         // Register for auto-start on first launch (mirrors SMAppService.mainApp.register).
         AutoStartRegistration.EnsureRegistered();
+
+        // Probe the Windows 10/11 microphone privacy gate in the background
+        // so the panel reflects current permission state. Mirrors Mac's
+        // AVCaptureDevice.authorizationStatus check in BuddyDictationManager.
+        _ = ProbeMicrophonePermissionAsync();
+    }
+
+    private async System.Threading.Tasks.Task ProbeMicrophonePermissionAsync()
+    {
+        var granted = await MicrophonePermissions.ProbeAsync().ConfigureAwait(false);
+        await Dispatcher.InvokeAsync(() =>
+        {
+            if (_companionViewModel is not null)
+            {
+                _companionViewModel.HasMicrophonePermission = granted;
+            }
+        });
     }
 
     private void OnTrayIconClicked(object? sender, System.EventArgs e)
