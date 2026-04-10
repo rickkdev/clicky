@@ -99,8 +99,8 @@
         "Commit all changes with message: feat: US-006 - Multi-monitor screen capture via Windows.Graphics.Capture"
       ],
       "priority": 6,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented on 2026-04-10. ScreenCapture.CaptureAllScreensAsJpegAsync uses WGC (GraphicsCaptureItem.CreateFromMonitor via IGraphicsCaptureItemInterop COM) with GDI+ BitBlt fallback. Monitors enumerated via EnumDisplayMonitors P/Invoke. Cursor screen sorted first with Mac-matching labels. Images resized to 1280px max edge, JPEG quality 80. WGC path sets IsBorderRequired=false and IsCursorCaptureEnabled=false via reflection (Win11+ APIs). All projects upgraded to net8.0-windows10.0.19041.0 TFM for WinRT access. ScreenCapturePermissions.ProbeAsync checks GraphicsCaptureSession.IsSupported. DumpToTempAsync writes to %TEMP%/clicky-capture/. 7 new tests (labels + live capture + JPEG magic bytes). Build: 0 warnings. Tests: 20/20 passing."
     },
     {
       "id": "US-007",

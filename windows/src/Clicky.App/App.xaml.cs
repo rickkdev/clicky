@@ -2,6 +2,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using Clicky.Audio;
+using Clicky.Capture;
 using Clicky.Companion;
 using Clicky.Hotkey;
 
@@ -39,6 +40,11 @@ public partial class App : Application
         // so the panel reflects current permission state. Mirrors Mac's
         // AVCaptureDevice.authorizationStatus check in BuddyDictationManager.
         _ = ProbeMicrophonePermissionAsync();
+
+        // Probe screen capture availability. On Windows desktop apps this
+        // is almost always true (no explicit user consent needed unlike macOS),
+        // but WGC may be unavailable on very old builds or VMs.
+        _ = ProbeScreenCapturePermissionAsync();
 
         // Install the global push-to-talk hook on the dispatcher thread.
         // Mirrors GlobalPushToTalkShortcutMonitor.start() on Mac.
@@ -78,6 +84,18 @@ public partial class App : Application
             if (_companionViewModel is not null)
             {
                 _companionViewModel.HasMicrophonePermission = granted;
+            }
+        });
+    }
+
+    private async Task ProbeScreenCapturePermissionAsync()
+    {
+        var granted = await ScreenCapturePermissions.ProbeAsync().ConfigureAwait(false);
+        await Dispatcher.InvokeAsync(() =>
+        {
+            if (_companionViewModel is not null)
+            {
+                _companionViewModel.HasScreenCapturePermission = granted;
             }
         });
     }

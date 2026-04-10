@@ -14,6 +14,9 @@ Reset: Fri Apr 10 21:20 CEST 2026 (full Windows-port restart)
 - Image media_type: when sending screenshots to Claude, sniff PNG vs JPEG by magic bytes. Anthropic rejects mismatched declared types.
 - Worker URL is configurable: read it from `appsettings.json` rather than hardcoding, so users can point at their own deployment without recompiling.
 - Branch: all Windows-port work happens on `ralph/windows-port`, branched from main.
+- TFM: all projects target `net8.0-windows10.0.19041.0` (not plain `net8.0-windows`). Changing one project's TFM cascades to ALL projects that reference it — update them all together.
+- `LibraryImport` source generators don't handle delegate params with `ref` — use `DllImport` for callbacks like `MonitorEnumProc`.
+- WGC Win11+ APIs (IsBorderRequired, IsCursorCaptureEnabled) must be called via reflection when targeting SDK 10.0.19041.
 
 ## Completed Stories
 
@@ -52,3 +55,21 @@ Reset: Fri Apr 10 21:20 CEST 2026 (full Windows-port restart)
 - `Clicky.App/App.xaml.cs` — `OnStartup` constructs `GlobalPushToTalkHook` with `CompanionViewModel.PushToTalkShortcut`, starts it on the WPF dispatcher thread (which already pumps messages), and spins up `ConsumeHotkeyTransitionsAsync` to marshal transitions back to the UI thread and flip `CompanionViewModel.IsShortcutPressed`. `OnExit` cancels the consumer, disposes the hook, and disposes the CTS — no leaked Win32 handles.
 - `Clicky.Tests/PushToTalkShortcutEngineTests.cs` — seven xUnit facts covering: Ctrl+Alt pressed edge, released edge, auto-repeat idempotence, unrelated-key no-op, left/right modifier equivalence, alternate `AltShift` configuration, and `Reset()` clearing state.
 - **Build + test:** `dotnet build windows/Clicky.sln` → 0 warnings / 0 errors. `dotnet test` → 13 passed / 0 failed.
+
+### US-006 — Multi-monitor screen capture via Windows.Graphics.Capture (2026-04-10)
+- Upgraded all 9 projects from `net8.0-windows` to `net8.0-windows10.0.19041.0` TFM for WinRT API access (Windows.Graphics.Capture, Windows.Graphics.Imaging).
+- Added `System.Drawing.Common 8.0.0` to `Clicky.Capture` for JPEG encoding and GDI+ fallback capture.
+- `Clicky.Capture.CapturedScreen` — data class with `ImageBytes`, `Label`, `IsCursorScreen`, `DisplayBounds`, `ScreenshotPixelWidth`, `ScreenshotPixelHeight`. Mirrors Mac's `CompanionScreenCapture` struct.
+- `Clicky.Capture.NativeMethods` — P/Invoke for `EnumDisplayMonitors`, `GetMonitorInfoW`, `GetCursorPos`, `D3D11CreateDevice`, `CreateDirect3D11DeviceFromDXGIDevice`, `RoGetActivationFactory`. COM interface definitions for `IGraphicsCaptureItemInterop` (GUID `3628E81B-...`) and `IMemoryBufferByteAccess` (GUID `5B0D3235-...`).
+- `Clicky.Capture.ScreenCapture` — main capture class exposing `CaptureAllScreensAsJpegAsync()` and `DumpToTempAsync()`. **WGC path**: creates D3D11 device → IDXGIDevice → WinRT IDirect3DDevice; creates `GraphicsCaptureItem` from each HMONITOR via `IGraphicsCaptureItemInterop.CreateForMonitor`; captures single frame via `Direct3D11CaptureFramePool.CreateFreeThreaded` + `GraphicsCaptureSession`; converts surface to `SoftwareBitmap` then JPEG via WinRT `BitmapEncoder` with resize transform. **GDI+ fallback**: `Graphics.CopyFromScreen` per monitor when WGC is unavailable. Both paths share: `EnumDisplayMonitors` enumeration, cursor-screen-first sorting, 1280px max edge resize, quality-80 JPEG encoding, and Mac-matching label format.
+- `Clicky.Capture.ScreenCapturePermissions.ProbeAsync()` — checks `GraphicsCaptureSession.IsSupported()` on a thread pool thread. Returns true for unpackaged desktop apps (Windows doesn't require explicit consent for screen capture unlike macOS).
+- `Clicky.App/App.xaml.cs` — `OnStartup` now probes screen capture permission in background and sets `CompanionViewModel.HasScreenCapturePermission`.
+- `Clicky.Tests/ScreenCaptureTests.cs` — 7 xUnit facts: 3 label-format tests (single screen, multi cursor, multi secondary), monitor enumeration, live capture returns ≥1 screen, cursor screen is first, JPEG magic bytes.
+- **Build + test:** `dotnet build windows/Clicky.sln` → 0 warnings / 0 errors. `dotnet test` → 20 passed / 0 failed.
+- **Learnings for future iterations:**
+  - Changing one project's TFM to `net8.0-windows10.0.19041.0` requires ALL referencing projects to use the same TFM — `net8.0-windows` cannot reference `net8.0-windows10.0.19041.0` (NU1201 error). Upgrading all projects at once is the pragmatic fix.
+  - `LibraryImport` source generators don't support delegate parameters with `ref` — use `DllImport` instead for callbacks like `MonitorEnumProc`.
+  - Lambdas with `ref` parameters can't be passed as delegate arguments in some C# contexts — use a named static method + thread-static field pattern instead.
+  - `GraphicsCaptureSession.IsBorderRequired` and `.IsCursorCaptureEnabled` are Win11+ (SDK 10.0.20348+). Use reflection to call them when targeting 10.0.19041 to avoid compile errors.
+  - `Direct3D11CaptureFramePool.CreateCaptureSession(item)` requires the `GraphicsCaptureItem` as a parameter — it's on the frame pool, not the item.
+---
