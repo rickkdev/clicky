@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using Clicky.Hotkey;
 
 namespace Clicky.Companion;
 

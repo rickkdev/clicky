@@ -43,13 +43,12 @@ Reset: Fri Apr 10 21:20 CEST 2026 (full Windows-port restart)
 - `Clicky.Tests/PcmResamplerTests.cs` — five xUnit facts cover: 48 kHz → 16 kHz sample count (4800 → 1600, the acceptance criterion), same-rate copy fast path, stereo downmix averaging, PCM16 LE encoding of ±1.0 and 0.0, and clipping of out-of-range samples.
 - **Build + test:** `dotnet build windows/Clicky.sln` → 0 warnings / 0 errors. `dotnet test` → 6 passed / 0 failed.
 
-### US-002 — Tray-only host with no main window (2026-04-10)
-- Added `Hardcodet.NotifyIcon.Wpf` (v1.1.0) and `System.Drawing.Common` (v8.0.0) NuGet packages to Clicky.App
-- Created hidden `MainWindow.xaml` with `ShowInTaskbar=False`, `WindowStyle=None`, `Visibility=Hidden`
-- Created `TrayIconManager.cs`: uses `TaskbarIcon` with a procedurally-drawn blue triangle icon, tooltip "Clicky", right-click context menu (Open / Quit), and `TrayIconClicked` event on left-click
-- Created `AutoStartRegistration.cs`: registers app in `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` on first launch (mirrors SMAppService.mainApp.register)
-- Wired everything in `App.xaml.cs` `OnStartup` — creates hidden MainWindow, initializes tray icon, registers auto-start; `OnExit` disposes tray icon
-- `App.xaml` has `ShutdownMode=OnExplicitShutdown` and no `StartupUri` (window created programmatically)
-- **Note:** Build verification requires .NET 8 SDK (not available in this WSL2 environment)
-
----
+### US-005 — Low-level keyboard hook for push-to-talk (2026-04-10)
+- Moved `PushToTalkShortcut` enum + `DisplayName()` extension from `Clicky.Companion` into `Clicky.Hotkey` so the hook project can own the chord model. `Clicky.Companion` already depends on `Clicky.Hotkey`, so `CompanionViewModel` just adds `using Clicky.Hotkey;`. XAML binding to `PushToTalkShortcutDisplay` (a string) did not need changes.
+- `Clicky.Hotkey.ShortcutTransition` — enum `None | Pressed | Released`, mirrors `BuddyPushToTalkShortcut.ShortcutTransition` from BuddyDictationManager.swift.
+- `Clicky.Hotkey.PushToTalkShortcutEngine` — pure testable state machine. Tracks Ctrl/Alt/Shift/Win (left + right VK codes treated as equivalent), handles the modifier-only branch of Mac's `shortcutTransition` (superset semantics: chord stays pressed as long as all required modifiers are held, other keys/modifiers don't matter). Emits `Pressed`/`Released` exactly on the rising/falling edge, and is idempotent against auto-repeat (pressing an already-held modifier yields `None`). Exposes `Reset()` so the hook can clear stale state on Start()/Stop().
+- `Clicky.Hotkey.NativeMethods` — internal P/Invoke surface: `SetWindowsHookEx`, `UnhookWindowsHookEx`, `CallNextHookEx`, `KBDLLHOOKSTRUCT`, `LowLevelKeyboardProc`, `GetModuleHandle`, and the `WH_KEYBOARD_LL` + `WM_KEYDOWN/UP/SYSKEYDOWN/SYSKEYUP` constants.
+- `Clicky.Hotkey.GlobalPushToTalkHook` — installs `WH_KEYBOARD_LL` via `SetWindowsHookEx`. Keeps the `LowLevelKeyboardProc` delegate as an instance field so the GC can't collect it while Windows still calls into it (a classic P/Invoke gotcha that would otherwise crash on the first keystroke). Publishes `ShortcutTransition`s to an unbounded `Channel<ShortcutTransition>` (single-writer, single-reader). The callback is **always listen-only**: it calls `CallNextHookEx` with the original event whether or not it matched the chord, mirroring the `.listenOnly` flag on Mac's CGEvent tap — no keys are ever swallowed. `Start()` is idempotent (second call is a no-op, like the `guard globalEventTap == nil` check in `GlobalPushToTalkShortcutMonitor.start()`); `Stop()` unhooks and drops the delegate; `Dispose()` stops and completes the channel writer.
+- `Clicky.App/App.xaml.cs` — `OnStartup` constructs `GlobalPushToTalkHook` with `CompanionViewModel.PushToTalkShortcut`, starts it on the WPF dispatcher thread (which already pumps messages), and spins up `ConsumeHotkeyTransitionsAsync` to marshal transitions back to the UI thread and flip `CompanionViewModel.IsShortcutPressed`. `OnExit` cancels the consumer, disposes the hook, and disposes the CTS — no leaked Win32 handles.
+- `Clicky.Tests/PushToTalkShortcutEngineTests.cs` — seven xUnit facts covering: Ctrl+Alt pressed edge, released edge, auto-repeat idempotence, unrelated-key no-op, left/right modifier equivalence, alternate `AltShift` configuration, and `Reset()` clearing state.
+- **Build + test:** `dotnet build windows/Clicky.sln` → 0 warnings / 0 errors. `dotnet test` → 13 passed / 0 failed.

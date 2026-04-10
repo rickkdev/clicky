@@ -1,4 +1,4 @@
-namespace Clicky.Companion;
+namespace Clicky.Hotkey;
 
 /// <summary>
 /// Configurable push-to-talk chord. Mirrors BuddyPushToTalkShortcut.ShortcutOption

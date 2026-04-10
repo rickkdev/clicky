@@ -82,8 +82,8 @@
         "Commit all changes with message: feat: US-005 - Low-level keyboard hook for push-to-talk"
       ],
       "priority": 5,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented on 2026-04-10. PushToTalkShortcut enum moved from Clicky.Companion to Clicky.Hotkey. GlobalPushToTalkHook installs WH_KEYBOARD_LL via SetWindowsHookEx on the WPF dispatcher thread, publishes ShortcutTransition (None/Pressed/Released) through a Channel<ShortcutTransition>, and is strictly listen-only (always calls CallNextHookEx). PushToTalkShortcutEngine is a pure state machine unit-tested with 7 facts covering Ctrl+Alt press/release, auto-repeat idempotence, unrelated-key no-op, L/R modifier equivalence, AltShift configuration, and Reset. App.OnStartup wires transitions to CompanionViewModel.IsShortcutPressed; OnExit disposes cleanly. Build: 0 warnings / 0 errors. Tests: 13/13 passing."
     },
     {
       "id": "US-006",

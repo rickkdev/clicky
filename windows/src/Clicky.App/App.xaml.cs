@@ -1,6 +1,9 @@
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using Clicky.Audio;
 using Clicky.Companion;
+using Clicky.Hotkey;
 
 namespace Clicky.App;
 
@@ -9,6 +12,8 @@ public partial class App : Application
     private TrayIconManager? _trayIconManager;
     private CompanionPanelWindow? _companionPanel;
     private CompanionViewModel? _companionViewModel;
+    private GlobalPushToTalkHook? _pushToTalkHook;
+    private CancellationTokenSource? _hookConsumerCts;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -34,6 +39,35 @@ public partial class App : Application
         // so the panel reflects current permission state. Mirrors Mac's
         // AVCaptureDevice.authorizationStatus check in BuddyDictationManager.
         _ = ProbeMicrophonePermissionAsync();
+
+        // Install the global push-to-talk hook on the dispatcher thread.
+        // Mirrors GlobalPushToTalkShortcutMonitor.start() on Mac.
+        _pushToTalkHook = new GlobalPushToTalkHook(_companionViewModel.PushToTalkShortcut);
+        _pushToTalkHook.Start();
+        _hookConsumerCts = new CancellationTokenSource();
+        _ = ConsumeHotkeyTransitionsAsync(_pushToTalkHook, _hookConsumerCts.Token);
+    }
+
+    private async Task ConsumeHotkeyTransitionsAsync(GlobalPushToTalkHook hook, CancellationToken ct)
+    {
+        try
+        {
+            await foreach (var transition in hook.Transitions.ReadAllAsync(ct).ConfigureAwait(false))
+            {
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    if (_companionViewModel is not null)
+                    {
+                        _companionViewModel.IsShortcutPressed =
+                            transition == ShortcutTransition.Pressed;
+                    }
+                });
+            }
+        }
+        catch (System.OperationCanceledException)
+        {
+            // Expected on shutdown.
+        }
     }
 
     private async System.Threading.Tasks.Task ProbeMicrophonePermissionAsync()
@@ -55,6 +89,12 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _hookConsumerCts?.Cancel();
+        _pushToTalkHook?.Dispose();
+        _pushToTalkHook = null;
+        _hookConsumerCts?.Dispose();
+        _hookConsumerCts = null;
+
         if (_trayIconManager is not null)
         {
             _trayIconManager.TrayIconClicked -= OnTrayIconClicked;
