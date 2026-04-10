@@ -25,6 +25,15 @@ Reset: Fri Apr 10 21:20 CEST 2026 (full Windows-port restart)
 - `Clicky.Tests` uses xUnit with a placeholder test asserting true
 - **Note:** Build verification requires .NET 8 SDK (not available in this WSL2 environment)
 
+### US-003 — Settings/control panel WPF window (2026-04-10)
+- Added `CompanionViewModel` (INotifyPropertyChanged) in `Clicky.Companion` exposing `VoiceState`, `HasMicrophonePermission`, `HasScreenCapturePermission`, `PushToTalkShortcut`, `IsShortcutPressed`, plus display-string helpers and `AppVersion`. Mirrors the Mac `@Published` surface in `CompanionManager.swift` so later stories (US-005/US-010) can drive it directly.
+- Added `VoiceState` enum (Idle/Listening/Processing/Responding) and `PushToTalkShortcut` enum (ControlAlt default, mirrors `BuddyPushToTalkShortcut.ShortcutOption`) with `DisplayName()` extension.
+- Created `CompanionPanelWindow.xaml` — borderless popup (`WindowStyle=None`, `AllowsTransparency=true`, `ShowInTaskbar=false`, `Topmost=true`, `SizeToContent=Height`) with dark rounded panel, Loom-style layout: header (status dot + voice state), version, push-to-talk chord row, permissions section (Microphone + Screen Capture), footer with Quit button.
+- Code-behind anchors the panel near the tray using `SystemParameters.WorkArea` bottom-right, sets `WS_EX_TOOLWINDOW` in `OnSourceInitialized` (so it never shows in Alt+Tab), and auto-hides on `Deactivated` — same behavior as the Mac panel losing menu-bar focus.
+- `App.xaml.cs`: constructs `CompanionViewModel` + `CompanionPanelWindow` on startup, wires `TrayIconManager.TrayIconClicked` to `panel.Toggle()`, closes the panel on `OnExit`.
+- `TrayIconManager.BuildContextMenu`: "Open" menu item now raises the same `TrayIconClicked` event so left-click and right-click → Open behave identically.
+- **Build:** .NET 8.0.419 SDK is available on this Windows host. `dotnet build windows/Clicky.sln` succeeds with 0 warnings / 0 errors.
+
 ### US-002 — Tray-only host with no main window (2026-04-10)
 - Added `Hardcodet.NotifyIcon.Wpf` (v1.1.0) and `System.Drawing.Common` (v8.0.0) NuGet packages to Clicky.App
 - Created hidden `MainWindow.xaml` with `ShowInTaskbar=False`, `WindowStyle=None`, `Visibility=Hidden`

@@ -49,8 +49,8 @@
         "Commit all changes with message: feat: US-003 - Settings/control panel WPF window"
       ],
       "priority": 3,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented on 2026-04-10. CompanionViewModel in Clicky.Companion exposes VoiceState + permission bools + push-to-talk chord. CompanionPanelWindow.xaml is a borderless popup anchored near the tray, auto-hides on Deactivated, and binds via DataContext. dotnet build succeeds with 0 warnings."
     },
     {
       "id": "US-004",

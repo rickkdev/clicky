@@ -39,15 +39,12 @@ public sealed class TrayIconManager : IDisposable
         TrayIconClicked?.Invoke(this, EventArgs.Empty);
     }
 
-    private static ContextMenu BuildContextMenu()
+    private ContextMenu BuildContextMenu()
     {
         var menu = new ContextMenu();
 
         var openItem = new MenuItem { Header = "Open" };
-        openItem.Click += (_, _) =>
-        {
-            // Placeholder: will be wired to show the companion panel in US-003.
-        };
+        openItem.Click += (_, _) => TrayIconClicked?.Invoke(this, EventArgs.Empty);
 
         var quitItem = new MenuItem { Header = "Quit" };
         quitItem.Click += (_, _) => Application.Current.Shutdown();
