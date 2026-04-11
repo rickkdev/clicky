@@ -24,7 +24,7 @@ public static class ClickyAnalytics
     /// Returns true if the user has opted out of analytics via the
     /// HKCU\Software\Clicky\analyticsOptOut registry flag.
     /// </summary>
-    internal static bool IsOptedOut()
+    public static bool IsOptedOut()
     {
         try
         {

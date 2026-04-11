@@ -23,6 +23,8 @@ public partial class App : Application
     private OverlayWindowManager? _overlayManager;
     private DispatcherTimer? _permissionPollTimer;
     private AutoUpdateService? _autoUpdateService;
+    private SettingsStore? _settingsStore;
+    private SecretsStore? _secretsStore;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -32,11 +34,18 @@ public partial class App : Application
         var mainWindow = new MainWindow();
         MainWindow = mainWindow;
 
+        // Initialize settings and secrets stores under %APPDATA%\Clicky.
+        _settingsStore = new SettingsStore();
+        _secretsStore = new SecretsStore();
+
+        // Migrate US-014 registry values to SettingsStore on first run.
+        MigrateRegistrySettings(_settingsStore);
+
         // ViewModel that the panel binds to.
         _companionViewModel = new CompanionViewModel();
 
-        // Load onboarding state from registry.
-        _companionViewModel.HasCompletedOnboarding = OnboardingService.HasCompletedOnboarding();
+        // Load onboarding state from SettingsStore (migrated from registry above).
+        _companionViewModel.HasCompletedOnboarding = _settingsStore.OnboardingComplete;
 
         _companionPanel = new CompanionPanelWindow(_companionViewModel);
 
@@ -92,12 +101,11 @@ public partial class App : Application
         // until US-021 migrates them to direct API calls).
         var workerBaseUrl = ReadWorkerBaseUrl();
 
-        // Construct the direct-to-Anthropic LLM client with the user's own key.
-        // Temporary: reads from env var. US-019 will replace this with
-        // SecretsStore/SettingsStore plumbing.
+        // Construct the LLM client from SecretsStore key + SettingsStore model.
+        var anthropicKey = _secretsStore.Read(SecretsStore.AnthropicApiKey) ?? "";
         var llmClient = new AnthropicDirectClient(
-            apiKey: Environment.GetEnvironmentVariable("CLICKY_ANTHROPIC_API_KEY") ?? "sk-placeholder",
-            model: "claude-sonnet-4-6");
+            apiKey: anthropicKey,
+            model: _settingsStore.LlmModel);
 
         var transcriber = new AssemblyAiStreamingTranscriber(workerBaseUrl);
         var ttsClient = new ElevenLabsTtsClient(workerBaseUrl);
@@ -207,10 +215,38 @@ public partial class App : Application
             if (_companionViewModel.AllPermissionsGranted &&
                 !_companionViewModel.HasCompletedOnboarding)
             {
-                OnboardingService.MarkOnboardingComplete();
+                if (_settingsStore is not null)
+                    _settingsStore.OnboardingComplete = true;
                 _companionViewModel.HasCompletedOnboarding = true;
             }
         });
+    }
+
+    /// <summary>
+    /// Migrates onboarded and analyticsOptOut values from HKCU\Software\Clicky
+    /// registry keys (US-014/US-016) to SettingsStore on first run of US-019 code.
+    /// Only copies if the SettingsStore file doesn't already contain the value.
+    /// </summary>
+    private static void MigrateRegistrySettings(SettingsStore settings)
+    {
+        try
+        {
+            // Migrate onboarding state from registry if not yet set in SettingsStore.
+            if (!settings.OnboardingComplete && OnboardingService.HasCompletedOnboarding())
+            {
+                settings.OnboardingComplete = true;
+            }
+
+            // Migrate analytics opt-out from registry if not yet set in SettingsStore.
+            if (!settings.AnalyticsOptOut && ClickyAnalytics.IsOptedOut())
+            {
+                settings.AnalyticsOptOut = true;
+            }
+        }
+        catch
+        {
+            // Migration is best-effort — don't block startup.
+        }
     }
 
     protected override void OnExit(ExitEventArgs e)

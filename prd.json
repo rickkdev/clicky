@@ -39,7 +39,7 @@
         "Commit all changes with message: feat: US-019 - SecretsStore (DPAPI) + SettingsStore under APPDATA"
       ],
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "DPAPI is per-user-account, not per-machine — backups restored to a different Windows user will fail to decrypt, which is correct security behavior. Document this in the SettingsWindow help text (lands in US-022). Do NOT add a passphrase fallback; the whole point of DPAPI is that it's invisible to the user."
     },
     {

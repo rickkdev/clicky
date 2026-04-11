@@ -82,3 +82,28 @@ Branch: ralph/windows-port (continues from the completed Windows port — see ar
   - The old `ClaudeClient` had two constructors (public for prod, internal for test). The new pattern uses a single public constructor with `ILlmClient` injection — simpler and avoids the dual-constructor smell.
   - `App.xaml.cs` still reads `workerBaseUrl` from `appsettings.json` for audio clients (`AssemblyAiStreamingTranscriber`, `ElevenLabsTtsClient`). US-021 will migrate those to direct API calls too.
 ---
+
+## 2026-04-11 - US-019
+- Created `Clicky.Companion.SecretsStore` — DPAPI-encrypted key-value store at `%APPDATA%\Clicky\secrets.bin`. Whole-file encryption with `DataProtectionScope.CurrentUser`. Methods: `Write`, `Read`, `Delete`, `Exists`. Standardized key constants for all four services.
+- Created `Clicky.Companion.SettingsStore` — JSON settings at `%APPDATA%\Clicky\settings.json`. Properties: `LlmProvider`, `LlmModel`, `ElevenLabsVoiceId`, `OnboardingComplete`, `AnalyticsOptOut` with sensible defaults.
+- Updated `App.xaml.cs` startup to instantiate both stores, read API key + model from them, and pass into `AnthropicDirectClient` (replacing the env var placeholder from US-018).
+- Added registry migration: on first run, copies `HKCU\Software\Clicky\onboarded` → `SettingsStore.OnboardingComplete` and `analyticsOptOut` → `SettingsStore.AnalyticsOptOut`.
+- Changed `OnPermissionPollTick` to write `SettingsStore.OnboardingComplete = true` instead of `OnboardingService.MarkOnboardingComplete()`.
+- Made `ClickyAnalytics.IsOptedOut()` public (was internal) so migration code in `App.xaml.cs` can access it.
+- Added `System.Security.Cryptography.ProtectedData` v8.0.0 package reference to `Clicky.Companion.csproj`.
+- Build: 0 warnings. Tests: 136 passed, 0 failed (23 new tests).
+- Files changed:
+  - NEW: `windows/src/Clicky.Companion/SecretsStore.cs`
+  - NEW: `windows/src/Clicky.Companion/SettingsStore.cs`
+  - MODIFIED: `windows/src/Clicky.Companion/Clicky.Companion.csproj` (added ProtectedData package)
+  - MODIFIED: `windows/src/Clicky.Companion/ClickyAnalytics.cs` (IsOptedOut → public)
+  - MODIFIED: `windows/src/Clicky.App/App.xaml.cs` (SecretsStore/SettingsStore init, migration, replaced env var key source)
+  - NEW: `windows/tests/Clicky.Tests/SecretsStoreTests.cs` (12 tests)
+  - NEW: `windows/tests/Clicky.Tests/SettingsStoreTests.cs` (11 tests)
+- **Learnings for future iterations:**
+  - `SecretsStore` and `SettingsStore` both have `internal` constructors that accept a file path for testing — use temp dirs in tests to avoid touching real `%APPDATA%`.
+  - DPAPI `CryptographicException` is caught and returns null/empty dict — callers treat missing secrets as "open SettingsWindow" (US-023 will implement this).
+  - `ClickyAnalytics.IsOptedOut()` is now public — future stories (US-022, US-025) can use it for opt-out checks without registry access.
+  - `OnboardingService` is still in the codebase for backward-compat registry reads during migration — it can be removed once all users have migrated (or in US-025 polish).
+  - The `workerBaseUrl` read from `appsettings.json` still exists in `App.xaml.cs` for audio clients — US-021 will replace it.
+---
