@@ -202,8 +202,8 @@
         "Commit all changes with message: feat: US-012 - Animated blue cursor that flies to a target point"
       ],
       "priority": 12,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented on 2026-04-11. BlueCursorControl renders a 16×16 DIP equilateral triangle (#3380FF) with DropShadowEffect glow on a Canvas overlay. FlyTo(screenPoint, overlayBounds, bubbleText) animates from current OS cursor (GetCursorPos) to target along a quadratic Bézier arc with smoothstep easing, distance-based duration (0.6–1.4s), scale pulsing (1.0→1.3→1.0), dynamic glow, and rotation toward travel direction. Speech bubble pops in with ElasticEase spring animation and glow burst on arrival. Cursor lingers 3s then fades out over 0.5s with QuadraticEase. OverlayWindow hosts BlueCursorControl as child Canvas. OverlayWindowManager.FlyTo dispatches to correct monitor overlay by matching displayBounds or point containment. Random pointer phrases match Mac reference. 18 new tests (smoothstep, flight duration, arc height, Bézier evaluation/tangent, accent color, triangle size, visibility). Build: 0 warnings. Tests: 79/79 passing."
     },
     {
       "id": "US-013",

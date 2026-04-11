@@ -52,10 +52,43 @@ public sealed class OverlayWindowManager : IDisposable
     }
 
     /// <summary>
-    /// Returns the active overlay windows (exposed for future stories
-    /// like US-012 that need to render on specific overlays).
+    /// Returns the active overlay windows.
     /// </summary>
     public IReadOnlyList<OverlayWindow> Overlays => _overlays.AsReadOnly();
+
+    /// <summary>
+    /// Flies the blue cursor to <paramref name="screenPoint"/> on the overlay whose
+    /// monitor contains the point, showing <paramref name="bubbleText"/> on arrival.
+    /// If <paramref name="displayBounds"/> is provided, it is used to select the overlay;
+    /// otherwise the overlay whose bounds contain the point is chosen.
+    /// Must be called on the WPF dispatcher thread.
+    /// </summary>
+    public void FlyTo(System.Windows.Point screenPoint, System.Drawing.Rectangle? displayBounds = null, string? bubbleText = null)
+    {
+        // Hide any active cursor on other overlays
+        foreach (var overlay in _overlays)
+        {
+            overlay.BlueCursor.Hide();
+        }
+
+        // Find the right overlay
+        OverlayWindow? target = null;
+        if (displayBounds.HasValue)
+        {
+            target = _overlays.FirstOrDefault(o => o.MonitorBounds == displayBounds.Value);
+        }
+
+        target ??= _overlays.FirstOrDefault(o =>
+            screenPoint.X >= o.MonitorBounds.X &&
+            screenPoint.X < o.MonitorBounds.X + o.MonitorBounds.Width &&
+            screenPoint.Y >= o.MonitorBounds.Y &&
+            screenPoint.Y < o.MonitorBounds.Y + o.MonitorBounds.Height);
+
+        // Fallback to first overlay if point is outside all monitors
+        target ??= _overlays.FirstOrDefault();
+
+        target?.BlueCursor.FlyTo(screenPoint, target.MonitorBounds, bubbleText);
+    }
 
     /// <summary>
     /// Creates overlay windows for all connected monitors and subscribes

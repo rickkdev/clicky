@@ -1,0 +1,449 @@
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Media.Animation;
+using System.Windows.Media.Effects;
+using System.Windows.Shapes;
+using System.Windows.Threading;
+
+namespace Clicky.Overlay;
+
+/// <summary>
+/// A blue glowing triangle cursor with speech bubble that can fly to a target point.
+/// Mirrors <c>BlueCursorView</c> from the Mac reference (OverlayWindow.swift).
+///
+/// The triangle is 16×16 DIPs, colored #3380FF with a glow (DropShadowEffect).
+/// FlyTo animates along a quadratic Bézier arc with smoothstep easing,
+/// scale pulsing, and rotation toward the direction of travel.
+/// After arrival, a speech bubble pops in and the cursor lingers ~3 s before fading out.
+/// </summary>
+public sealed class BlueCursorControl : IDisposable
+{
+    // ── Constants matching Mac reference ──────────────────────────────
+
+    /// <summary>Triangle size in DIPs (matches Mac 16×16 pt).</summary>
+    internal const double TriangleSize = 16.0;
+
+    /// <summary>Blue accent color #3380FF.</summary>
+    internal static readonly Color AccentColor = Color.FromRgb(0x33, 0x80, 0xFF);
+
+    /// <summary>Static glow blur radius.</summary>
+    private const double BaseGlowRadius = 8.0;
+
+    /// <summary>Offset from cursor position when following (right, down).</summary>
+    private const double FollowOffsetX = 35.0;
+    private const double FollowOffsetY = 25.0;
+
+    /// <summary>Rest rotation angle in degrees (cursor-like orientation).</summary>
+    private const double RestAngle = -35.0;
+
+    /// <summary>Duration the cursor lingers at the target before fading.</summary>
+    private const double LingerSeconds = 3.0;
+
+    /// <summary>Duration of the fade-out animation.</summary>
+    private const double FadeOutSeconds = 0.5;
+
+    /// <summary>Random pointer phrases, matching Mac reference.</summary>
+    private static readonly string[] PointerPhrases =
+    {
+        "right here!", "this one!", "over here!",
+        "click this!", "here it is!", "found it!"
+    };
+
+    private static readonly Random s_random = new();
+
+    // ── Visual elements ──────────────────────────────────────────────
+
+    private readonly Canvas _canvas;
+    private readonly Polygon _triangle;
+    private readonly DropShadowEffect _triangleGlow;
+    private readonly Border _bubbleBorder;
+    private readonly TextBlock _bubbleText;
+    private readonly DropShadowEffect _bubbleGlow;
+
+    // Transforms applied to the triangle
+    private readonly TranslateTransform _translateTransform;
+    private readonly RotateTransform _rotateTransform;
+    private readonly ScaleTransform _scaleTransform;
+    private readonly TransformGroup _transformGroup;
+
+    // Bubble transforms
+    private readonly TranslateTransform _bubbleTranslate;
+    private readonly ScaleTransform _bubbleScale;
+    private readonly TransformGroup _bubbleTransformGroup;
+
+    // ── Animation state ──────────────────────────────────────────────
+
+    private DispatcherTimer? _flightTimer;
+    private DispatcherTimer? _lingerTimer;
+    private DateTime _flightStartTime;
+    private double _flightDurationSeconds;
+
+    // Bézier control points (in overlay-local coordinates)
+    private Point _bezierP0; // start
+    private Point _bezierP1; // control (arc apex)
+    private Point _bezierP2; // end (target)
+
+    private bool _isVisible;
+    private bool _disposed;
+
+    public BlueCursorControl()
+    {
+        // Build the triangle shape (equilateral, pointing up)
+        var height = TriangleSize * Math.Sqrt(3.0) / 2.0;
+        var midX = TriangleSize / 2.0;
+        var midY = TriangleSize / 2.0;
+
+        _triangle = new Polygon
+        {
+            Points = new PointCollection
+            {
+                new Point(midX, midY - height / 1.5),           // top
+                new Point(midX - TriangleSize / 2.0, midY + height / 3.0), // bottom-left
+                new Point(midX + TriangleSize / 2.0, midY + height / 3.0), // bottom-right
+            },
+            Fill = new SolidColorBrush(AccentColor),
+            StrokeThickness = 0
+        };
+
+        _triangleGlow = new DropShadowEffect
+        {
+            Color = AccentColor,
+            BlurRadius = BaseGlowRadius,
+            ShadowDepth = 0,
+            Opacity = 1.0
+        };
+        _triangle.Effect = _triangleGlow;
+
+        // Transforms: translate → rotate → scale (all around triangle center)
+        _translateTransform = new TranslateTransform(0, 0);
+        _rotateTransform = new RotateTransform(RestAngle, midX, midY);
+        _scaleTransform = new ScaleTransform(1.0, 1.0, midX, midY);
+        _transformGroup = new TransformGroup();
+        _transformGroup.Children.Add(_scaleTransform);
+        _transformGroup.Children.Add(_rotateTransform);
+        _transformGroup.Children.Add(_translateTransform);
+        _triangle.RenderTransform = _transformGroup;
+
+        // Speech bubble
+        _bubbleText = new TextBlock
+        {
+            Foreground = Brushes.White,
+            FontSize = 11,
+            FontWeight = FontWeights.Medium,
+            Text = ""
+        };
+
+        _bubbleGlow = new DropShadowEffect
+        {
+            Color = AccentColor,
+            BlurRadius = 6,
+            ShadowDepth = 0,
+            Opacity = 0.5
+        };
+
+        _bubbleBorder = new Border
+        {
+            Background = new SolidColorBrush(AccentColor),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(8, 4, 8, 4),
+            Child = _bubbleText,
+            Effect = _bubbleGlow,
+            Visibility = Visibility.Collapsed,
+            RenderTransformOrigin = new Point(0, 0.5)
+        };
+
+        _bubbleTranslate = new TranslateTransform(0, 0);
+        _bubbleScale = new ScaleTransform(1, 1);
+        _bubbleTransformGroup = new TransformGroup();
+        _bubbleTransformGroup.Children.Add(_bubbleScale);
+        _bubbleTransformGroup.Children.Add(_bubbleTranslate);
+        _bubbleBorder.RenderTransform = _bubbleTransformGroup;
+
+        // Canvas to host both
+        _canvas = new Canvas
+        {
+            Visibility = Visibility.Collapsed,
+            IsHitTestVisible = false
+        };
+        _canvas.Children.Add(_triangle);
+        _canvas.Children.Add(_bubbleBorder);
+    }
+
+    /// <summary>The root UIElement to add to the overlay window.</summary>
+    public UIElement Visual => _canvas;
+
+    /// <summary>Whether the cursor is currently visible (flying or lingering).</summary>
+    public bool IsVisible => _isVisible;
+
+    /// <summary>
+    /// Animates the blue cursor from the current OS cursor position to <paramref name="targetPoint"/>
+    /// on the overlay whose bounds contain the target, showing <paramref name="bubbleText"/> on arrival.
+    /// Coordinates are in global desktop pixel space and will be converted to overlay-local.
+    /// </summary>
+    /// <param name="targetPoint">Target point in global desktop pixels.</param>
+    /// <param name="overlayBounds">The monitor bounds of the overlay this cursor lives on (global desktop pixels).</param>
+    /// <param name="bubbleText">Text to show in the speech bubble (if null/empty, a random phrase is picked).</param>
+    public void FlyTo(Point targetPoint, System.Drawing.Rectangle overlayBounds, string? bubbleText)
+    {
+        // Cancel any in-progress animation
+        StopAllAnimations();
+
+        // Determine start point: current OS cursor position
+        NativeMethods.GetCursorPos(out var cursorPos);
+        var startGlobal = new Point(cursorPos.X + FollowOffsetX, cursorPos.Y + FollowOffsetY);
+
+        // Convert global desktop coords to overlay-local coords
+        var startLocal = new Point(startGlobal.X - overlayBounds.X, startGlobal.Y - overlayBounds.Y);
+        var endLocal = new Point(targetPoint.X - overlayBounds.X, targetPoint.Y - overlayBounds.Y);
+
+        // Compute Bézier arc: P0=start, P2=end, P1=control point (offset upward)
+        var dx = endLocal.X - startLocal.X;
+        var dy = endLocal.Y - startLocal.Y;
+        var distance = Math.Sqrt(dx * dx + dy * dy);
+
+        var arcHeight = Math.Min(distance * 0.2, 80.0);
+        var midPoint = new Point(
+            (startLocal.X + endLocal.X) / 2.0,
+            (startLocal.Y + endLocal.Y) / 2.0 - arcHeight);
+
+        _bezierP0 = startLocal;
+        _bezierP1 = midPoint;
+        _bezierP2 = endLocal;
+
+        // Flight duration scales with distance: min 0.6s, max 1.4s
+        _flightDurationSeconds = Math.Min(Math.Max(distance / 800.0, 0.6), 1.4);
+
+        // Set bubble text
+        if (string.IsNullOrEmpty(bubbleText))
+        {
+            bubbleText = PointerPhrases[s_random.Next(PointerPhrases.Length)];
+        }
+        _bubbleText.Text = bubbleText;
+        _bubbleBorder.Visibility = Visibility.Collapsed;
+
+        // Show the cursor at start position
+        SetPosition(startLocal, RestAngle, 1.0);
+        _canvas.Visibility = Visibility.Visible;
+        _canvas.Opacity = 1.0;
+        _isVisible = true;
+
+        // Start flight animation at ~60 FPS
+        _flightStartTime = DateTime.UtcNow;
+        _flightTimer = new DispatcherTimer(DispatcherPriority.Render)
+        {
+            Interval = TimeSpan.FromSeconds(1.0 / 60.0)
+        };
+        _flightTimer.Tick += OnFlightTick;
+        _flightTimer.Start();
+    }
+
+    /// <summary>
+    /// Immediately hides the cursor and cancels all animations.
+    /// </summary>
+    public void Hide()
+    {
+        StopAllAnimations();
+        _canvas.Visibility = Visibility.Collapsed;
+        _canvas.Opacity = 1.0;
+        _isVisible = false;
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        StopAllAnimations();
+    }
+
+    // ── Animation tick handlers ──────────────────────────────────────
+
+    private void OnFlightTick(object? sender, EventArgs e)
+    {
+        var elapsed = (DateTime.UtcNow - _flightStartTime).TotalSeconds;
+        var linearProgress = Math.Min(elapsed / _flightDurationSeconds, 1.0);
+
+        // Smoothstep ease-in-out: t² × (3 − 2t)
+        var t = Smoothstep(linearProgress);
+
+        // Quadratic Bézier: B(t) = (1−t)²P0 + 2(1−t)tP1 + t²P2
+        var pos = EvaluateBezier(t);
+
+        // Tangent for rotation: B'(t) = 2(1−t)(P1−P0) + 2t(P2−P1)
+        var tangent = EvaluateBezierTangent(t);
+        var angle = Math.Atan2(tangent.Y, tangent.X) * (180.0 / Math.PI) + 90.0;
+
+        // Scale pulse: 1.0 + sin(π·progress) × 0.3
+        var scale = 1.0 + Math.Sin(linearProgress * Math.PI) * 0.3;
+
+        // Dynamic glow: 8 + (scale − 1.0) × 20
+        _triangleGlow.BlurRadius = BaseGlowRadius + (scale - 1.0) * 20.0;
+
+        SetPosition(pos, angle, scale);
+
+        if (linearProgress >= 1.0)
+        {
+            // Flight complete — snap to target and show bubble
+            _flightTimer!.Stop();
+            _flightTimer.Tick -= OnFlightTick;
+            _flightTimer = null;
+
+            SetPosition(_bezierP2, RestAngle, 1.0);
+            _triangleGlow.BlurRadius = BaseGlowRadius;
+
+            ShowBubble();
+            StartLinger();
+        }
+    }
+
+    private void ShowBubble()
+    {
+        // Position bubble offset from triangle
+        _bubbleTranslate.X = _translateTransform.X + 10;
+        _bubbleTranslate.Y = _translateTransform.Y + 18;
+
+        // Pop-in: start at 0.5× scale, animate to 1.0×
+        _bubbleScale.ScaleX = 0.5;
+        _bubbleScale.ScaleY = 0.5;
+        _bubbleBorder.Visibility = Visibility.Visible;
+
+        // Animate bubble scale with spring-like ease (approximated with DecelerateEase)
+        var scaleXAnim = new DoubleAnimation(0.5, 1.0, TimeSpan.FromSeconds(0.4))
+        {
+            EasingFunction = new ElasticEase
+            {
+                Oscillations = 1,
+                Springiness = 8,
+                EasingMode = EasingMode.EaseOut
+            }
+        };
+        var scaleYAnim = scaleXAnim.Clone();
+
+        _bubbleScale.BeginAnimation(ScaleTransform.ScaleXProperty, scaleXAnim);
+        _bubbleScale.BeginAnimation(ScaleTransform.ScaleYProperty, scaleYAnim);
+
+        // Bubble glow pop
+        _bubbleGlow.BlurRadius = 22;
+        _bubbleGlow.Opacity = 1.5;
+        var glowBlurAnim = new DoubleAnimation(22, 6, TimeSpan.FromSeconds(0.4));
+        var glowOpacityAnim = new DoubleAnimation(1.0, 0.5, TimeSpan.FromSeconds(0.4));
+        _bubbleGlow.BeginAnimation(DropShadowEffect.BlurRadiusProperty, glowBlurAnim);
+        _bubbleGlow.BeginAnimation(DropShadowEffect.OpacityProperty, glowOpacityAnim);
+    }
+
+    private void StartLinger()
+    {
+        _lingerTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(LingerSeconds)
+        };
+        _lingerTimer.Tick += OnLingerComplete;
+        _lingerTimer.Start();
+    }
+
+    private void OnLingerComplete(object? sender, EventArgs e)
+    {
+        _lingerTimer!.Stop();
+        _lingerTimer.Tick -= OnLingerComplete;
+        _lingerTimer = null;
+
+        // Fade out the entire canvas
+        var fadeOut = new DoubleAnimation(1.0, 0.0, TimeSpan.FromSeconds(FadeOutSeconds))
+        {
+            EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
+        };
+        fadeOut.Completed += (_, _) =>
+        {
+            _canvas.Visibility = Visibility.Collapsed;
+            _canvas.Opacity = 1.0;
+            _isVisible = false;
+        };
+        _canvas.BeginAnimation(UIElement.OpacityProperty, fadeOut);
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────
+
+    private void SetPosition(Point pos, double angleDeg, double scale)
+    {
+        _translateTransform.X = pos.X;
+        _translateTransform.Y = pos.Y;
+        _rotateTransform.Angle = angleDeg;
+        _scaleTransform.ScaleX = scale;
+        _scaleTransform.ScaleY = scale;
+    }
+
+    private void StopAllAnimations()
+    {
+        if (_flightTimer != null)
+        {
+            _flightTimer.Stop();
+            _flightTimer.Tick -= OnFlightTick;
+            _flightTimer = null;
+        }
+
+        if (_lingerTimer != null)
+        {
+            _lingerTimer.Stop();
+            _lingerTimer.Tick -= OnLingerComplete;
+            _lingerTimer = null;
+        }
+
+        // Clear any WPF storyboard animations
+        _canvas.BeginAnimation(UIElement.OpacityProperty, null);
+        _bubbleScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+        _bubbleScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+        _bubbleGlow.BeginAnimation(DropShadowEffect.BlurRadiusProperty, null);
+        _bubbleGlow.BeginAnimation(DropShadowEffect.OpacityProperty, null);
+    }
+
+    /// <summary>Smoothstep easing: t² × (3 − 2t).</summary>
+    internal static double Smoothstep(double t)
+    {
+        t = Math.Clamp(t, 0.0, 1.0);
+        return t * t * (3.0 - 2.0 * t);
+    }
+
+    /// <summary>Evaluates the quadratic Bézier curve at parameter t.</summary>
+    internal Point EvaluateBezier(double t)
+    {
+        var omt = 1.0 - t;
+        return new Point(
+            omt * omt * _bezierP0.X + 2 * omt * t * _bezierP1.X + t * t * _bezierP2.X,
+            omt * omt * _bezierP0.Y + 2 * omt * t * _bezierP1.Y + t * t * _bezierP2.Y);
+    }
+
+    /// <summary>Evaluates the tangent (first derivative) of the quadratic Bézier at parameter t.</summary>
+    internal Point EvaluateBezierTangent(double t)
+    {
+        var omt = 1.0 - t;
+        return new Point(
+            2 * omt * (_bezierP1.X - _bezierP0.X) + 2 * t * (_bezierP2.X - _bezierP1.X),
+            2 * omt * (_bezierP1.Y - _bezierP0.Y) + 2 * t * (_bezierP2.Y - _bezierP1.Y));
+    }
+
+    /// <summary>
+    /// Computes the flight duration for a given distance (exposed for testing).
+    /// </summary>
+    internal static double ComputeFlightDuration(double distance)
+    {
+        return Math.Min(Math.Max(distance / 800.0, 0.6), 1.4);
+    }
+
+    /// <summary>
+    /// Computes the arc height for a given distance (exposed for testing).
+    /// </summary>
+    internal static double ComputeArcHeight(double distance)
+    {
+        return Math.Min(distance * 0.2, 80.0);
+    }
+
+    /// <summary>
+    /// Sets the Bézier control points directly (for testing without calling FlyTo).
+    /// </summary>
+    internal void SetBezierPoints(Point p0, Point p1, Point p2)
+    {
+        _bezierP0 = p0;
+        _bezierP1 = p1;
+        _bezierP2 = p2;
+    }
+}

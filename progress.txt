@@ -186,3 +186,33 @@ Reset: Fri Apr 10 21:20 CEST 2026 (full Windows-port restart)
   - `SystemEvents.DisplaySettingsChanged` fires on the UI thread when the app has a WPF message pump — safe to create/destroy windows directly in the handler.
   - The `app.manifest` with `PerMonitorV2` DPI awareness is critical for overlay positioning — without it, WPF uses System DPI scaling and overlay bounds won't match monitor pixels on mixed-DPI setups.
 ---
+
+## 2026-04-11 - US-012
+- Implemented animated blue cursor that flies to a target point on the overlay, mirroring `BlueCursorView` from the Mac reference (OverlayWindow.swift)
+- `BlueCursorControl` renders a 16×16 DIP equilateral triangle (#3380FF) with `DropShadowEffect` glow on a Canvas
+- `FlyTo(screenPoint, overlayBounds, bubbleText)` animates from current OS cursor position (via `GetCursorPos` P/Invoke) to target point along a quadratic Bézier arc:
+  - Distance-based flight duration: `min(max(distance/800, 0.6), 1.4)` seconds
+  - Smoothstep ease-in-out: `t² × (3 − 2t)`
+  - Arc height: `min(distance × 0.2, 80)` pixels above midpoint
+  - Scale pulse: `1.0 + sin(π·progress) × 0.3` (peaks at 1.3× midway)
+  - Dynamic glow: `8 + (scale − 1.0) × 20` blur radius
+  - Rotation toward direction of travel via Bézier tangent + atan2
+- Speech bubble pops in with `ElasticEase` spring animation (0.4s, scale 0.5→1.0) and glow burst (blur 22→6, opacity 1.0→0.5)
+- Random pointer phrases: "right here!", "this one!", "over here!", "click this!", "here it is!", "found it!"
+- Cursor lingers 3 seconds then fades out over 0.5s with `QuadraticEase` easeOut
+- `OverlayWindow` updated to host `BlueCursorControl` as child Canvas, disposes on close
+- `OverlayWindowManager.FlyTo` dispatches to correct monitor overlay by matching `displayBounds` or point containment, hides active cursors on other overlays first
+- `GetCursorPos` P/Invoke added to `Clicky.Overlay.NativeMethods`
+- Files changed:
+  - `windows/src/Clicky.Overlay/BlueCursorControl.cs` (new — triangle, glow, bubble, Bézier flight animation)
+  - `windows/src/Clicky.Overlay/OverlayWindow.cs` (updated — hosts BlueCursorControl, disposes on close)
+  - `windows/src/Clicky.Overlay/OverlayWindowManager.cs` (updated — FlyTo dispatch to correct monitor)
+  - `windows/src/Clicky.Overlay/NativeMethods.cs` (updated — added GetCursorPos + POINT struct)
+  - `windows/tests/Clicky.Tests/BlueCursorControlTests.cs` (new, 18 tests)
+- **Learnings for future iterations:**
+  - `System.Drawing.Point` and `System.Windows.Point` conflict when both namespaces are imported — use fully qualified types in methods that cross the boundary (e.g., `OverlayWindowManager.FlyTo` takes `System.Windows.Point`)
+  - WPF `DispatcherTimer` at 60 FPS (16.67ms interval) with `DispatcherPriority.Render` is the WPF equivalent of Mac's `Timer.scheduledTimer(withTimeInterval: 1.0/60.0)` for frame-by-frame animation
+  - `DropShadowEffect` with `ShadowDepth=0` creates a centered glow effect equivalent to Mac's `.shadow(color:radius:)` modifier
+  - `ElasticEase` with `Oscillations=1, Springiness=8` approximates SwiftUI's `Spring(response: 0.4, dampingFraction: 0.6)` for pop-in animations
+  - WPF `BeginAnimation(property, null)` removes a running animation and returns the property to its base value — needed for `StopAllAnimations()` cleanup
+---
