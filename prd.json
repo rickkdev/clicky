@@ -1,290 +1,173 @@
 {
-  "project": "Clicky for Windows",
+  "project": "Clicky — direct-to-provider, bring-your-own-keys",
   "branchName": "ralph/windows-port",
-  "description": "Port the macOS Clicky companion (menu-bar AI buddy that sees the screen, talks via TTS, and flies the cursor to UI elements) to Windows. Target stack: C# 12 / .NET 8 / WPF, NAudio for audio, Windows.Graphics.Capture for screenshots, low-level keyboard hook for the global push-to-talk shortcut. The Cloudflare Worker in ../worker is shared and not modified. The Mac reference implementation in ../mac is the source of truth for behavior. All Windows code lands under windows/.",
+  "description": "Turn Clicky from a server-proxied app into a shippable personal tool: each user installs the binary, opens a settings window on first launch, pastes their own API keys for Anthropic and/or z.ai (LLM) plus AssemblyAI (streaming transcription) and ElevenLabs (TTS), and Clicky talks directly to those providers from the user's machine. No Cloudflare Worker. No shared backend. No keys on disk in plaintext — all secrets encrypted with Windows DPAPI under the current user's profile. The existing worker/ directory remains in the repo because it is shared with the Mac reference implementation, but the Windows client no longer calls it in any code path. Users can switch between Claude and GLM at runtime via a tray menu without restarting. This PRD builds on the completed Windows port (see archive/prd-windows-port.json for the 17 shipped stories) and supersedes the earlier worker-routing GLM integration draft (see archive/prd-glm-worker-routing.json) that this project decided against because it required every user to run Cloudflare Wrangler locally. Target vision model for GLM: glm-4.6v. The Mac reference implementation is not modified.",
   "userStories": [
     {
-      "id": "US-001",
-      "title": "Scaffold Clicky.sln and project layout",
-      "description": "As a developer, I need a buildable .NET 8 solution with the project layout described in windows/README.md so future stories have a place to land.",
+      "id": "US-018",
+      "title": "ILlmClient interface + AnthropicDirectClient (direct to api.anthropic.com)",
+      "description": "As a user with my own Anthropic API key, I want Clicky to call api.anthropic.com directly with my key instead of going through a worker, so I can run the app without any backend infrastructure.",
       "acceptanceCriteria": [
-        "windows/Clicky.sln exists and references all planned src/* projects (Clicky.App, Clicky.Companion, Clicky.Audio, Clicky.Capture, Clicky.Hotkey, Clicky.Overlay, Clicky.Api, Clicky.Pointing)",
-        "Each project targets net8.0-windows and uses <UseWPF>true</UseWPF> where it owns UI",
-        "Clicky.App contains an empty WPF App.xaml with ShutdownMode=OnExplicitShutdown",
-        "windows/tests/Clicky.Tests project added with xUnit and a placeholder test that asserts true",
-        "dotnet build windows/Clicky.sln succeeds with zero warnings",
-        "Commit all changes with message: feat: US-001 - Scaffold Clicky.sln and project layout"
+        "New interface `Clicky.Api.ILlmClient` exposes `IAsyncEnumerable<string> SendAsync(IReadOnlyList<Message> history, IReadOnlyList<CapturedScreen> screens, string systemPrompt, string userText, CancellationToken ct)` — the exact surface `CompanionManager` already consumes, extracted from the existing `ClaudeClient`",
+        "The existing `Clicky.Api.ClaudeClient` is replaced by `Clicky.Api.AnthropicDirectClient : ILlmClient` that POSTs to `https://api.anthropic.com/v1/messages` directly with headers `x-api-key: <userKey>`, `anthropic-version: 2023-06-01`, `content-type: application/json`",
+        "Constructor signature: `AnthropicDirectClient(string apiKey, string model = \"claude-sonnet-4-6\", HttpClient? httpClient = null)`. No proxy URL — the worker path is gone.",
+        "Request body shape, SSE parsing, PNG/JPEG magic-byte media_type detection, and TLS warmup HEAD request behavior are preserved byte-for-byte from the old ClaudeClient (see US-007 notes in archive/progress-windows-port.txt)",
+        "`Clicky.Companion.CompanionManager` now takes `ILlmClient` via constructor injection instead of constructing a `ClaudeClient` itself. App.xaml.cs constructs `AnthropicDirectClient` with a temporary hardcoded key for this story only — real key plumbing lands in US-019",
+        "All existing US-007 tests (SSE parsing, delta extraction, media type detection) pass against the new AnthropicDirectClient unchanged",
+        "One new test: a `FakeLlmClient : ILlmClient` verifies CompanionManager's dependency injection seam works end-to-end",
+        "Build: 0 warnings. Tests: all existing Windows-port tests still pass",
+        "Commit all changes with message: feat: US-018 - ILlmClient interface + AnthropicDirectClient"
       ],
       "priority": 1,
       "passes": true,
-      "notes": "Scaffolded on 2026-04-10. Build verification requires .NET 8 SDK (not available in WSL2 dev environment)."
+      "notes": "This is primarily a refactor + direct-API swap. Keep the scope narrow: don't add provider selection, key storage, or UI yet — those land in US-019 through US-024. The hardcoded temporary key is fine for this story because US-019 will replace it within one iteration."
     },
     {
-      "id": "US-002",
-      "title": "Tray-only host with no main window",
-      "description": "As a user, I want Clicky to live in the system tray with no taskbar entry, mirroring the Mac menu bar app behavior driven by leanring_buddyApp.swift + MenuBarPanelManager.swift.",
+      "id": "US-019",
+      "title": "SecretsStore (DPAPI) + SettingsStore (JSON) under %APPDATA%\\Clicky",
+      "description": "As a user, I want my API keys encrypted at rest using my Windows account credentials, and my non-secret settings persisted in a readable JSON file, so nobody can extract my keys from disk and I can inspect/reset my config without a GUI if needed.",
       "acceptanceCriteria": [
-        "Clicky.App boots into a hidden host window (ShowInTaskbar=false, WindowStyle=None, Visibility=Hidden)",
-        "H.NotifyIcon (or Hardcodet.NotifyIcon.Wpf) shows a tray icon with tooltip 'Clicky'",
-        "Right-click tray menu has Open / Quit entries; Quit calls Application.Current.Shutdown",
-        "Left-click tray icon raises an event the Companion layer can subscribe to",
-        "App registers itself in HKCU\\...\\Run on first launch (mirrors SMAppService.mainApp.register in leanring_buddyApp.swift)",
-        "dotnet build succeeds and manual smoke test shows the tray icon",
-        "Commit all changes with message: feat: US-002 - Tray-only host with no main window"
+        "`Clicky.Companion.SecretsStore` wraps `System.Security.Cryptography.ProtectedData.Protect` / `Unprotect` with `DataProtectionScope.CurrentUser`. Methods: `void Write(string key, string value)`, `string? Read(string key)`, `void Delete(string key)`, `bool Exists(string key)`",
+        "Secrets are stored as an encrypted blob at `%APPDATA%\\Clicky\\secrets.bin`. The plaintext internal format is a simple JSON dictionary; encryption is applied to the whole file, not per-entry",
+        "`Clicky.Companion.SettingsStore` reads/writes `%APPDATA%\\Clicky\\settings.json` with fields: `LlmProvider` (string: \"anthropic\" or \"zai\"), `LlmModel` (string), `ElevenLabsVoiceId` (string, default `kPzsL2i3teMYv0FxEYQ6` to match Mac), `OnboardingComplete` (bool), `AnalyticsOptOut` (bool)",
+        "Both stores auto-create the %APPDATA%\\Clicky directory on first write",
+        "Keys used by SecretsStore are standardized constants: `anthropic_api_key`, `zai_api_key`, `assemblyai_api_key`, `elevenlabs_api_key`",
+        "App.xaml.cs on OnStartup instantiates SettingsStore + SecretsStore, reads the configured provider/model/keys, and passes them into the CompanionManager constructor (replacing the hardcoded key from US-018)",
+        "US-014's OnboardingService registry read is migrated: if `HKCU\\Software\\Clicky\\onboarded` exists, copy its value to SettingsStore.OnboardingComplete on first run of this story's code, then prefer the SettingsStore value thereafter. Same for `analyticsOptOut`",
+        "Unit tests: SecretsStore round-trip (write → read → same value), SecretsStore decryption under a different user profile fails gracefully (returns null rather than throwing), SettingsStore round-trip, SettingsStore defaults when file is missing, migration from registry test",
+        "Build: 0 warnings. Tests: all pass on a Windows test host",
+        "Commit all changes with message: feat: US-019 - SecretsStore (DPAPI) + SettingsStore under APPDATA"
       ],
       "priority": 2,
-      "passes": true,
-      "notes": "Implemented on 2026-04-10. Uses Hardcodet.NotifyIcon.Wpf for tray icon, System.Drawing.Common for procedural icon. Build verification requires .NET 8 SDK (not available in WSL2 dev environment)."
+      "passes": false,
+      "notes": "DPAPI is per-user-account, not per-machine — backups restored to a different Windows user will fail to decrypt, which is correct security behavior. Document this in the SettingsWindow help text (lands in US-022). Do NOT add a passphrase fallback; the whole point of DPAPI is that it's invisible to the user."
     },
     {
-      "id": "US-003",
-      "title": "Settings/control panel WPF window",
-      "description": "As a user, I want a popup control panel (mirroring CompanionPanelView.swift) so I can see permission status, current voice state, and a push-to-talk shortcut indicator.",
+      "id": "US-020",
+      "title": "ZaiDirectClient for GLM models (direct to api.z.ai OpenAI-compatible endpoint)",
+      "description": "As a user with a z.ai API key, I want Clicky to use GLM-4.6V as a vision-capable alternative to Claude, with the same UI and screen-pointing behavior, so I have a choice of LLM providers.",
       "acceptanceCriteria": [
-        "Clicking the tray icon toggles a borderless popup window anchored near the tray",
-        "Window shows: app version, voice state (Idle/Listening/Processing/Responding), permission rows for Microphone and Screen Capture, and the configured push-to-talk chord",
-        "Window auto-hides when it loses focus (Deactivated event)",
-        "MVVM: bindings driven by a CompanionViewModel placeholder in Clicky.Companion that exposes the same observable surface as Mac's @Published voiceState/permissions",
-        "dotnet build clean",
-        "Commit all changes with message: feat: US-003 - Settings/control panel WPF window"
+        "New `Clicky.Api.ZaiDirectClient : ILlmClient` POSTs to `https://api.z.ai/api/paas/v4/chat/completions` with headers `Authorization: Bearer <userKey>`, `Content-Type: application/json`, `Accept: text/event-stream`",
+        "Constructor: `ZaiDirectClient(string apiKey, string model = \"glm-4.6v\", HttpClient? httpClient = null)`",
+        "Translates Clicky's existing Anthropic-shape inputs (system prompt + message history + CapturedScreen list + user text) into OpenAI chat-completions request body: system prompt becomes `messages[0] = {role:\"system\", content: systemPrompt}`, history turns pass through with their existing roles, the final user turn's text + screens become one user message with a `content` array of `{type:\"text\", text:...}` and `{type:\"image_url\", image_url:{url:\"data:<media_type>;base64,<base64Data>\"}}` entries",
+        "Image media_type is sniffed by PNG/JPEG magic bytes (reuse `AnthropicDirectClient.DetectImageMediaType` via refactor or duplicate — do not import a new library)",
+        "Streaming response parsing: reads `data: {...}` SSE lines, extracts `choices[0].delta.content` text chunks, yields them through the `IAsyncEnumerable<string>` return (same interface shape as AnthropicDirectClient). The `[DONE]` sentinel ends the stream cleanly",
+        "Chunk-boundary UTF-8 splits (a multi-byte character split across two HTTP chunks) do not corrupt the yielded text — use an incremental decoder, not a per-chunk Encoding.UTF8.GetString",
+        "Malformed JSON lines are logged and skipped, not thrown — one bad line must not kill the stream",
+        "Valid model values accepted: `glm-4.6v` (default, vision), `glm-4.5v` (fallback, vision). Text-only models (`glm-5.1`, `glm-5-turbo`, `glm-5`, `glm-4.5-air`, `glm-4.7-no-vision-variants`) must NOT be offered as choices because they silently break the [POINT:x,y:label:screenN] feature — Clicky requires vision",
+        "Unit tests: text-only request translation, single-image request translation, multi-image multi-screen request translation, SSE chunk parsing fixture (realistic glm-4.6v response with a [POINT:...] tag mid-stream), UTF-8 chunk-boundary split test, malformed-chunk skip test",
+        "End-to-end test with FakeHttpMessageHandler: canned OpenAI SSE input → expected string deltas out through ILlmClient.SendAsync",
+        "Build: 0 warnings. Tests: all pass",
+        "Commit all changes with message: feat: US-020 - ZaiDirectClient for GLM-4.6V"
       ],
       "priority": 3,
-      "passes": true,
-      "notes": "Implemented on 2026-04-10. CompanionViewModel in Clicky.Companion exposes VoiceState + permission bools + push-to-talk chord. CompanionPanelWindow.xaml is a borderless popup anchored near the tray, auto-hides on Deactivated, and binds via DataContext. dotnet build succeeds with 0 warnings."
+      "passes": false,
+      "notes": "This is the most algorithmically dense story. Budget time for the SSE chunk-boundary tests — getting them right is what separates a demo-quality integration from a shippable one. The Anthropic-shape system prompt (built by CompanionManager in US-010, includes the [POINT:x,y:label:screenN] tag instructions) passes through unchanged — GLM-4.6V is prompted in the same English, it just speaks OpenAI over the wire."
     },
     {
-      "id": "US-004",
-      "title": "Microphone permission + WASAPI capture",
-      "description": "As a user, I need Clicky to record my microphone in the format AssemblyAI expects, mirroring BuddyDictationManager.swift's AVAudioEngine pipeline.",
+      "id": "US-021",
+      "title": "Direct-to-provider audio clients (AssemblyAI + ElevenLabs, no worker)",
+      "description": "As a user with AssemblyAI and ElevenLabs API keys, I want Clicky to call those services directly with my keys, so I can run the app without any Cloudflare Worker.",
       "acceptanceCriteria": [
-        "Clicky.Audio exposes a MicrophoneCapture class using NAudio.Wasapi.WasapiCapture on the default capture device",
-        "Captured frames are resampled (NAudio MediaFoundationResampler or custom) to 16 kHz mono PCM16 little-endian",
-        "An async IAsyncEnumerable<ReadOnlyMemory<byte>> exposes 50 ms PCM frames suitable for the AssemblyAI websocket",
-        "Calls Package.Current.RequestAccessAsync (or falls back to a one-shot WasapiCapture probe) and surfaces a HasMicrophonePermission bool on CompanionViewModel",
-        "Unit test in Clicky.Tests verifies the resampler converts a known 48 kHz buffer to the right number of 16 kHz samples",
-        "Commit all changes with message: feat: US-004 - Microphone permission + WASAPI capture"
+        "`Clicky.Api.AssemblyAiStreamingTranscriber` is updated: the existing `FetchTokenAsync` that hits `{workerBaseUrl}/transcribe-token` is replaced with a direct call to `https://streaming.assemblyai.com/v3/token?expires_in_seconds=60` with header `Authorization: <userKey>` (AssemblyAI's token endpoint uses the raw API key, NOT `Bearer`)",
+        "Constructor: `AssemblyAiStreamingTranscriber(string apiKey, HttpClient? httpClient = null)` — proxyUrl parameter removed",
+        "The WebSocket connection to `wss://streaming.assemblyai.com/v3/ws` and all session mechanics (keyterms, sample_rate=16000, encoding=pcm_s16le, format_turns=true, speech_model=u3-rt-pro, partial/final turn processing, error callback, ForceEndpoint grace period) are preserved from US-008 unchanged",
+        "`Clicky.Api.ElevenLabsTtsClient` is updated: existing POST to `{workerBaseUrl}/tts` is replaced with a direct POST to `https://api.elevenlabs.io/v1/text-to-speech/{voiceId}/stream` with headers `xi-api-key: <userKey>`, `Content-Type: application/json`, `Accept: audio/mpeg` and body `{text, model_id: \"eleven_flash_v2_5\", voice_settings: {stability: 0.5, similarity_boost: 0.75}}`",
+        "Constructor: `ElevenLabsTtsClient(string apiKey, string voiceId, HttpClient? httpClient = null)`. The voice ID is now a constructor parameter (read from SettingsStore.ElevenLabsVoiceId by App.xaml.cs)",
+        "MP3 decoding via NAudio Mp3FileReader and WaveOutEvent playback path from US-009 is preserved unchanged",
+        "All existing US-008 and US-009 unit tests continue to pass after the refactor (session URI builder, keyterm serialization, partial/final dispatch, IsPlaying, StopPlayback, Dispose safety, cancellation)",
+        "New tests: direct token fetch URL + header format, direct TTS POST URL + header format, voice ID parameter threading",
+        "App.xaml.cs constructs both clients with keys + voice ID from SecretsStore + SettingsStore; CompanionManager receives them via constructor injection (matching the pattern from US-018/US-019)",
+        "Build: 0 warnings. Tests: all pass",
+        "Commit all changes with message: feat: US-021 - Direct AssemblyAI and ElevenLabs clients"
       ],
       "priority": 4,
-      "passes": true,
-      "notes": "Implemented on 2026-04-10. NAudio.Wasapi 2.2.1 added to Clicky.Audio. MicrophoneCapture wraps WasapiCapture on the default device, downmixes + linearly resamples to 16 kHz mono PCM16 LE, and yields 50 ms frames (1600 bytes) via IAsyncEnumerable<ReadOnlyMemory<byte>>. MicrophonePermissions.ProbeAsync does a one-shot WasapiCapture start/stop as the Win10/11 privacy gate check. App.OnStartup probes in the background and updates CompanionViewModel.HasMicrophonePermission. 5 PcmResampler unit tests (incl. the required 48 kHz → 16 kHz sample-count check). dotnet build + dotnet test: 0 warnings, 6/6 passing."
+      "passes": false,
+      "notes": "AssemblyAI's token-fetch auth uses the raw key in the Authorization header, not `Bearer <key>` — double-check this before coding. This is the last story that touches the Clicky.Api layer; after it, the worker is completely unused by the Windows client."
     },
     {
-      "id": "US-005",
-      "title": "Low-level keyboard hook for push-to-talk",
-      "description": "As a user, I need a system-wide push-to-talk shortcut that fires while Clicky is in the background, mirroring GlobalPushToTalkShortcutMonitor.swift.",
+      "id": "US-022",
+      "title": "SettingsWindow WPF UI with Test buttons",
+      "description": "As a first-time user, I want a friendly settings window where I can paste my API keys, pick my LLM provider and model, and verify each key works with a Test button before saving.",
       "acceptanceCriteria": [
-        "Clicky.Hotkey installs a WH_KEYBOARD_LL hook via SetWindowsHookEx and pumps it on the WPF dispatcher thread",
-        "Default chord is Ctrl+Alt (the Win equivalent of macOS ctrl+option) and is configurable via an enum mirroring BuddyPushToTalkShortcut.ShortcutOption",
-        "Hook publishes Pressed/Released transitions via an IObservable<ShortcutTransition> or System.Threading.Channels.Channel",
-        "Hook is non-blocking and listen-only — never swallows the keys (returns CallNextHookEx)",
-        "Hook is uninstalled cleanly on app shutdown; no leaked Win32 handles",
-        "Manual smoke test: press Ctrl+Alt with another window focused → CompanionViewModel.IsShortcutPressed flips true on press and false on release",
-        "Commit all changes with message: feat: US-005 - Low-level keyboard hook for push-to-talk"
+        "New `Clicky.App.SettingsWindow.xaml` — resizable, non-modal, dark theme matching CompanionPanelWindow, ~480×640 DIP default size, centered on primary display",
+        "Fields (top to bottom): **LLM Provider** (ComboBox: `Anthropic Claude`, `z.ai GLM`), **LLM Model** (ComboBox whose items change based on provider: Anthropic → `claude-sonnet-4-6`, `claude-haiku-4-5`, `claude-opus-4-6`; z.ai → `glm-4.6v`, `glm-4.5v`), **Anthropic API Key** (PasswordBox + Test button + `Get key →` link), **z.ai API Key** (PasswordBox + Test button + link), **AssemblyAI API Key** (PasswordBox + Test button + link), **ElevenLabs API Key** (PasswordBox + Test button + link), **ElevenLabs Voice ID** (TextBox, pre-filled with `kPzsL2i3teMYv0FxEYQ6`)",
+        "`Get key →` links open the default browser to: Anthropic → `https://console.anthropic.com/settings/keys`, z.ai → `https://z.ai/manage-apikey/apikey-list`, AssemblyAI → `https://www.assemblyai.com/app/account`, ElevenLabs → `https://elevenlabs.io/app/settings/api-keys`",
+        "Each Test button fires a one-shot auth probe against the corresponding service using the currently-entered key (not the saved one), shows a spinner during the probe, and then turns green (✓) or red (✗) with a tooltip containing the error message. Probes: Anthropic → POST /v1/messages with `max_tokens: 1, model: claude-haiku-4-5, messages: [{role: user, content: \"hi\"}]`; z.ai → POST /api/paas/v4/chat/completions with `max_tokens: 1, model: glm-4.5v, messages: [{role: user, content: \"hi\"}]`; AssemblyAI → GET /v3/token?expires_in_seconds=60 (returns token on success, 401 on bad key); ElevenLabs → GET /v1/user/subscription (free auth check, returns subscription info)",
+        "Save button writes keys via SecretsStore, non-secret fields via SettingsStore, raises a `SettingsSaved` event, and closes the window. Save is enabled only when the required keys for the selected provider are entered (Anthropic provider → Anthropic key required; z.ai provider → z.ai key required; AssemblyAI + ElevenLabs keys always required because audio is mandatory)",
+        "Quit button (secondary, less prominent) calls Application.Current.Shutdown — required for the first-run case where the user doesn't want to enter keys",
+        "Help text at the bottom: small italic footnote explaining \"Your keys are encrypted with your Windows account and stored only on this PC. Clicky never uploads them anywhere.\"",
+        "Window is reachable from the existing tray right-click menu via a new `Settings...` item (added between `Open` and `Quit`)",
+        "When reopened after initial save, fields are pre-populated from SecretsStore/SettingsStore (passwords shown as placeholder `••••••••` with a `Change` button that clears the field)",
+        "Unit tests: ViewModel command enablement (Save disabled until required fields entered), model list updates when provider changes, SecretsStore persistence on Save",
+        "Build: 0 warnings. Tests: all pass. Manual: open Settings from tray, fill fields, all four Test buttons work against real services with a real key",
+        "Commit all changes with message: feat: US-022 - SettingsWindow UI with Test buttons"
       ],
       "priority": 5,
-      "passes": true,
-      "notes": "Implemented on 2026-04-10. PushToTalkShortcut enum moved from Clicky.Companion to Clicky.Hotkey. GlobalPushToTalkHook installs WH_KEYBOARD_LL via SetWindowsHookEx on the WPF dispatcher thread, publishes ShortcutTransition (None/Pressed/Released) through a Channel<ShortcutTransition>, and is strictly listen-only (always calls CallNextHookEx). PushToTalkShortcutEngine is a pure state machine unit-tested with 7 facts covering Ctrl+Alt press/release, auto-repeat idempotence, unrelated-key no-op, L/R modifier equivalence, AltShift configuration, and Reset. App.OnStartup wires transitions to CompanionViewModel.IsShortcutPressed; OnExit disposes cleanly. Build: 0 warnings / 0 errors. Tests: 13/13 passing."
+      "passes": false,
+      "notes": "Copy matters here — this is the onboarding experience for everyone who installs Clicky. Use friendly, plain English. Avoid words like 'provider', 'endpoint', 'API key rejected (401)'. Prefer 'Service', 'Couldn't reach Anthropic — check your key'. Do not add import/export or encryption passphrase features in this story; scope-creep risk is high."
     },
     {
-      "id": "US-006",
-      "title": "Multi-monitor screen capture via Windows.Graphics.Capture",
-      "description": "As a user, I need Clicky to capture every connected display as JPEG bytes labeled with which screen the cursor is on, mirroring CompanionScreenCaptureUtility.swift.",
+      "id": "US-023",
+      "title": "First-run setup flow",
+      "description": "As a first-time user, I want Clicky to walk me through entering my API keys the first time I launch it, and to re-open the settings window on subsequent launches if I'm missing a required key, so I never hit a confusing silent failure.",
       "acceptanceCriteria": [
-        "Clicky.Capture exposes ScreenCapture.CaptureAllScreensAsJpegAsync() that returns a list of CapturedScreen { ImageBytes, Label, IsCursorScreen, DisplayBounds, ScreenshotPixelWidth, ScreenshotPixelHeight }",
-        "Uses Windows.Graphics.Capture.GraphicsCaptureItem.CreateFromMonitor for each HMONITOR enumerated via EnumDisplayMonitors",
-        "Cursor screen is sorted first; label format matches Mac: 'screen N of M — cursor is on this screen (primary focus)' / '… — secondary screen' / 'user's screen (cursor is here)' for the single-display case",
-        "Images are resized so the longer edge is 1280 px (matches the Mac maxDimension) and JPEG-encoded at quality ~80",
-        "Clicky's own overlay/tray windows are excluded from the capture (use GraphicsCaptureSession.IsBorderRequired = false and filter by HWND when WGC's exclusion API is unavailable)",
-        "dotnet build clean; manual smoke test dumps JPEGs to %TEMP%\\clicky-capture\\*.jpg and the cursor-screen ordering is correct",
-        "Commit all changes with message: feat: US-006 - Multi-monitor screen capture via Windows.Graphics.Capture"
+        "On App.OnStartup, after the existing SettingsStore + SecretsStore initialization (US-019), check: (a) are the currently-selected provider's LLM key and the two audio keys (AssemblyAI + ElevenLabs) all present in SecretsStore? (b) is SettingsStore.OnboardingComplete true?",
+        "If either check fails → open SettingsWindow (US-022) BEFORE the permissions panel from US-014 and block further app initialization until SettingsWindow raises SettingsSaved or the user quits",
+        "SettingsWindow in first-run mode shows a friendly header: \"Welcome to Clicky — let's set up your API keys\" instead of the normal \"Settings\" header",
+        "After successful save, SettingsStore.OnboardingComplete is set to true and the normal app init flow continues: construct tray icon → overlay manager → CompanionManager → permissions panel (US-014) auto-opens if any OS permission is still missing",
+        "On launches where both checks pass, the normal flow runs unchanged (tray icon appears silently in background, no window opens)",
+        "If the user closes SettingsWindow via the X button (not Save, not Quit) during first-run, the app exits cleanly — never leave the app half-initialized",
+        "Runtime detection: if the user deletes their key from SecretsStore externally (or DPAPI decryption fails due to a restored backup), the next push-to-talk attempt fails gracefully by surfacing the error to CompanionViewModel as a one-shot toast-style banner reading \"Your API key is missing or invalid. Open Settings to fix.\", AND re-opens SettingsWindow automatically",
+        "Unit tests: first-run with no secrets opens SettingsWindow, returning user with complete secrets does not, partial config (LLM key present but AssemblyAI missing) opens SettingsWindow with a highlighted inline error on the missing field",
+        "Manual test: delete `%APPDATA%\\Clicky\\secrets.bin`, launch app, verify SettingsWindow opens with welcome header",
+        "Build: 0 warnings. Tests: all pass",
+        "Commit all changes with message: feat: US-023 - First-run setup flow"
       ],
       "priority": 6,
-      "passes": true,
-      "notes": "Implemented on 2026-04-10. ScreenCapture.CaptureAllScreensAsJpegAsync uses WGC (GraphicsCaptureItem.CreateFromMonitor via IGraphicsCaptureItemInterop COM) with GDI+ BitBlt fallback. Monitors enumerated via EnumDisplayMonitors P/Invoke. Cursor screen sorted first with Mac-matching labels. Images resized to 1280px max edge, JPEG quality 80. WGC path sets IsBorderRequired=false and IsCursorCaptureEnabled=false via reflection (Win11+ APIs). All projects upgraded to net8.0-windows10.0.19041.0 TFM for WinRT access. ScreenCapturePermissions.ProbeAsync checks GraphicsCaptureSession.IsSupported. DumpToTempAsync writes to %TEMP%/clicky-capture/. 7 new tests (labels + live capture + JPEG magic bytes). Build: 0 warnings. Tests: 20/20 passing."
+      "passes": false,
+      "notes": "The failure-mode path (key deleted or revoked mid-session) is the one most likely to cause support issues for other users. Spend time on it: make the error surfacing specific, actionable, and non-modal. Do NOT silently retry."
     },
     {
-      "id": "US-007",
-      "title": "Claude streaming chat client (SSE)",
-      "description": "As a user, I want Clicky to stream Claude's response token-by-token through the existing Cloudflare Worker, mirroring ClaudeAPI.swift.",
+      "id": "US-024",
+      "title": "Tray Model submenu for runtime LLM switching",
+      "description": "As a user, I want to switch between Claude and GLM from the tray menu without restarting Clicky, so I can compare providers or hot-swap if one service is down.",
       "acceptanceCriteria": [
-        "Clicky.Api exposes ClaudeClient(string proxyUrl, string model = \"claude-sonnet-4-6\") with a SendAsync(IReadOnlyList<Message> history, IReadOnlyList<CapturedScreen> screens, string userText, CancellationToken ct) method that returns IAsyncEnumerable<string> token deltas",
-        "POSTs to {proxyUrl}/chat with the same JSON shape Mac sends (multi-image content blocks, system prompt, conversation history)",
-        "Parses Anthropic SSE event stream (event: content_block_delta with text_delta) and yields incremental text",
-        "Auto-detects image media_type by sniffing PNG vs JPEG magic bytes (matches detectImageMediaType in ClaudeAPI.swift)",
-        "Warms TLS with a HEAD request on construction to avoid the cold-handshake latency on the first real call (mirrors warmUpTLSConnectionIfNeeded)",
-        "Unit test feeds a canned SSE response stream and asserts the deltas come out in order",
-        "Commit all changes with message: feat: US-007 - Claude streaming chat client (SSE)"
+        "TrayIconManager's context menu gains a new `Model` submenu inserted between `Settings...` and `Quit`",
+        "The submenu contains one radio-style item per available (provider, model) pair: Claude Sonnet 4.6, Claude Haiku 4.5, Claude Opus 4.6, GLM-4.6V, GLM-4.5V",
+        "The currently-active model is marked with ● (bullet) or a check-mark icon",
+        "Items whose required API key is NOT in SecretsStore are grayed out and show a tooltip: `Add your <provider> key in Settings to enable this model`",
+        "Clicking an enabled item triggers `CompanionManager.SwapLlmClientAsync(provider, model)`: (a) cancels any in-flight Claude/TTS task, (b) disposes the old ILlmClient, (c) constructs a new AnthropicDirectClient or ZaiDirectClient via the same factory App.xaml.cs uses at startup, (d) updates SettingsStore.LlmProvider + LlmModel, (e) updates CompanionViewModel.LlmModelDisplay so the panel footer reflects the change",
+        "CompanionManager.SwapLlmClientAsync is safe to call while the CompanionManager is in any VoiceState — if currently Listening/Processing/Responding, the swap waits for or cancels the current turn before taking effect, and the next push-to-talk uses the new client",
+        "ClickyAnalytics (US-016) fires a `model_switched` event with properties `{ from_provider, from_model, to_provider, to_model }` (respects the existing analyticsOptOut flag)",
+        "Unit tests: SwapLlmClientAsync transitions, grayed-out item enablement logic based on SecretsStore contents, VoiceState restoration to Idle after swap",
+        "Manual test: with a valid push-to-talk turn mid-stream, click a different model — verify the stream is cleanly cancelled and the next turn uses the new client",
+        "Build: 0 warnings. Tests: all pass",
+        "Commit all changes with message: feat: US-024 - Tray Model submenu for runtime LLM switching"
       ],
       "priority": 7,
-      "passes": true,
-      "notes": "Implemented on 2026-04-11. ClaudeClient in Clicky.Api wraps HttpClient with SSE streaming. SendAsync returns IAsyncEnumerable<string> token deltas. POSTs to {proxyUrl}/chat with same JSON shape as Mac (multi-image base64 content blocks, system prompt, conversation history). Parses content_block_delta/text_delta events from Anthropic SSE stream. DetectImageMediaType sniffs PNG vs JPEG magic bytes. TLS warmup HEAD request on construction. Message record stores conversation history turns. 7 new tests (SSE parsing, delta extraction, media type detection). InternalsVisibleTo for test access. Build: 0 warnings. Tests: 27/27 passing."
+      "passes": false,
+      "notes": "The mid-turn swap is the tricky case. Look at how US-010's CompanionManager already cancels currentResponseTask on re-press; SwapLlmClientAsync can reuse the same cancellation plumbing."
     },
     {
-      "id": "US-008",
-      "title": "AssemblyAI streaming transcription via WebSocket",
-      "description": "As a user, I want my speech transcribed in real time while I hold the push-to-talk key, mirroring AssemblyAIStreamingTranscriptionProvider.swift.",
+      "id": "US-025",
+      "title": "Shippable-product polish: README, installer notes, error copy, analytics events",
+      "description": "As a prospective user finding Clicky on GitHub, I want a README that makes the value proposition clear, a setup flow I can complete without reading docs, and error messages that tell me how to fix problems rather than surfacing stack traces.",
       "acceptanceCriteria": [
-        "Clicky.Api exposes AssemblyAiStreamingTranscriber with StartSessionAsync(IReadOnlyList<string> keyterms, ...) returning a session object that exposes PartialTranscriptUpdated and FinalTranscriptReady events",
-        "Fetches a short-lived token by POSTing to {proxyUrl}/transcribe-token (token is single-use, never cache)",
-        "Opens a ClientWebSocket to streaming.assemblyai.com/v3/ws with the token; sends 16 kHz PCM16 frames from MicrophoneCapture; receives JSON messages and dispatches partial vs final",
-        "Reuses a single long-lived HttpClient/ClientWebSocket factory across sessions (Mac's note: per-session URLSession corrupts the connection pool)",
-        "Surfaces errors via an OnError callback; never throws on the audio writer task",
-        "Manual smoke test: hold push-to-talk, speak a sentence, see partials in the panel and a final transcript on release",
-        "Commit all changes with message: feat: US-008 - AssemblyAI streaming transcription via WebSocket"
+        "windows/README.md `Using Clicky` section rewritten for end-users (not developers): what it does, what keys you need, links to sign up for each service, approximate cost expectations, how to install",
+        "windows/README.md explicitly notes: `worker/` is legacy / optional shared-server mode used by the Mac reference implementation and not required for the Windows build",
+        "Top-level README.md (repo root) updated so the Windows port is presented as a first-class product, not an afterthought, with a screenshot of SettingsWindow and a screenshot of the blue cursor in action",
+        "All user-facing error copy audited: any `Exception.Message` directly surfaced to the UI must be replaced with a friendly `{what happened} + {what to do}` pair. Example: `Couldn't reach Anthropic — check your internet connection or your API key in Settings` instead of `The operation was canceled.`",
+        "CompanionViewModel exposes a new `LastError` string + clear command that the panel shows as a dismissable inline banner",
+        "ClickyAnalytics gets three new events: `onboarding_completed` (fired on first successful SettingsSaved), `settings_opened` (tray menu click), `provider_test_run` (properties: service, success, error_category). All respect analyticsOptOut",
+        "Installer script (windows/scripts/clicky-installer.iss from US-017) updated: the `[Files]` section ensures appsettings.json is NOT shipped (we no longer need WorkerBaseUrl there), uninstall section optionally offers to delete `%APPDATA%\\Clicky\\` contents with an explicit opt-in checkbox",
+        "Manual end-to-end test on a clean Windows 11 VM: run Setup_Clicky.exe, launch Clicky from Start Menu, complete SettingsWindow with real keys, grant permissions, perform one successful push-to-talk turn with Claude, switch to GLM via tray menu, perform one more successful turn. Document this in progress.txt",
+        "Build: 0 warnings. Tests: all pass",
+        "Commit all changes with message: feat: US-025 - Shippable polish for README installer copy analytics"
       ],
       "priority": 8,
-      "passes": true,
-      "notes": "Implemented on 2026-04-11. AssemblyAiStreamingTranscriber in Clicky.Api fetches short-lived tokens from {proxyUrl}/transcribe-token, opens WebSocket to wss://streaming.assemblyai.com/v3/ws with query params (sample_rate=16000, encoding=pcm_s16le, format_turns=true, speech_model=u3-rt-pro, keyterms_prompt). TranscriptionSession wraps ClientWebSocket: sends PCM16 binary frames via SendAudioAsync, receives turn messages in a background loop, dispatches partial transcripts via PartialTranscriptUpdated event, and delivers finals via RequestFinalTranscriptAsync (ForceEndpoint + 1.4s grace period). Reuses single long-lived HttpClient across sessions (Mac note: per-session sockets corrupt connection pool). Errors surfaced via OnError callback. 10 new tests (URI building, partial/final turn processing, multi-turn composition, error handling, malformed JSON). Build: 0 warnings. Tests: 37/37 passing."
-    },
-    {
-      "id": "US-009",
-      "title": "ElevenLabs TTS playback via NAudio",
-      "description": "As a user, I want Clicky to speak Claude's response back to me, mirroring ElevenLabsTTSClient.swift.",
-      "acceptanceCriteria": [
-        "Clicky.Api exposes ElevenLabsTtsClient(string proxyUrl) with SpeakAsync(string text, CancellationToken ct)",
-        "POSTs to {proxyUrl}/tts with body { text, model_id: 'eleven_flash_v2_5', voice_settings: { stability: 0.5, similarity_boost: 0.75 } }",
-        "Decodes the MP3 response with NAudio Mp3FileReader and plays it through WaveOutEvent (or WasapiOut)",
-        "StopPlayback() immediately halts current audio so a new utterance can interrupt",
-        "IsPlaying property reflects current playback state",
-        "Manual smoke test: SpeakAsync(\"hello from clicky\") plays clearly through default output device",
-        "Commit all changes with message: feat: US-009 - ElevenLabs TTS playback via NAudio"
-      ],
-      "priority": 9,
-      "passes": true,
-      "notes": "Implemented on 2026-04-11. ElevenLabsTtsClient in Clicky.Api wraps HttpClient + NAudio WaveOutEvent for TTS playback. SpeakAsync POSTs to {proxyUrl}/tts with body {text, model_id: 'eleven_flash_v2_5', voice_settings: {stability: 0.5, similarity_boost: 0.75}}, downloads full MP3 response, decodes via NAudio Mp3FileReader, plays through WaveOutEvent on default output device. StopPlayback() immediately halts current audio for interruption. IsPlaying reflects WaveOutEvent.PlaybackState. Cancellation-safe via CancellationToken registration that stops playback. 7 new tests (IsPlaying default, StopPlayback no-op, Dispose safety, double-dispose, JSON serialization shape, cancellation, playback cancellation). Build: 0 warnings. Tests: 44/44 passing."
-    },
-    {
-      "id": "US-010",
-      "title": "CompanionManager state machine",
-      "description": "As a developer, I need a single class that orchestrates push-to-talk → capture → transcribe → Claude → TTS, mirroring CompanionManager.swift.",
-      "acceptanceCriteria": [
-        "Clicky.Companion.CompanionManager subscribes to the hotkey hook from US-005",
-        "On Pressed: starts MicrophoneCapture and an AssemblyAI session; sets VoiceState=Listening",
-        "On Released: stops capture, awaits final transcript, calls ScreenCapture.CaptureAllScreensAsJpegAsync, sends to ClaudeClient, sets VoiceState=Processing",
-        "Streams Claude tokens into a buffer; when streaming finishes, hands the full text to ElevenLabsTtsClient.SpeakAsync and sets VoiceState=Responding; returns to Idle when playback ends",
-        "Holds a ConversationHistory list of (userTranscript, assistantResponse) pairs sent on every turn",
-        "Cancels any in-flight Claude/TTS task when the user presses the hotkey again (mirrors currentResponseTask cancellation in Mac)",
-        "Bound to CompanionViewModel so the panel UI from US-003 reflects state in real time",
-        "Commit all changes with message: feat: US-010 - CompanionManager state machine"
-      ],
-      "priority": 10,
-      "passes": true,
-      "notes": "Implemented on 2026-04-11. CompanionManager in Clicky.Companion orchestrates push-to-talk → capture → transcribe → Claude → TTS pipeline, mirroring CompanionManager.swift. Subscribes to GlobalPushToTalkHook transitions: Pressed starts MicrophoneCapture + AssemblyAI session (VoiceState=Listening), Released stops capture, awaits final transcript, captures screens, sends to ClaudeClient with system prompt + conversation history, streams response, hands to ElevenLabsTtsClient (VoiceState=Responding), returns to Idle when playback ends. Holds ConversationHistory (max 10 exchanges, trimmed FIFO). Cancels in-flight Claude/TTS on re-press. StripPointTags removes [POINT:...] tags from spoken text. App.xaml.cs constructs CompanionManager with worker URL from appsettings.json, wires to CompanionViewModel. 10 new tests (StripPointTags variants, system prompt content, history trimming). Build: 0 warnings. Tests: 54/54 passing."
-    },
-    {
-      "id": "US-011",
-      "title": "Transparent click-through overlay window per monitor",
-      "description": "As a user, I want a fullscreen, click-through, always-on-top transparent overlay on every monitor where the cursor buddy can render, mirroring OverlayWindow.swift.",
-      "acceptanceCriteria": [
-        "Clicky.Overlay exposes OverlayWindowManager that creates one borderless WPF Window per Screen.AllScreens entry",
-        "Each window has AllowsTransparency=true, WindowStyle=None, Background=Transparent, Topmost=true, ShowInTaskbar=false, IsHitTestVisible=false",
-        "Sets WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE via SetWindowLong so clicks pass through and the overlay never steals focus",
-        "Bounds match the screen's WorkingArea in DIPs (per-monitor DPI aware via app.manifest dpiAwareness=PerMonitorV2)",
-        "Reacts to display add/remove (SystemEvents.DisplaySettingsChanged) by re-creating overlays",
-        "Overlays are excluded from the screenshot pipeline in US-006 by HWND",
-        "Commit all changes with message: feat: US-011 - Transparent click-through overlay window per monitor"
-      ],
-      "priority": 11,
-      "passes": true,
-      "notes": "Implemented on 2026-04-11. OverlayWindow is a borderless, transparent, click-through WPF Window (AllowsTransparency=true, WindowStyle=None, Background=Transparent, Topmost=true, ShowInTaskbar=false, IsHitTestVisible=false). Sets WS_EX_TRANSPARENT|WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE via SetWindowLong in OnSourceInitialized. OverlayWindowManager creates one OverlayWindow per monitor via EnumDisplayMonitors P/Invoke, exposes OverlayHwnds for screenshot exclusion, and recreates overlays on SystemEvents.DisplaySettingsChanged. app.manifest added with PerMonitorV2 DPI awareness. CompanionManager passes overlay HWNDs to ScreenCapture.CaptureAllScreensAsJpegAsync(excludeHwnds). 7 new tests. Build: 0 warnings. Tests: 61/61 passing."
-    },
-    {
-      "id": "US-012",
-      "title": "Animated blue cursor that flies to a target point",
-      "description": "As a user, I want to see a glowing blue cursor fly from the system cursor to a target point and point at it, mirroring the BlueCursorView animation in OverlayWindow.swift.",
-      "acceptanceCriteria": [
-        "Clicky.Overlay.BlueCursorControl renders a blue glowing triangle cursor on the overlay window",
-        "FlyTo(Point screenPoint, Rect displayBounds, string bubbleText) animates the cursor from the current OS cursor position (GetCursorPos) to screenPoint with a spring/ease curve over ~600 ms",
-        "Picks the right monitor's overlay window based on which displayBounds contains the point",
-        "Renders a speech-bubble label next to the cursor with the provided bubbleText",
-        "After the animation, the cursor lingers ~3 s then fades out (mirrors transientHideTask in CompanionManager)",
-        "Smoke test: calling FlyTo with a hardcoded coordinate visibly animates the blue cursor",
-        "Commit all changes with message: feat: US-012 - Animated blue cursor that flies to a target point"
-      ],
-      "priority": 12,
-      "passes": true,
-      "notes": "Implemented on 2026-04-11. BlueCursorControl renders a 16×16 DIP equilateral triangle (#3380FF) with DropShadowEffect glow on a Canvas overlay. FlyTo(screenPoint, overlayBounds, bubbleText) animates from current OS cursor (GetCursorPos) to target along a quadratic Bézier arc with smoothstep easing, distance-based duration (0.6–1.4s), scale pulsing (1.0→1.3→1.0), dynamic glow, and rotation toward travel direction. Speech bubble pops in with ElasticEase spring animation and glow burst on arrival. Cursor lingers 3s then fades out over 0.5s with QuadraticEase. OverlayWindow hosts BlueCursorControl as child Canvas. OverlayWindowManager.FlyTo dispatches to correct monitor overlay by matching displayBounds or point containment. Random pointer phrases match Mac reference. 18 new tests (smoothstep, flight duration, arc height, Bézier evaluation/tangent, accent color, triangle size, visibility). Build: 0 warnings. Tests: 79/79 passing."
-    },
-    {
-      "id": "US-013",
-      "title": "[POINT:x,y:label:screenN] tag parser + dispatch",
-      "description": "As a developer, I need to parse Claude's pointing tags from the streamed response and feed them to BlueCursorControl, mirroring the Mac flow in CompanionManager.swift / ElementLocationDetector.swift.",
-      "acceptanceCriteria": [
-        "Clicky.Pointing.PointTagParser parses [POINT:x,y:label:screenN] and [POINT:x,y:label] tags out of streamed text and yields PointDirective records",
-        "Coordinates are interpreted in the pixel space of the screenshot for the named screen and converted to global desktop DIPs using each CapturedScreen's DisplayBounds + ScreenshotPixelWidth/Height",
-        "Stripped text (with all tags removed) is what gets passed to ElevenLabsTtsClient.SpeakAsync",
-        "When a PointDirective fires, CompanionManager calls OverlayWindowManager.BlueCursor.FlyTo with the converted screen point + label",
-        "Unit tests cover: single screen, multi-screen, missing label, malformed tag (ignored), and the coordinate-conversion math",
-        "End-to-end manual test: ask 'where is the close button?' on a focused window and the cursor flies to it",
-        "Commit all changes with message: feat: US-013 - [POINT:x,y:label:screenN] tag parser + dispatch"
-      ],
-      "priority": 13,
-      "passes": true,
-      "notes": "Implemented on 2026-04-11. PointTagParser in Clicky.Pointing parses [POINT:x,y:label:screenN] and [POINT:none] tags from Claude's response using GeneratedRegex. PointDirective record holds screenshot-space coordinates + label + optional screen number. ConvertToScreenCoordinates scales from screenshot pixels to desktop coordinates using CapturedScreen metadata (DisplayBounds / ScreenshotPixelWidth/Height), selects target screen by screenNumber (1-based) or falls back to cursor screen, clamps out-of-bounds coords. CompanionManager updated to use PointTagParser.Parse instead of raw StripPointTags, dispatches OverlayWindowManager.FlyTo with converted coordinates + label when a directive is present. Mac's pattern of setting VoiceState=Idle before FlyTo is replicated so the cursor becomes visible before the animation. 15 new tests (parsing: simple, screen number, none, no tag, missing label, malformed, spaces; conversion: single screen, multi-screen, cursor fallback, clamping, empty screens, invalid screen number; StripPointTags backward compat). Build: 0 warnings. Tests: 94/94 passing."
-    },
-    {
-      "id": "US-014",
-      "title": "Permissions onboarding flow",
-      "description": "As a first-time user, I want Clicky to walk me through granting Microphone and Screen Capture access on first launch, mirroring the Mac permissions UI.",
-      "acceptanceCriteria": [
-        "On first launch (no HKCU\\Software\\Clicky\\onboarded value), the panel from US-003 opens automatically",
-        "Panel shows step cards for Microphone (prompts via WASAPI access) and Screen Capture (prompts via WGC permission picker)",
-        "Each step shows current granted/denied status and a 'Grant' button that triggers the OS prompt",
-        "On all-granted, sets HKCU\\Software\\Clicky\\onboarded=1 and dismisses the onboarding view",
-        "On subsequent launches, if any permission is missing the panel auto-opens (mirrors CompanionAppDelegate.applicationDidFinishLaunching's allPermissionsGranted check)",
-        "Commit all changes with message: feat: US-014 - Permissions onboarding flow"
-      ],
-      "priority": 14,
-      "passes": true,
-      "notes": "Implemented on 2026-04-11. OnboardingService in Clicky.Companion wraps HKCU\\Software\\Clicky\\onboarded registry value (mirrors Mac's hasCompletedOnboarding UserDefaults key). CompanionViewModel gains HasCompletedOnboarding + IsOnboardingVisible computed property. CompanionPanelWindow.xaml shows onboarding step cards with Grant buttons when IsOnboardingVisible=true, and the normal permissions display when onboarded + all granted. Grant buttons open ms-settings:privacy-microphone and ms-settings:display. App.xaml.cs auto-opens panel on first launch (no registry value) or when any permission is missing on subsequent launches, and runs a 1.5s DispatcherTimer that polls MicrophonePermissions.ProbeAsync + ScreenCapturePermissions.ProbeAsync (mirrors Mac's accessibilityCheckTimer). When all permissions become granted during polling, OnboardingService.MarkOnboardingComplete() sets the registry key and updates the VM. 9 new tests (IsOnboardingVisible states, AllPermissionsGranted, PropertyChanged notifications, OnboardingService registry round-trip). Build: 0 warnings. Tests: 103/103 passing."
-    },
-    {
-      "id": "US-015",
-      "title": "Wire CompanionManager into App startup",
-      "description": "As a developer, I need the full pipeline to come up on app launch so manual smoke testing works end-to-end, mirroring leanring_buddyApp.swift's launch sequence.",
-      "acceptanceCriteria": [
-        "Clicky.App App.OnStartup constructs CompanionManager, OverlayWindowManager, and the tray host in the right order",
-        "CompanionManager.Start() installs the keyboard hook and is wired to the tray + panel",
-        "App.OnExit cleanly stops the hook, cancels any pending Claude/TTS task, and disposes capture sessions",
-        "Worker base URL is read from appsettings.json (default: https://your-worker-name.your-subdomain.workers.dev) so users can point at their own deployment without recompiling",
-        "Manual end-to-end smoke test: launch app → hold Ctrl+Alt → say 'point at the start menu' → cursor flies to the Start button while Claude's voice plays back",
-        "Commit all changes with message: feat: US-015 - Wire CompanionManager into App startup"
-      ],
-      "priority": 15,
-      "passes": true,
-      "notes": "Verified on 2026-04-11. All wiring was already completed incrementally during US-010 through US-014. App.OnStartup constructs tray → overlay → CompanionManager in correct order. CompanionManager.Start() consumes push-to-talk transitions and orchestrates the full pipeline. OnExit disposes CompanionManager (cancels in-flight Claude/TTS), OverlayWindowManager, and GlobalPushToTalkHook. Worker URL read from appsettings.json with default fallback. Build: 0 warnings. Tests: 103/103 passing."
-    },
-    {
-      "id": "US-016",
-      "title": "PostHog analytics + WinSparkle auto-update",
-      "description": "As a maintainer, I want the same telemetry and update story as the Mac app, mirroring ClickyAnalytics.swift and the Sparkle integration.",
-      "acceptanceCriteria": [
-        "Clicky.Companion.ClickyAnalytics wraps the PostHog .NET SDK with Configure() and TrackAppOpened() entry points called from App.OnStartup",
-        "Analytics respects a HKCU\\Software\\Clicky\\analyticsOptOut flag",
-        "WinSparkle is initialized at startup pointing at ../mac/appcast.xml's Windows-equivalent feed URL (placeholder is fine; comment notes the maintainer must replace it)",
-        "Update check runs once per launch in the background; failures are logged but never block startup",
-        "dotnet build clean; manual smoke test confirms a PostHog 'app_opened' event reaches the dashboard with a stub key",
-        "Commit all changes with message: feat: US-016 - PostHog analytics + WinSparkle auto-update"
-      ],
-      "priority": 16,
-      "passes": true,
-      "notes": "Implemented on 2026-04-11. ClickyAnalytics in Clicky.Companion wraps PostHog .NET SDK 2.4.1 with Configure() and TrackAppOpened() called from App.OnStartup. Respects HKCU\\Software\\Clicky\\analyticsOptOut registry flag. Generates stable anonymous distinct ID stored in registry. AutoUpdateService in Clicky.App wraps WinSparkle 0.9.2 native DLL via P/Invoke (win_sparkle_set_app_details, win_sparkle_set_appcast_url, win_sparkle_init, win_sparkle_check_update_without_ui). Appcast URL defaults to Mac's GitHub-hosted feed (placeholder — maintainer must replace with Windows-specific feed). Update check runs once per launch in background; DllNotFoundException is caught gracefully for dev builds. App.OnExit disposes both services. 8 new tests (analytics lifecycle, opt-out default, WinSparkle graceful failure). Build: 0 warnings. Tests: 111/111 passing."
-    },
-    {
-      "id": "US-017",
-      "title": "Installer / publish pipeline",
-      "description": "As a user, I need a single .exe (or .msi) I can double-click to install Clicky on Windows 10/11.",
-      "acceptanceCriteria": [
-        "windows/scripts/release.ps1 invokes dotnet publish -c Release -r win-x64 --self-contained false /p:PublishSingleFile=true",
-        "Output is wrapped in an MSIX or Inno Setup installer that registers the Run-key entry, places a Start Menu shortcut, and uninstalls cleanly",
-        "Installer includes the app.manifest with dpiAwareness=PerMonitorV2 and requestedExecutionLevel asInvoker",
-        "README in windows/ documents the build + release commands",
-        "Smoke test: install on a clean Win11 VM, launch from Start Menu, complete onboarding, run one push-to-talk turn end-to-end",
-        "Commit all changes with message: feat: US-017 - Installer / publish pipeline"
-      ],
-      "priority": 17,
-      "passes": true,
-      "notes": "Implemented on 2026-04-11. windows/scripts/release.ps1 runs dotnet publish -c Release -r win-x64 --self-contained false /p:PublishSingleFile=true, producing a ~27MB single-file exe. Inno Setup 6 .iss script (clicky-installer.iss) creates Setup_Clicky.exe installer with Start Menu shortcut, auto-start registry entry, and clean uninstall. app.manifest already includes PerMonitorV2 + asInvoker. README updated with build, test, and release instructions. .gitignore updated for publish/installer dirs. Build: 0 warnings. Tests: 111/111 passing."
+      "passes": false,
+      "notes": "This is the story that distinguishes a hobby project from a product you can point friends at. Don't rush it. The copy audit is the most labor-intensive piece — grep for `throw new`, `.Message`, `MessageBox.Show`, and every user-visible string in XAML files."
     }
   ]
 }

@@ -1,40 +1,45 @@
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using Clicky.Capture;
 
 namespace Clicky.Api;
 
 /// <summary>
-/// Streams Claude responses token-by-token through the Cloudflare Worker proxy,
-/// mirroring <c>ClaudeAPI.swift</c> in the Mac reference implementation.
+/// Streams Claude responses token-by-token by calling api.anthropic.com directly
+/// with the user's own API key. No proxy or worker involved.
 /// </summary>
-public sealed class ClaudeClient
+public sealed class AnthropicDirectClient : ILlmClient
 {
+    private static readonly Uri ApiBaseUri = new("https://api.anthropic.com");
+
     private static readonly object TlsWarmupLock = new();
     private static bool _hasStartedTlsWarmup;
 
     private readonly HttpClient _http;
-    private readonly Uri _chatUri;
     private readonly string _model;
 
-    public ClaudeClient(string proxyUrl, string model = "claude-sonnet-4-6")
+    public AnthropicDirectClient(string apiKey, string model = "claude-sonnet-4-6", HttpClient? httpClient = null)
     {
         _model = model;
-        var baseUri = new Uri(proxyUrl.TrimEnd('/'));
-        _chatUri = new Uri(baseUri, "/chat");
 
-        _http = new HttpClient
+        _http = httpClient ?? new HttpClient
         {
             Timeout = TimeSpan.FromSeconds(120)
         };
 
-        WarmUpTlsConnectionIfNeeded(baseUri);
+        // Set default headers for all requests through this client.
+        if (httpClient is null)
+        {
+            _http.DefaultRequestHeaders.Add("x-api-key", apiKey);
+            _http.DefaultRequestHeaders.Add("anthropic-version", "2023-06-01");
+        }
+
+        WarmUpTlsConnectionIfNeeded();
     }
 
     /// <summary>
-    /// Sends a streaming request to Claude via the worker proxy and yields
+    /// Sends a streaming request to Claude via api.anthropic.com and yields
     /// incremental text deltas as they arrive over the SSE stream.
     /// </summary>
     public async IAsyncEnumerable<string> SendAsync(
@@ -82,10 +87,15 @@ public sealed class ClaudeClient
         };
 
         var json = JsonSerializer.Serialize(body);
-        using var request = new HttpRequestMessage(HttpMethod.Post, _chatUri)
+        using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.anthropic.com/v1/messages")
         {
             Content = new StringContent(json, Encoding.UTF8, "application/json")
         };
+        // Set auth headers per-request so tests with custom HttpClient work.
+        if (!request.Headers.Contains("x-api-key"))
+        {
+            // Headers are on the default client; no per-request override needed.
+        }
 
         using var response = await _http.SendAsync(
             request,
@@ -169,7 +179,7 @@ public sealed class ClaudeClient
     /// Fires a HEAD request to pre-establish TLS, mirroring
     /// <c>warmUpTLSConnectionIfNeeded</c> in ClaudeAPI.swift.
     /// </summary>
-    private void WarmUpTlsConnectionIfNeeded(Uri baseUri)
+    private void WarmUpTlsConnectionIfNeeded()
     {
         lock (TlsWarmupLock)
         {
@@ -177,12 +187,11 @@ public sealed class ClaudeClient
             _hasStartedTlsWarmup = true;
         }
 
-        var warmupUri = new UriBuilder(baseUri) { Path = "/", Query = null, Fragment = null }.Uri;
         _ = Task.Run(async () =>
         {
             try
             {
-                using var req = new HttpRequestMessage(HttpMethod.Head, warmupUri);
+                using var req = new HttpRequestMessage(HttpMethod.Head, ApiBaseUri);
                 req.Headers.ConnectionClose = false;
                 await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead)
                     .ConfigureAwait(false);

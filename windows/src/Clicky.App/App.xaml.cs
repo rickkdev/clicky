@@ -4,6 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Threading;
+using Clicky.Api;
 using Clicky.Audio;
 using Clicky.Capture;
 using Clicky.Companion;
@@ -87,15 +88,28 @@ public partial class App : Application
         _overlayManager = new OverlayWindowManager();
         _overlayManager.Start();
 
-        // Read worker base URL from appsettings.json.
+        // Read worker base URL from appsettings.json (still used for audio clients
+        // until US-021 migrates them to direct API calls).
         var workerBaseUrl = ReadWorkerBaseUrl();
 
+        // Construct the direct-to-Anthropic LLM client with the user's own key.
+        // Temporary: reads from env var. US-019 will replace this with
+        // SecretsStore/SettingsStore plumbing.
+        var llmClient = new AnthropicDirectClient(
+            apiKey: Environment.GetEnvironmentVariable("CLICKY_ANTHROPIC_API_KEY") ?? "sk-placeholder",
+            model: "claude-sonnet-4-6");
+
+        var transcriber = new AssemblyAiStreamingTranscriber(workerBaseUrl);
+        var ttsClient = new ElevenLabsTtsClient(workerBaseUrl);
+
         // Create and start the CompanionManager state machine that orchestrates
-        // push-to-talk → capture → transcribe → Claude → TTS.
+        // push-to-talk → capture → transcribe → LLM → TTS.
         _companionManager = new CompanionManager(
             _companionViewModel,
             _pushToTalkHook,
-            workerBaseUrl,
+            llmClient,
+            transcriber,
+            ttsClient,
             Dispatcher,
             _overlayManager);
         _companionManager.Start();

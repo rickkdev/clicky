@@ -72,7 +72,7 @@ public class ClaudeClientTests
             var payload = line.Substring(6);
             if (payload == "[DONE]") break;
 
-            var textDelta = ClaudeClient.ExtractTextDelta(payload);
+            var textDelta = AnthropicDirectClient.ExtractTextDelta(payload);
             if (textDelta is not null)
                 deltas.Add(textDelta);
         }
@@ -89,17 +89,17 @@ public class ClaudeClientTests
     public void ExtractTextDelta_ReturnsNull_ForNonDeltaEvents()
     {
         var messageStart = """{"type":"message_start","message":{"id":"msg_01"}}""";
-        Assert.Null(ClaudeClient.ExtractTextDelta(messageStart));
+        Assert.Null(AnthropicDirectClient.ExtractTextDelta(messageStart));
 
         var contentBlockStop = """{"type":"content_block_stop","index":0}""";
-        Assert.Null(ClaudeClient.ExtractTextDelta(contentBlockStop));
+        Assert.Null(AnthropicDirectClient.ExtractTextDelta(contentBlockStop));
     }
 
     [Fact]
     public void ExtractTextDelta_ReturnsNull_ForMalformedJson()
     {
-        Assert.Null(ClaudeClient.ExtractTextDelta("not json at all"));
-        Assert.Null(ClaudeClient.ExtractTextDelta("{broken"));
+        Assert.Null(AnthropicDirectClient.ExtractTextDelta("not json at all"));
+        Assert.Null(AnthropicDirectClient.ExtractTextDelta("{broken"));
     }
 
     [Fact]
@@ -107,7 +107,7 @@ public class ClaudeClientTests
     {
         // PNG magic bytes: 89 50 4E 47
         byte[] pngHeader = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
-        Assert.Equal("image/png", ClaudeClient.DetectImageMediaType(pngHeader));
+        Assert.Equal("image/png", AnthropicDirectClient.DetectImageMediaType(pngHeader));
     }
 
     [Fact]
@@ -115,20 +115,20 @@ public class ClaudeClientTests
     {
         // JPEG magic bytes: FF D8 FF
         byte[] jpegHeader = [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10];
-        Assert.Equal("image/jpeg", ClaudeClient.DetectImageMediaType(jpegHeader));
+        Assert.Equal("image/jpeg", AnthropicDirectClient.DetectImageMediaType(jpegHeader));
     }
 
     [Fact]
     public void DetectImageMediaType_ShortData_DefaultsToJpeg()
     {
         byte[] twoBytes = [0x01, 0x02];
-        Assert.Equal("image/jpeg", ClaudeClient.DetectImageMediaType(twoBytes));
+        Assert.Equal("image/jpeg", AnthropicDirectClient.DetectImageMediaType(twoBytes));
     }
 
     [Fact]
     public void DetectImageMediaType_EmptyData_DefaultsToJpeg()
     {
-        Assert.Equal("image/jpeg", ClaudeClient.DetectImageMediaType(ReadOnlySpan<byte>.Empty));
+        Assert.Equal("image/jpeg", AnthropicDirectClient.DetectImageMediaType(ReadOnlySpan<byte>.Empty));
     }
 
     /// <summary>

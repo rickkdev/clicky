@@ -20,7 +20,7 @@ public sealed class CompanionManager : IDisposable
 
     private readonly CompanionViewModel _viewModel;
     private readonly GlobalPushToTalkHook _hook;
-    private readonly ClaudeClient _claudeClient;
+    private readonly ILlmClient _llmClient;
     private readonly AssemblyAiStreamingTranscriber _transcriber;
     private readonly ElevenLabsTtsClient _ttsClient;
     private readonly Dispatcher _dispatcher;
@@ -75,27 +75,7 @@ public sealed class CompanionManager : IDisposable
     public CompanionManager(
         CompanionViewModel viewModel,
         GlobalPushToTalkHook hook,
-        string workerBaseUrl,
-        Dispatcher dispatcher,
-        OverlayWindowManager? overlayManager = null)
-    {
-        _viewModel = viewModel;
-        _hook = hook;
-        _dispatcher = dispatcher;
-        _overlayManager = overlayManager;
-
-        _claudeClient = new ClaudeClient(workerBaseUrl);
-        _transcriber = new AssemblyAiStreamingTranscriber(workerBaseUrl);
-        _ttsClient = new ElevenLabsTtsClient(workerBaseUrl);
-    }
-
-    /// <summary>
-    /// Constructor for testing — accepts pre-built service instances.
-    /// </summary>
-    internal CompanionManager(
-        CompanionViewModel viewModel,
-        GlobalPushToTalkHook hook,
-        ClaudeClient claudeClient,
+        ILlmClient llmClient,
         AssemblyAiStreamingTranscriber transcriber,
         ElevenLabsTtsClient ttsClient,
         Dispatcher dispatcher,
@@ -103,7 +83,7 @@ public sealed class CompanionManager : IDisposable
     {
         _viewModel = viewModel;
         _hook = hook;
-        _claudeClient = claudeClient;
+        _llmClient = llmClient;
         _transcriber = transcriber;
         _ttsClient = ttsClient;
         _dispatcher = dispatcher;
@@ -289,7 +269,7 @@ public sealed class CompanionManager : IDisposable
 
                 // Stream Claude's response and accumulate the full text
                 var responseBuilder = new StringBuilder();
-                await foreach (var delta in _claudeClient.SendAsync(
+                await foreach (var delta in _llmClient.SendAsync(
                     historySnapshot,
                     labeledScreens,
                     CompanionSystemPrompt,
