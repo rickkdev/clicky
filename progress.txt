@@ -310,3 +310,20 @@ Branch: ralph/windows-port (continues from the completed Windows port — see ar
   - `CancellationTokenSource.Cancel()` throws `ObjectDisposedException` if the CTS was already disposed — guard with a `_disposed` flag to make disposal idempotent.
   - Manual verification still needed: launch Clicky, do one push-to-talk turn, click Quit, verify process exits from Task Manager within 1 second. No browser testing tools configured.
 ---
+
+## 2026-04-11 - US-027
+- Implemented version display across three surfaces: tray tooltip, tray context menu, and Settings window.
+- Files changed:
+  - MODIFIED: `windows/src/Clicky.App/Clicky.App.csproj` (added `<Version>1.0.0</Version>`)
+  - NEW: `windows/src/Clicky.App/VersionInfo.cs` (reads `AssemblyInformationalVersionAttribute`, strips `+commithash` suffix)
+  - MODIFIED: `windows/src/Clicky.App/TrayIconManager.cs` (tooltip shows `Clicky {version}`, disabled `Version {version}` menu item above Quit)
+  - MODIFIED: `windows/src/Clicky.App/SettingsWindow.xaml` (version TextBlock above DPAPI help footnote)
+  - MODIFIED: `windows/src/Clicky.App/SettingsWindow.xaml.cs` (sets `VersionText.Text` in constructor)
+  - NEW: `windows/tests/Clicky.Tests/VersionInfoTests.cs` (2 tests: non-empty, no commit hash suffix)
+- AutoUpdateService does not expose `LatestKnownVersion` — would require WinSparkle callback plumbing. Skipped per story instructions; TODO left for future story if needed.
+- Build: 0 warnings. Tests: 231 passed (2 new), 0 failed.
+- **Learnings for future iterations:**
+  - `<Version>` in the csproj flows into `AssemblyInformationalVersionAttribute` at build time. The SDK may append `+<commithash>` — always strip it for display.
+  - `VersionInfo.Current` is a static property suitable for use from both WPF code-behind and WinForms-style tray code without any DI.
+  - Manual verification needed: hover tray icon, right-click tray menu, open Settings — all three should show the version string.
+---

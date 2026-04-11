@@ -207,7 +207,7 @@
         "Commit all changes with message: feat: US-027 - Show version in tray and settings"
       ],
       "priority": 10,
-      "passes": false,
+      "passes": true,
       "notes": "Tiny story on purpose — the goal is a reliable visual confirmation that updates landed, not a polished About dialog. Do not add an About window, changelog viewer, or update-check button in this story. Keep the diff under ~60 lines across 4 files."
     },
     {
