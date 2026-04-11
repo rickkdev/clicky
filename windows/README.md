@@ -1,110 +1,97 @@
 # Clicky for Windows
 
-This directory holds the Windows port of Clicky, an AI buddy that lives next
-to the cursor, can see the screen, talk back through TTS, and fly to UI
-elements it wants to point at.
+Clicky is an AI buddy that lives in your system tray. Hold a keyboard shortcut,
+talk, and Clicky sees your screen, answers out loud, and can even point at
+things with a little blue cursor. It's like having a knowledgeable friend
+sitting next to you.
 
-The macOS reference implementation lives in `../mac/`. The Cloudflare Worker
-that proxies the Anthropic, AssemblyAI, and ElevenLabs APIs is shared at
-`../worker/` and is reused unchanged.
+## What you need
 
-## Target stack
+Clicky runs entirely on your machine using your own API keys. Nothing is
+shared, nothing is uploaded to Clicky's servers. You'll need accounts (and
+keys) for three services:
 
-- **Language / Runtime:** C# 12 on .NET 8 (LTS)
-- **UI:** WPF (transparent topmost overlay + tray-only host window). WPF was
-  picked over WinUI 3 because click-through, per-monitor DPI, layered
-  windows, and `WS_EX_TRANSPARENT` are battle-tested there.
-- **Tray icon:** `H.NotifyIcon` (modern Win11-friendly NotifyIcon wrapper)
-- **Global hotkey:** `SetWindowsHookEx(WH_KEYBOARD_LL)` low-level keyboard
-  hook so modifier-only chords (Ctrl+Alt) work like the Mac CGEventTap.
-- **Audio capture:** `NAudio.Wasapi` (`WasapiCapture` at the device's native
-  format, then resampled to 16 kHz mono PCM16 for AssemblyAI).
-- **Audio playback:** `NAudio` `Mp3FileReader` + `WaveOutEvent` for
-  ElevenLabs MP3 playback.
-- **Screen capture:** `Windows.Graphics.Capture` via CsWinRT, with
-  per-display `GraphicsCaptureItem`s. Falls back to DXGI Desktop Duplication
-  on Windows 10 builds without WGC permission prompts.
-- **HTTP / SSE:** `System.Net.Http.HttpClient` with `HttpCompletionOption.ResponseHeadersRead`
-  for streaming Claude responses.
-- **WebSocket:** `System.Net.WebSockets.ClientWebSocket` for the AssemblyAI
-  realtime streaming endpoint.
-- **Auto-launch:** `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
-- **Auto-update:** WinSparkle bound through P/Invoke (mirrors Sparkle on Mac).
-- **Analytics:** PostHog .NET SDK (mirrors `ClickyAnalytics.swift`).
+| Service | What it does | Get a key |
+|---------|-------------|-----------|
+| [Anthropic](https://console.anthropic.com/settings/keys) **or** [z.ai](https://z.ai/manage-apikey/apikey-list) | Powers the AI (Claude or GLM) | ~$0.01–0.05 per conversation turn |
+| [AssemblyAI](https://www.assemblyai.com/app/account) | Turns your voice into text in real time | Free tier available |
+| [ElevenLabs](https://elevenlabs.io/app/settings/api-keys) | Speaks Clicky's replies out loud | Free tier available |
 
-## Project layout (planned)
+You can use Claude (Anthropic) or GLM (z.ai) as the AI brain, or both — switch
+between them any time from the tray menu without restarting.
+
+## Installing
+
+1. Download the latest `Setup_Clicky_x.x.x.exe` from [Releases](https://github.com/julianjear/makesomething-mac-app/releases)
+2. Run the installer — it takes about 10 seconds
+3. Clicky opens automatically and walks you through entering your API keys
+4. Grant microphone and screen capture permissions when prompted
+5. Hold **Ctrl+Alt** and talk — Clicky is listening
+
+Your API keys are encrypted with your Windows account credentials (DPAPI) and
+stored only on your PC. Clicky never sends them anywhere.
+
+## Switching AI models at runtime
+
+Right-click the Clicky tray icon → **Model** to switch between:
+
+- Claude Sonnet 4.6, Haiku 4.5, Opus 4.6 (Anthropic)
+- GLM-4.6V, GLM-4.5V (z.ai)
+
+The switch takes effect immediately — no restart needed.
+
+## System requirements
+
+- Windows 10 version 1903 or later (Windows 11 recommended)
+- .NET 8 Runtime (the installer will prompt you if it's missing)
+- A working microphone
+
+## About the `worker/` directory
+
+The `worker/` directory in the repo contains a Cloudflare Worker proxy used by
+the Mac reference implementation. The Windows build talks directly to each
+service's API — the worker is not used and does not need to be deployed.
+
+## Building from source
+
+If you want to hack on Clicky yourself:
+
+### Prerequisites
+
+- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
+- (Optional) [Inno Setup 6](https://jrsoftware.org/isinfo.php) for building the installer
+
+### Build and test
+
+```powershell
+dotnet build windows/Clicky.sln
+dotnet test windows/Clicky.sln
+```
+
+### Publish a release
+
+```powershell
+powershell -ExecutionPolicy Bypass -File windows/scripts/release.ps1
+```
+
+Output:
+- **Published files:** `windows/publish/win-x64/`
+- **Installer:** `windows/installer/Setup_Clicky_0.1.0.exe`
+
+## Project layout
 
 ```
 windows/
   Clicky.sln
   src/
-    Clicky.App/                 # WPF host, App.xaml, tray bootstrap
-    Clicky.Companion/           # CompanionManager state machine
-    Clicky.Audio/               # WASAPI capture + resampler + TTS playback
-    Clicky.Capture/             # WGC multi-monitor screenshotter
-    Clicky.Hotkey/              # Low-level keyboard hook + chord parser
-    Clicky.Overlay/             # Transparent click-through cursor overlay
-    Clicky.Api/                 # Claude SSE client + AssemblyAI ws client + ElevenLabs
-    Clicky.Pointing/            # [POINT:x,y:label:screenN] parser + element locator
+    Clicky.App/          # WPF host, tray icon, settings window
+    Clicky.Companion/    # Push-to-talk state machine, settings/secrets stores
+    Clicky.Audio/        # Microphone capture + resampler
+    Clicky.Capture/      # Multi-monitor screenshot capture
+    Clicky.Hotkey/       # Global keyboard hook (Ctrl+Alt chord)
+    Clicky.Overlay/      # Transparent click-through cursor overlay
+    Clicky.Api/          # Anthropic, z.ai, AssemblyAI, ElevenLabs clients
+    Clicky.Pointing/     # [POINT:x,y:label] tag parser
   tests/
     Clicky.Tests/
 ```
-
-Each user story in `../prd.json` is sized to land in roughly one of these
-projects so a single Ralph iteration can complete it end-to-end.
-
-## Prerequisites
-
-- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) (8.0.x)
-- Windows 10 version 1903+ or Windows 11
-- (Optional) [Inno Setup 6](https://jrsoftware.org/isinfo.php) for building the installer
-
-## Building
-
-```powershell
-# Restore + build (debug)
-dotnet build windows/Clicky.sln
-
-# Run tests
-dotnet test windows/Clicky.sln
-```
-
-## Publishing a release
-
-The release script publishes a framework-dependent single-file `.exe` and
-optionally wraps it in an Inno Setup installer:
-
-```powershell
-# Full release (publish + installer if Inno Setup is installed)
-powershell -ExecutionPolicy Bypass -File windows/scripts/release.ps1
-
-# Publish only (skip installer)
-powershell -ExecutionPolicy Bypass -File windows/scripts/release.ps1 -SkipInstaller
-
-# Custom configuration / runtime
-powershell -ExecutionPolicy Bypass -File windows/scripts/release.ps1 -Configuration Debug -Runtime win-arm64
-```
-
-Output locations:
-- **Published files:** `windows/publish/win-x64/`
-- **Installer:** `windows/installer/Setup_Clicky_0.1.0.exe`
-
-### Manual publish (without the script)
-
-```powershell
-dotnet publish windows/src/Clicky.App/Clicky.App.csproj `
-    -c Release -r win-x64 --self-contained false /p:PublishSingleFile=true `
-    -o windows/publish/win-x64
-```
-
-## Configuration
-
-The worker base URL is read from `appsettings.json` at startup:
-
-```json
-{
-  "WorkerBaseUrl": "https://your-worker-name.your-subdomain.workers.dev"
-}
-```
-
-Edit this file (next to the `.exe`) to point at your own Cloudflare Worker deployment.

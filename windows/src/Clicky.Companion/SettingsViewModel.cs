@@ -408,17 +408,20 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
             if (response.IsSuccessStatusCode)
             {
                 AnthropicTestState = TestState.Success;
+                ClickyAnalytics.TrackProviderTestRun("anthropic", success: true);
             }
             else
             {
                 AnthropicTestError = FriendlyError("Anthropic", (int)response.StatusCode);
                 AnthropicTestState = TestState.Failure;
+                ClickyAnalytics.TrackProviderTestRun("anthropic", success: false, ErrorCategory((int)response.StatusCode));
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             AnthropicTestError = FriendlyError("Anthropic", ex);
             AnthropicTestState = TestState.Failure;
+            ClickyAnalytics.TrackProviderTestRun("anthropic", success: false, ErrorCategory(ex));
         }
     }
 
@@ -443,17 +446,20 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
             if (response.IsSuccessStatusCode)
             {
                 ZaiTestState = TestState.Success;
+                ClickyAnalytics.TrackProviderTestRun("zai", success: true);
             }
             else
             {
                 ZaiTestError = FriendlyError("z.ai", (int)response.StatusCode);
                 ZaiTestState = TestState.Failure;
+                ClickyAnalytics.TrackProviderTestRun("zai", success: false, ErrorCategory((int)response.StatusCode));
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             ZaiTestError = FriendlyError("z.ai", ex);
             ZaiTestState = TestState.Failure;
+            ClickyAnalytics.TrackProviderTestRun("zai", success: false, ErrorCategory(ex));
         }
     }
 
@@ -476,17 +482,20 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
             if (response.IsSuccessStatusCode)
             {
                 AssemblyAiTestState = TestState.Success;
+                ClickyAnalytics.TrackProviderTestRun("assemblyai", success: true);
             }
             else
             {
                 AssemblyAiTestError = FriendlyError("AssemblyAI", (int)response.StatusCode);
                 AssemblyAiTestState = TestState.Failure;
+                ClickyAnalytics.TrackProviderTestRun("assemblyai", success: false, ErrorCategory((int)response.StatusCode));
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             AssemblyAiTestError = FriendlyError("AssemblyAI", ex);
             AssemblyAiTestState = TestState.Failure;
+            ClickyAnalytics.TrackProviderTestRun("assemblyai", success: false, ErrorCategory(ex));
         }
     }
 
@@ -509,17 +518,20 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
             if (response.IsSuccessStatusCode)
             {
                 ElevenLabsTestState = TestState.Success;
+                ClickyAnalytics.TrackProviderTestRun("elevenlabs", success: true);
             }
             else
             {
                 ElevenLabsTestError = FriendlyError("ElevenLabs", (int)response.StatusCode);
                 ElevenLabsTestState = TestState.Failure;
+                ClickyAnalytics.TrackProviderTestRun("elevenlabs", success: false, ErrorCategory((int)response.StatusCode));
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             ElevenLabsTestError = FriendlyError("ElevenLabs", ex);
             ElevenLabsTestState = TestState.Failure;
+            ClickyAnalytics.TrackProviderTestRun("elevenlabs", success: false, ErrorCategory(ex));
         }
     }
 
@@ -558,7 +570,23 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
     {
         HttpRequestException => $"Couldn't reach {service} \u2014 check your internet connection.",
         TaskCanceledException => $"{service} didn't respond in time \u2014 try again.",
-        _ => $"Something went wrong testing {service} \u2014 {ex.Message}",
+        _ => $"Something went wrong testing {service} \u2014 please try again or check your setup.",
+    };
+
+    internal static string ErrorCategory(int statusCode) => statusCode switch
+    {
+        401 => "auth_failed",
+        403 => "forbidden",
+        429 => "rate_limited",
+        >= 500 => "server_error",
+        _ => $"http_{statusCode}",
+    };
+
+    internal static string ErrorCategory(Exception ex) => ex switch
+    {
+        HttpRequestException => "network_error",
+        TaskCanceledException => "timeout",
+        _ => "unknown",
     };
 
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null)

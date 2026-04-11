@@ -194,7 +194,11 @@ public sealed class CompanionManager : IDisposable
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"Recording error: {ex.Message}");
-            await _dispatcher.InvokeAsync(() => _viewModel.VoiceState = VoiceState.Idle);
+            await _dispatcher.InvokeAsync(() =>
+            {
+                _viewModel.LastError = "Couldn't start recording \u2014 check that your microphone is connected and allowed in Windows Settings.";
+                _viewModel.VoiceState = VoiceState.Idle;
+            });
         }
     }
 
@@ -233,7 +237,11 @@ public sealed class CompanionManager : IDisposable
         {
             System.Diagnostics.Debug.WriteLine($"Transcription error: {ex.Message}");
             session.Dispose();
-            await _dispatcher.InvokeAsync(() => _viewModel.VoiceState = VoiceState.Idle);
+            await _dispatcher.InvokeAsync(() =>
+            {
+                _viewModel.LastError = "Couldn't transcribe your speech \u2014 check your internet connection or your AssemblyAI key in Settings.";
+                _viewModel.VoiceState = VoiceState.Idle;
+            });
         }
     }
 
@@ -344,9 +352,21 @@ public sealed class CompanionManager : IDisposable
                     OpenSettingsRequested?.Invoke(this, EventArgs.Empty);
                 });
             }
-            catch (Exception ex)
+            catch (HttpRequestException httpEx) when (!IsKeyError(httpEx))
+            {
+                System.Diagnostics.Debug.WriteLine($"Response pipeline error: {httpEx.Message}");
+                await _dispatcher.InvokeAsync(() =>
+                {
+                    _viewModel.LastError = "Couldn't get a response \u2014 check your internet connection and try again.";
+                });
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException and not HttpRequestException)
             {
                 System.Diagnostics.Debug.WriteLine($"Response pipeline error: {ex.Message}");
+                await _dispatcher.InvokeAsync(() =>
+                {
+                    _viewModel.LastError = "Something went wrong \u2014 try again, and if it keeps happening, check Settings.";
+                });
             }
 
             if (!ct.IsCancellationRequested)

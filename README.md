@@ -1,5 +1,5 @@
 # Hi, this is Clicky.
-It's an AI teacher that lives as a buddy next to your cursor. It can see your screen, talk to you, and even point at stuff. Kinda like having a real teacher next to you.
+It's an AI buddy that lives next to your cursor. It can see your screen, talk to you, and even point at stuff. Kinda like having a real teacher next to you.
 
 Download it [here](https://www.clicky.so/) for free.
 
@@ -9,7 +9,25 @@ Here's the [original tweet](https://x.com/FarzaTV/status/2041314633978659092) th
 
 This is the open-source version of Clicky for those that want to hack on it, build their own features, or just see how it works under the hood.
 
-## Get started with Claude Code
+## Platforms
+
+| Platform | Status | Details |
+|----------|--------|---------|
+| **Windows** | Shipping | Bring-your-own-keys, runs entirely on your machine. See [windows/README.md](windows/README.md) |
+| **macOS** | Shipping | Uses a Cloudflare Worker proxy for API keys. See setup below |
+
+### Windows — quick start
+
+1. Download the installer from [Releases](https://github.com/julianjear/makesomething-mac-app/releases)
+2. Run it, paste your API keys (Anthropic or z.ai + AssemblyAI + ElevenLabs)
+3. Hold **Ctrl+Alt** and talk
+
+Keys are encrypted with Windows DPAPI and never leave your machine. You can
+switch between Claude and GLM at runtime from the tray menu. See
+[windows/README.md](windows/README.md) for full details, building from source,
+and system requirements.
+
+### macOS — quick start
 
 The fastest way to get this running is with [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
 
@@ -27,7 +45,7 @@ Help me set up everything — the Cloudflare Worker with my own API keys, the pr
 
 That's it. It'll clone the repo, read the docs, and walk you through the whole setup. Once you're running you can just keep talking to it — build features, fix bugs, whatever. Go crazy.
 
-## Manual setup
+## Manual macOS setup
 
 If you want to do it yourself, here's the deal.
 
@@ -41,7 +59,7 @@ If you want to do it yourself, here's the deal.
 
 ### 1. Set up the Cloudflare Worker
 
-The Worker is a tiny proxy that holds your API keys. The app talks to the Worker, the Worker talks to the APIs. This way your keys never ship in the app binary.
+The Worker is a tiny proxy that holds your API keys. The Mac app talks to the Worker, the Worker talks to the APIs. This way your keys never ship in the app binary.
 
 ```bash
 cd worker
@@ -127,21 +145,17 @@ The app will appear in your menu bar (not the dock). Click the icon to open the 
 
 If you want the full technical breakdown, read `CLAUDE.md`. But here's the short version:
 
-**Menu bar app** (no dock icon) with two `NSPanel` windows — one for the control panel dropdown, one for the full-screen transparent cursor overlay. Push-to-talk streams audio over a websocket to AssemblyAI, sends the transcript + screenshot to Claude via streaming SSE, and plays the response through ElevenLabs TTS. Claude can embed `[POINT:x,y:label:screenN]` tags in its responses to make the cursor fly to specific UI elements across multiple monitors. All three APIs are proxied through a Cloudflare Worker.
+**Menu bar / system tray app** with a control panel and a full-screen transparent cursor overlay. Push-to-talk streams audio to AssemblyAI for real-time transcription, sends the transcript + screenshots to an LLM (Claude or GLM) via streaming, and plays the response through ElevenLabs TTS. The LLM can embed `[POINT:x,y:label:screenN]` tags in its responses to make the blue cursor fly to specific UI elements across multiple monitors.
+
+- **Mac:** APIs proxied through a Cloudflare Worker (`worker/`)
+- **Windows:** Direct-to-provider with encrypted local key storage (no worker needed)
 
 ## Project structure
 
 ```
-leanring-buddy/          # Swift source (yes, the typo stays)
-  CompanionManager.swift    # Central state machine
-  CompanionPanelView.swift  # Menu bar panel UI
-  ClaudeAPI.swift           # Claude streaming client
-  ElevenLabsTTSClient.swift # Text-to-speech playback
-  OverlayWindow.swift       # Blue cursor overlay
-  AssemblyAI*.swift         # Real-time transcription
-  BuddyDictation*.swift     # Push-to-talk pipeline
-worker/                  # Cloudflare Worker proxy
-  src/index.ts              # Three routes: /chat, /tts, /transcribe-token
+leanring-buddy/          # Swift source (macOS, yes the typo stays)
+windows/                 # C# / .NET 8 / WPF (Windows)
+worker/                  # Cloudflare Worker proxy (used by Mac only)
 CLAUDE.md                # Full architecture doc (agents read this)
 ```
 

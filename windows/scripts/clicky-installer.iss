@@ -52,8 +52,9 @@ Name: "startmenu"; Description: "Create a &Start Menu shortcut"; GroupDescriptio
 Name: "autostart"; Description: "Start {#AppName} automatically when Windows starts"; GroupDescription: "Startup:"
 
 [Files]
-; Copy all published files to the install directory
-Source: "{#PublishDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Copy all published files to the install directory, excluding legacy appsettings.json
+; (API keys are now stored in %APPDATA%\Clicky via SecretsStore/SettingsStore, not in appsettings.json)
+Source: "{#PublishDir}\*"; DestDir: "{app}"; Excludes: "appsettings.json"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 ; Start Menu shortcut
@@ -80,5 +81,21 @@ Type: filesandordirs; Name: "{app}"
 Filename: "taskkill"; Parameters: "/F /IM {#AppExeName}"; Flags: runhidden; RunOnceId: "KillClicky"
 
 [Code]
-// Remove the auto-start registry entry on uninstall
-// (Inno handles this via Flags: uninsdeletevalue above)
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  AppDataDir: String;
+begin
+  if CurUninstallStep = usPostUninstall then
+  begin
+    AppDataDir := ExpandConstant('{userappdata}\Clicky');
+    if DirExists(AppDataDir) then
+    begin
+      if MsgBox('Do you also want to delete your Clicky settings and saved API keys?' + #13#10 +
+                '(These are stored in ' + AppDataDir + ')',
+                mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
+      begin
+        DelTree(AppDataDir, True, True, True);
+      end;
+    end;
+  end;
+end;

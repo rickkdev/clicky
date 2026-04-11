@@ -58,6 +58,7 @@ public partial class App : Application
                 saved = true;
                 _settingsStore.OnboardingComplete = true;
                 _companionViewModel.HasCompletedOnboarding = true;
+                ClickyAnalytics.TrackOnboardingCompleted();
             };
 
             // ShowDialog blocks until the window is closed.
@@ -336,6 +337,7 @@ public partial class App : Application
 
     private void OnSettingsClicked(object? sender, System.EventArgs e)
     {
+        ClickyAnalytics.TrackSettingsOpened();
         OpenSettingsWindow(isFirstRun: false);
     }
 

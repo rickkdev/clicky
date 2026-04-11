@@ -86,6 +86,76 @@ public static class ClickyAnalytics
     }
 
     /// <summary>
+    /// Tracks the 'onboarding_completed' event when the user finishes the first-run
+    /// settings flow and saves valid API keys for the first time.
+    /// </summary>
+    public static void TrackOnboardingCompleted()
+    {
+        try
+        {
+            _client?.Capture(
+                GetDistinctId(),
+                "onboarding_completed",
+                new System.Collections.Generic.Dictionary<string, object>
+                {
+                    ["platform"] = "windows",
+                });
+        }
+        catch
+        {
+            // Never block on analytics failure.
+        }
+    }
+
+    /// <summary>
+    /// Tracks the 'settings_opened' event when the user opens the Settings window
+    /// from the tray menu.
+    /// </summary>
+    public static void TrackSettingsOpened()
+    {
+        try
+        {
+            _client?.Capture(
+                GetDistinctId(),
+                "settings_opened",
+                new System.Collections.Generic.Dictionary<string, object>
+                {
+                    ["platform"] = "windows",
+                });
+        }
+        catch
+        {
+            // Never block on analytics failure.
+        }
+    }
+
+    /// <summary>
+    /// Tracks the 'provider_test_run' event when the user clicks a Test button
+    /// in the Settings window. Includes the service name, success/failure, and
+    /// an error category if applicable.
+    /// </summary>
+    public static void TrackProviderTestRun(string service, bool success, string? errorCategory = null)
+    {
+        try
+        {
+            var props = new System.Collections.Generic.Dictionary<string, object>
+            {
+                ["service"] = service,
+                ["success"] = success,
+                ["platform"] = "windows",
+            };
+            if (errorCategory is not null)
+                props["error_category"] = errorCategory;
+
+            _client?.Capture(GetDistinctId(), "provider_test_run", props);
+        }
+        catch
+        {
+            // Never block on analytics failure.
+        }
+    }
+
+    /// <summary>
     /// Tracks the 'model_switched' event when the user changes LLM provider/model
     /// via the tray menu. Respects the analyticsOptOut flag.
     /// </summary>
