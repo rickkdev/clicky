@@ -235,3 +235,44 @@ Reset: Fri Apr 10 21:20 CEST 2026 (full Windows-port restart)
   - The `screens` list passed to `ConvertToScreenCoordinates` must be the original captures (not `labeledScreens`), since `labeledScreens` has appended dimension text in the Label field but the same `DisplayBounds`/`ScreenshotPixelWidth`/`Height` — either works for conversion, but the original is semantically cleaner
   - Mac sets `voiceState = .idle` BEFORE setting pointing coordinates so the overlay cursor becomes visible before the fly animation — replicated on Windows by dispatching `VoiceState=Idle` then `FlyTo` in the same `InvokeAsync` call
 ---
+
+## 2026-04-11 - US-014
+- Implemented permissions onboarding flow mirroring Mac's CompanionAppDelegate.applicationDidFinishLaunching permission check
+- `OnboardingService` in `Clicky.Companion` wraps HKCU\Software\Clicky\onboarded registry value (mirrors Mac's `hasCompletedOnboarding` UserDefaults key)
+- `CompanionViewModel` gains `HasCompletedOnboarding` bool + `IsOnboardingVisible` computed property (true when not onboarded or permissions revoked)
+- `CompanionPanelWindow.xaml` updated: shows onboarding step cards with Grant buttons when `IsOnboardingVisible=true`, normal permissions display when onboarded + all granted
+- Grant buttons open Windows Settings (ms-settings:privacy-microphone, ms-settings:display) so users can enable access
+- `App.xaml.cs` auto-opens panel on first launch (no registry value) or when any permission is missing on subsequent launches
+- 1.5s `DispatcherTimer` polls `MicrophonePermissions.ProbeAsync` + `ScreenCapturePermissions.ProbeAsync` (mirrors Mac's `accessibilityCheckTimer`)
+- When all permissions become granted during polling, sets HKCU\Software\Clicky\onboarded=1 and updates HasCompletedOnboarding
+- Files changed:
+  - `windows/src/Clicky.Companion/OnboardingService.cs` (new — registry read/write for onboarded state)
+  - `windows/src/Clicky.Companion/CompanionViewModel.cs` (added HasCompletedOnboarding, IsOnboardingVisible, updated PropertyChanged notifications)
+  - `windows/src/Clicky.App/CompanionPanelWindow.xaml` (onboarding step cards with Grant buttons + BooleanToVisibilityConverter)
+  - `windows/src/Clicky.App/CompanionPanelWindow.xaml.cs` (Grant button handlers, ShowForOnboarding method)
+  - `windows/src/Clicky.App/App.xaml.cs` (permission poll timer, auto-open panel, onboarding state load, RefreshPermissionsAsync)
+  - `windows/tests/Clicky.Tests/OnboardingTests.cs` (new, 9 tests)
+- **Learnings for future iterations:**
+  - Windows Settings deep links use `ms-settings:` URI scheme — `ms-settings:privacy-microphone` opens the microphone privacy page
+  - `DispatcherTimer` is the correct WPF timer for periodic UI-thread work (not `System.Timers.Timer` which fires on thread pool)
+  - `BooleanToVisibilityConverter` is built into WPF — no need to write a custom converter for bool→Visibility binding
+  - `Dispatcher.InvokeAsync` with `DispatcherPriority.Loaded` defers work until after the window is fully initialized — useful for auto-opening the panel after all components are constructed
+  - Registry writes use `RegistryValueKind.DWord` for integer values (not String) to match the acceptance criteria format of `onboarded=1`
+---
+
+## 2026-04-11 - US-015
+- Verified that full pipeline wiring was already completed incrementally during US-010 through US-014
+- App.OnStartup constructs components in correct order: MainWindow → CompanionViewModel → CompanionPanelWindow → TrayIconManager → GlobalPushToTalkHook → OverlayWindowManager → CompanionManager
+- CompanionManager.Start() begins consuming push-to-talk transitions and orchestrates the full Pressed→Recording→Released→Claude→TTS pipeline
+- App.OnExit cleanly disposes: permission timer, CompanionManager (cancels in-flight Claude/TTS tasks), OverlayWindowManager, GlobalPushToTalkHook, TrayIconManager, and closes the panel
+- Worker base URL read from appsettings.json with default fallback (ReadWorkerBaseUrl method)
+- No code changes needed — all acceptance criteria already satisfied
+- Files verified (no changes):
+  - `windows/src/Clicky.App/App.xaml.cs` (full startup/shutdown wiring)
+  - `windows/src/Clicky.App/appsettings.json` (WorkerBaseUrl config)
+  - `windows/src/Clicky.Companion/CompanionManager.cs` (state machine with Start/Dispose)
+  - `windows/src/Clicky.Overlay/OverlayWindowManager.cs` (overlay lifecycle)
+- **Learnings for future iterations:**
+  - Wiring stories may be completed organically as individual components are built — always verify before writing new code
+  - The startup order matters: overlays must be created before CompanionManager so their HWNDs can be excluded from screen captures
+---

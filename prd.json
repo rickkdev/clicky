@@ -235,8 +235,8 @@
         "Commit all changes with message: feat: US-014 - Permissions onboarding flow"
       ],
       "priority": 14,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented on 2026-04-11. OnboardingService in Clicky.Companion wraps HKCU\\Software\\Clicky\\onboarded registry value (mirrors Mac's hasCompletedOnboarding UserDefaults key). CompanionViewModel gains HasCompletedOnboarding + IsOnboardingVisible computed property. CompanionPanelWindow.xaml shows onboarding step cards with Grant buttons when IsOnboardingVisible=true, and the normal permissions display when onboarded + all granted. Grant buttons open ms-settings:privacy-microphone and ms-settings:display. App.xaml.cs auto-opens panel on first launch (no registry value) or when any permission is missing on subsequent launches, and runs a 1.5s DispatcherTimer that polls MicrophonePermissions.ProbeAsync + ScreenCapturePermissions.ProbeAsync (mirrors Mac's accessibilityCheckTimer). When all permissions become granted during polling, OnboardingService.MarkOnboardingComplete() sets the registry key and updates the VM. 9 new tests (IsOnboardingVisible states, AllPermissionsGranted, PropertyChanged notifications, OnboardingService registry round-trip). Build: 0 warnings. Tests: 103/103 passing."
     },
     {
       "id": "US-015",
@@ -251,8 +251,8 @@
         "Commit all changes with message: feat: US-015 - Wire CompanionManager into App startup"
       ],
       "priority": 15,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Verified on 2026-04-11. All wiring was already completed incrementally during US-010 through US-014. App.OnStartup constructs tray → overlay → CompanionManager in correct order. CompanionManager.Start() consumes push-to-talk transitions and orchestrates the full pipeline. OnExit disposes CompanionManager (cancels in-flight Claude/TTS), OverlayWindowManager, and GlobalPushToTalkHook. Worker URL read from appsettings.json with default fallback. Build: 0 warnings. Tests: 103/103 passing."
     },
     {
       "id": "US-016",
