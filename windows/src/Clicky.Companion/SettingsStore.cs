@@ -122,7 +122,10 @@ public class SettingsStore
         public string LlmModel { get; set; } = "claude-sonnet-4-6";
 
         [JsonPropertyName("elevenLabsVoiceId")]
-        public string ElevenLabsVoiceId { get; set; } = "kPzsL2i3teMYv0FxEYQ6";
+        // Default to Adam — one of ElevenLabs' built-in default voices that free
+        // API tier users are allowed to synthesize. Library voices (like the
+        // previous default) require a paid plan and 402 at runtime.
+        public string ElevenLabsVoiceId { get; set; } = "pNInz6obpgDQGcFmaJgB";
 
         [JsonPropertyName("onboardingComplete")]
         public bool OnboardingComplete { get; set; }

@@ -105,7 +105,10 @@ public sealed class AssemblyAiStreamingTranscriber
 
         var json = Encoding.UTF8.GetString(buffer, 0, result.Count);
         using var doc = JsonDocument.Parse(json);
-        var type = doc.RootElement.TryGetProperty("type", out var t) ? t.GetString() : null;
+        // AssemblyAI v3 sends type values capitalized ("Begin", "Turn", "Termination", "Error").
+        // Normalize to lowercase before comparing — mirrors the Mac reference's
+        // envelope.type.lowercased() in AssemblyAIStreamingTranscriptionProvider.swift.
+        var type = doc.RootElement.TryGetProperty("type", out var t) ? t.GetString()?.ToLowerInvariant() : null;
 
         if (type == "error")
         {
@@ -300,7 +303,9 @@ public sealed class TranscriptionSession : IDisposable
         {
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
-            var type = root.TryGetProperty("type", out var t) ? t.GetString() : null;
+            // AssemblyAI v3 capitalizes type values — normalize before matching
+            // (matches the Mac reference's envelope.type.lowercased()).
+            var type = root.TryGetProperty("type", out var t) ? t.GetString()?.ToLowerInvariant() : null;
 
             switch (type)
             {

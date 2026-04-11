@@ -29,7 +29,9 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
     private string _zaiApiKey = "";
     private string _assemblyAiApiKey = "";
     private string _elevenLabsApiKey = "";
-    private string _elevenLabsVoiceId = "kPzsL2i3teMYv0FxEYQ6";
+    // Keep in sync with SettingsStore.SettingsData.ElevenLabsVoiceId — Adam,
+    // a built-in default voice that ElevenLabs' free API tier can synthesize.
+    private string _elevenLabsVoiceId = "pNInz6obpgDQGcFmaJgB";
 
     private string _selectedMicrophoneDeviceId = AudioDevices.DefaultDeviceId;
     private string _selectedSpeakerDeviceId = AudioDevices.DefaultDeviceId;

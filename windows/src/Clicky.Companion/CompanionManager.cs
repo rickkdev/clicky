@@ -175,14 +175,45 @@ public sealed class CompanionManager : IDisposable
 
     private async Task StartRecordingAsync(CancellationToken ct)
     {
+        // Step 1: start the transcription session (token fetch + websocket).
+        // Failures here are network / AssemblyAI-key related, NOT mic related —
+        // keep this error path separate so we don't blame the user's microphone
+        // for a missing API key or a broken connection.
         try
         {
-            // Start transcription session
             _activeTranscriptionSession = await _transcriber.StartSessionAsync(ct: ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        catch (Exception ex) when (IsTranscriptionAuthError(ex))
+        {
+            DebugLog.Write("Transcription auth error (AssemblyAI key missing or invalid)", ex);
+            await _dispatcher.InvokeAsync(() =>
+            {
+                _viewModel.LastError = "Your AssemblyAI key is missing or invalid. Open Settings to fix.";
+                _viewModel.VoiceState = VoiceState.Idle;
+                OpenSettingsRequested?.Invoke(this, EventArgs.Empty);
+            });
+            return;
+        }
+        catch (Exception ex)
+        {
+            DebugLog.Write("Transcription start failed", ex);
+            await _dispatcher.InvokeAsync(() =>
+            {
+                _viewModel.LastError = $"Couldn't start transcription \u2014 check your internet connection and AssemblyAI key. ({ex.Message})";
+                _viewModel.VoiceState = VoiceState.Idle;
+            });
+            return;
+        }
 
-            // Start mic capture and pipe frames to the transcription session.
-            // Honor the user's saved device selection — MicrophoneCapture falls
-            // back to the system default if the device can't be resolved.
+        // Step 2: open the mic and stream frames into the transcription session.
+        // Failures here ARE mic related (device unplugged, permission denied,
+        // unsupported format) — show a mic-specific error.
+        try
+        {
             _activeMicCapture = new MicrophoneCapture(_microphoneDeviceId);
             await foreach (var frame in _activeMicCapture.CaptureFramesAsync(ct).ConfigureAwait(false))
             {
@@ -198,13 +229,43 @@ public sealed class CompanionManager : IDisposable
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"Recording error: {ex.Message}");
+            DebugLog.Write("Microphone capture failed", ex);
+
+            // Best-effort cleanup of the transcription session we just opened.
+            try
+            {
+                if (_activeTranscriptionSession is not null)
+                {
+                    await _activeTranscriptionSession.CancelAsync().ConfigureAwait(false);
+                    _activeTranscriptionSession.Dispose();
+                }
+            }
+            catch { /* best effort */ }
+            _activeTranscriptionSession = null;
+
             await _dispatcher.InvokeAsync(() =>
             {
-                _viewModel.LastError = "Couldn't start recording \u2014 check that your microphone is connected and allowed in Windows Settings.";
+                _viewModel.LastError = $"Couldn't start recording \u2014 check that your microphone is connected and allowed in Windows Settings. ({ex.Message})";
                 _viewModel.VoiceState = VoiceState.Idle;
             });
         }
+    }
+
+    /// <summary>
+    /// Detects whether an exception from <see cref="AssemblyAiStreamingTranscriber.StartSessionAsync"/>
+    /// indicates a missing or unauthorized API key (vs. a transient network issue).
+    /// </summary>
+    private static bool IsTranscriptionAuthError(Exception ex)
+    {
+        if (ex is HttpRequestException http)
+        {
+            var msg = http.Message;
+            return msg.Contains("(401)")
+                || msg.Contains("(403)")
+                || msg.Contains("Unauthorized", StringComparison.OrdinalIgnoreCase)
+                || msg.Contains("Forbidden", StringComparison.OrdinalIgnoreCase);
+        }
+        return false;
     }
 
     private async Task StopRecordingAndProcessAsync()
@@ -240,7 +301,7 @@ public sealed class CompanionManager : IDisposable
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"Transcription error: {ex.Message}");
+            DebugLog.Write("Transcription error (stop/finalize)", ex);
             session.Dispose();
             await _dispatcher.InvokeAsync(() =>
             {
@@ -350,7 +411,7 @@ public sealed class CompanionManager : IDisposable
             }
             catch (HttpRequestException httpEx) when (IsKeyError(httpEx))
             {
-                System.Diagnostics.Debug.WriteLine($"Key error in pipeline: {httpEx.Message}");
+                DebugLog.Write("LLM key error in pipeline", httpEx);
                 await _dispatcher.InvokeAsync(() =>
                 {
                     _viewModel.LastError = "Your API key is missing or invalid. Open Settings to fix.";
@@ -359,7 +420,7 @@ public sealed class CompanionManager : IDisposable
             }
             catch (HttpRequestException httpEx) when (!IsKeyError(httpEx))
             {
-                System.Diagnostics.Debug.WriteLine($"Response pipeline error: {httpEx.Message}");
+                DebugLog.Write("Response pipeline HTTP error", httpEx);
                 await _dispatcher.InvokeAsync(() =>
                 {
                     _viewModel.LastError = "Couldn't get a response \u2014 check your internet connection and try again.";
@@ -367,7 +428,7 @@ public sealed class CompanionManager : IDisposable
             }
             catch (Exception ex) when (ex is not OperationCanceledException and not HttpRequestException)
             {
-                System.Diagnostics.Debug.WriteLine($"Response pipeline error: {ex.Message}");
+                DebugLog.Write("Response pipeline unhandled error", ex);
                 await _dispatcher.InvokeAsync(() =>
                 {
                     _viewModel.LastError = "Something went wrong \u2014 try again, and if it keeps happening, check Settings.";

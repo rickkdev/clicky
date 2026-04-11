@@ -65,7 +65,7 @@ public class ElevenLabsTtsClientTests
             Content = new ByteArrayContent(new byte[] { 0xFF, 0xFB, 0x90, 0x00 })
         });
         var httpClient = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
-        using var client = new ElevenLabsTtsClient("my-eleven-key", "kPzsL2i3teMYv0FxEYQ6", httpClient);
+        using var client = new ElevenLabsTtsClient("my-eleven-key", "pNInz6obpgDQGcFmaJgB", httpClient);
 
         try
         {
@@ -79,7 +79,7 @@ public class ElevenLabsTtsClientTests
         Assert.NotNull(handler.CapturedRequest);
         Assert.Equal(HttpMethod.Post, handler.CapturedRequest!.Method);
         Assert.Equal(
-            "https://api.elevenlabs.io/v1/text-to-speech/kPzsL2i3teMYv0FxEYQ6/stream",
+            "https://api.elevenlabs.io/v1/text-to-speech/pNInz6obpgDQGcFmaJgB/stream",
             handler.CapturedRequest.RequestUri!.ToString());
         Assert.True(handler.CapturedRequest.Headers.TryGetValues("xi-api-key", out var apiKeyValues));
         Assert.Equal("my-eleven-key", apiKeyValues!.First());

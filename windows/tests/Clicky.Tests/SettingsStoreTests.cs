@@ -37,7 +37,7 @@ public class SettingsStoreTests : IDisposable
 
         Assert.Equal("anthropic", store.LlmProvider);
         Assert.Equal("claude-sonnet-4-6", store.LlmModel);
-        Assert.Equal("kPzsL2i3teMYv0FxEYQ6", store.ElevenLabsVoiceId);
+        Assert.Equal("pNInz6obpgDQGcFmaJgB", store.ElevenLabsVoiceId);
         Assert.False(store.OnboardingComplete);
         Assert.False(store.AnalyticsOptOut);
     }

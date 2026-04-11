@@ -77,6 +77,36 @@ public class AssemblyAiTranscriberTests
     }
 
     [Fact]
+    public void ProcessMessage_CapitalizedType_IsRecognized()
+    {
+        // Regression: AssemblyAI v3 sends capitalized type values ("Begin",
+        // "Turn", "Termination", "Error"). Our port originally compared
+        // case-sensitively against lowercase literals, so a real "Turn"
+        // message was dropped on the floor and the user saw no transcript.
+        // The Mac reference normalizes via envelope.type.lowercased().
+        var capitalizedTurn = """
+            {"type":"Turn","transcript":"capitalized works","turn_order":0,"end_of_turn":true,"turn_is_formatted":true}
+            """;
+
+        var session = CreateTestSession();
+        string? received = null;
+        session.PartialTranscriptUpdated += t => received = t;
+
+        session.ProcessMessage(capitalizedTurn);
+
+        Assert.Equal("capitalized works", received);
+
+        var capitalizedError = """
+            {"type":"Error","error":"boom"}
+            """;
+        Exception? receivedError = null;
+        session.OnError += ex => receivedError = ex;
+        session.ProcessMessage(capitalizedError);
+        Assert.NotNull(receivedError);
+        Assert.Contains("boom", receivedError!.Message);
+    }
+
+    [Fact]
     public void ProcessMessage_PartialTurn_RaisesPartialEvent()
     {
         // We can't easily construct a TranscriptionSession without a real WebSocket,
