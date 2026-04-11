@@ -111,3 +111,21 @@ Reset: Fri Apr 10 21:20 CEST 2026 (full Windows-port restart)
   - `ClientWebSocket` in .NET cannot be used with a `using` statement that spans async operations if you also need the `Dispose` to happen on a different thread — use explicit `CloseOutputAsync` + `Dispose` in a `finally` block
   - To test `TranscriptionSession.ProcessMessage` without a real WebSocket, create a session with a never-connected `ClientWebSocket` — the receive loop exits immediately on error, but `ProcessMessage`/`ComposeTranscript` can be called directly via `internal` access
 ---
+
+## 2026-04-11 - US-009
+- Implemented `ElevenLabsTtsClient` in `Clicky.Api` — TTS playback via ElevenLabs through the Cloudflare Worker proxy, mirroring `ElevenLabsTTSClient.swift`
+- `SpeakAsync(text, ct)` POSTs to `{proxyUrl}/tts` with JSON body `{text, model_id: "eleven_flash_v2_5", voice_settings: {stability: 0.5, similarity_boost: 0.75}}`
+- Downloads full MP3 response (not streamed), decodes via NAudio `Mp3FileReader`, plays through `WaveOutEvent` on default output device
+- `StopPlayback()` immediately halts current audio so a new utterance can interrupt — mirrors Mac's `audioPlayer?.stop(); audioPlayer = nil`
+- `IsPlaying` property reflects `WaveOutEvent.PlaybackState == Playing`
+- Cancellation-safe: `CancellationToken` registration stops playback and sets `TaskCompletionSource` to cancelled
+- `PlayMp3Async` is `internal` for testability
+- Files changed:
+  - `windows/src/Clicky.Api/ElevenLabsTtsClient.cs` (new)
+  - `windows/src/Clicky.Api/Clicky.Api.csproj` (added NAudio 2.2.1 package reference)
+  - `windows/tests/Clicky.Tests/ElevenLabsTtsClientTests.cs` (new, 7 tests)
+- **Learnings for future iterations:**
+  - NAudio `WaveOutEvent` fires `PlaybackStopped` both on natural completion and on `Stop()` — use a `TaskCompletionSource` to bridge the event-based API to async/await
+  - `Mp3FileReader` takes ownership of the stream but needs the stream to stay alive for the duration of playback — keep both the `MemoryStream` and `Mp3FileReader` alive until `WaveOutEvent` is done
+  - The Mac implementation downloads the full MP3 before playing (not streaming) — this is sufficient for TTS utterances which are typically small
+---

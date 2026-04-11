@@ -150,8 +150,8 @@
         "Commit all changes with message: feat: US-009 - ElevenLabs TTS playback via NAudio"
       ],
       "priority": 9,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented on 2026-04-11. ElevenLabsTtsClient in Clicky.Api wraps HttpClient + NAudio WaveOutEvent for TTS playback. SpeakAsync POSTs to {proxyUrl}/tts with body {text, model_id: 'eleven_flash_v2_5', voice_settings: {stability: 0.5, similarity_boost: 0.75}}, downloads full MP3 response, decodes via NAudio Mp3FileReader, plays through WaveOutEvent on default output device. StopPlayback() immediately halts current audio for interruption. IsPlaying reflects WaveOutEvent.PlaybackState. Cancellation-safe via CancellationToken registration that stops playback. 7 new tests (IsPlaying default, StopPlayback no-op, Dispose safety, double-dispose, JSON serialization shape, cancellation, playback cancellation). Build: 0 warnings. Tests: 44/44 passing."
     },
     {
       "id": "US-010",
