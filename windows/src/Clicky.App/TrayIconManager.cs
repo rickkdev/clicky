@@ -22,6 +22,9 @@ public sealed class TrayIconManager : IDisposable
     /// </summary>
     public event EventHandler? TrayIconClicked;
 
+    /// <summary>Raised when the user clicks Settings... in the context menu.</summary>
+    public event EventHandler? SettingsClicked;
+
     public TrayIconManager()
     {
         _trayIcon = new TaskbarIcon
@@ -46,10 +49,14 @@ public sealed class TrayIconManager : IDisposable
         var openItem = new MenuItem { Header = "Open" };
         openItem.Click += (_, _) => TrayIconClicked?.Invoke(this, EventArgs.Empty);
 
+        var settingsItem = new MenuItem { Header = "Settings..." };
+        settingsItem.Click += (_, _) => SettingsClicked?.Invoke(this, EventArgs.Empty);
+
         var quitItem = new MenuItem { Header = "Quit" };
         quitItem.Click += (_, _) => Application.Current.Shutdown();
 
         menu.Items.Add(openItem);
+        menu.Items.Add(settingsItem);
         menu.Items.Add(new Separator());
         menu.Items.Add(quitItem);
 

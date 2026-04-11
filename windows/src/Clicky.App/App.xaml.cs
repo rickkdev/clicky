@@ -50,6 +50,7 @@ public partial class App : Application
         // Set up system tray icon with menu and left-click event.
         _trayIconManager = new TrayIconManager();
         _trayIconManager.TrayIconClicked += OnTrayIconClicked;
+        _trayIconManager.SettingsClicked += OnSettingsClicked;
 
         // Register for auto-start on first launch (mirrors SMAppService.mainApp.register).
         AutoStartRegistration.EnsureRegistered();
@@ -159,6 +160,27 @@ public partial class App : Application
         _companionPanel?.Toggle();
     }
 
+    private void OnSettingsClicked(object? sender, System.EventArgs e)
+    {
+        OpenSettingsWindow(isFirstRun: false);
+    }
+
+    private void OpenSettingsWindow(bool isFirstRun)
+    {
+        if (_settingsStore is null || _secretsStore is null) return;
+
+        var vm = new SettingsViewModel(_secretsStore, _settingsStore);
+        var window = new SettingsWindow(vm, isFirstRun);
+        window.SettingsSaved += OnSettingsWindowSaved;
+        window.Show();
+    }
+
+    private void OnSettingsWindowSaved(object? sender, System.EventArgs e)
+    {
+        // Settings were saved — future stories (US-023, US-024) will
+        // rebuild clients here. For now this is a no-op placeholder.
+    }
+
     /// <summary>
     /// Polls permissions every 1.5 s so the onboarding panel reflects real-time
     /// state as the user grants access in Windows Settings. Mirrors Mac's
@@ -247,6 +269,7 @@ public partial class App : Application
         if (_trayIconManager is not null)
         {
             _trayIconManager.TrayIconClicked -= OnTrayIconClicked;
+            _trayIconManager.SettingsClicked -= OnSettingsClicked;
             _trayIconManager.Dispose();
         }
         _companionPanel?.Close();
