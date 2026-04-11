@@ -11,6 +11,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="NAudio" Version="2.2.1" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Clicky.Capture\Clicky.Capture.csproj" />
   </ItemGroup>
 
