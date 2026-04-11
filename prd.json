@@ -219,8 +219,8 @@
         "Commit all changes with message: feat: US-013 - [POINT:x,y:label:screenN] tag parser + dispatch"
       ],
       "priority": 13,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented on 2026-04-11. PointTagParser in Clicky.Pointing parses [POINT:x,y:label:screenN] and [POINT:none] tags from Claude's response using GeneratedRegex. PointDirective record holds screenshot-space coordinates + label + optional screen number. ConvertToScreenCoordinates scales from screenshot pixels to desktop coordinates using CapturedScreen metadata (DisplayBounds / ScreenshotPixelWidth/Height), selects target screen by screenNumber (1-based) or falls back to cursor screen, clamps out-of-bounds coords. CompanionManager updated to use PointTagParser.Parse instead of raw StripPointTags, dispatches OverlayWindowManager.FlyTo with converted coordinates + label when a directive is present. Mac's pattern of setting VoiceState=Idle before FlyTo is replicated so the cursor becomes visible before the animation. 15 new tests (parsing: simple, screen number, none, no tag, missing label, malformed, spaces; conversion: single screen, multi-screen, cursor fallback, clamping, empty screens, invalid screen number; StripPointTags backward compat). Build: 0 warnings. Tests: 94/94 passing."
     },
     {
       "id": "US-014",

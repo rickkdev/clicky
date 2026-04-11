@@ -216,3 +216,22 @@ Reset: Fri Apr 10 21:20 CEST 2026 (full Windows-port restart)
   - `ElasticEase` with `Oscillations=1, Springiness=8` approximates SwiftUI's `Spring(response: 0.4, dampingFraction: 0.6)` for pop-in animations
   - WPF `BeginAnimation(property, null)` removes a running animation and returns the property to its base value — needed for `StopAllAnimations()` cleanup
 ---
+
+## 2026-04-11 - US-013
+- Implemented `PointTagParser` in `Clicky.Pointing` — parses `[POINT:x,y:label:screenN]` tags from Claude's streamed response and converts screenshot-space coordinates to desktop screen coordinates, mirroring `parsePointingCoordinates` in Mac's CompanionManager.swift
+- `PointTagParser.Parse(responseText)` uses `GeneratedRegex` to extract coordinate tag at end of response, returns `PointingParseResult` with stripped spoken text + optional `PointDirective` (X, Y, Label, ScreenNumber)
+- `PointTagParser.ConvertToScreenCoordinates(directive, screens)` maps screenshot pixels → desktop coordinates: selects target screen by 1-based `ScreenNumber` (falls back to cursor screen), clamps coordinates to screenshot bounds, scales by `DisplayBounds / ScreenshotPixel` ratios, offsets by display origin. No Y-flip needed on Windows (both screenshot and desktop use top-left origin, unlike Mac/AppKit)
+- `CompanionManager.SendTranscriptToClaudeWithScreenshot` updated: replaces raw `StripPointTags` with `PointTagParser.Parse`, dispatches `OverlayWindowManager.FlyTo` with converted coordinates + label when directive is present. Replicates Mac's pattern of setting `VoiceState=Idle` before FlyTo so cursor is visible before animation
+- `StripPointTags` now delegates to `PointTagParser.Parse` for consistency
+- Files changed:
+  - `windows/src/Clicky.Pointing/PointDirective.cs` (new — PointDirective + PointingParseResult records)
+  - `windows/src/Clicky.Pointing/PointTagParser.cs` (new — Parse + ConvertToScreenCoordinates)
+  - `windows/src/Clicky.Pointing/Clicky.Pointing.csproj` (added UseWPF, Clicky.Capture reference, InternalsVisibleTo)
+  - `windows/src/Clicky.Companion/CompanionManager.cs` (wired PointTagParser into response pipeline, added FlyTo dispatch)
+  - `windows/tests/Clicky.Tests/PointTagParserTests.cs` (new, 15 tests)
+- **Learnings for future iterations:**
+  - Windows uses top-left origin for both screenshot and desktop coordinates — no Y-flip is needed (unlike Mac where AppKit uses bottom-left origin and requires conversion)
+  - `GeneratedRegex` (source-generated regex) is preferred over `new Regex(...)` in .NET 8 for performance — requires `partial class` and `partial method` with `[GeneratedRegex]` attribute
+  - The `screens` list passed to `ConvertToScreenCoordinates` must be the original captures (not `labeledScreens`), since `labeledScreens` has appended dimension text in the Label field but the same `DisplayBounds`/`ScreenshotPixelWidth`/`Height` — either works for conversion, but the original is semantically cleaner
+  - Mac sets `voiceState = .idle` BEFORE setting pointing coordinates so the overlay cursor becomes visible before the fly animation — replicated on Windows by dispatching `VoiceState=Idle` then `FlyTo` in the same `InvokeAsync` call
+---

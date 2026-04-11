@@ -5,6 +5,7 @@ using Clicky.Audio;
 using Clicky.Capture;
 using Clicky.Hotkey;
 using Clicky.Overlay;
+using Clicky.Pointing;
 
 namespace Clicky.Companion;
 
@@ -302,9 +303,10 @@ public sealed class CompanionManager : IDisposable
 
                 var fullResponse = responseBuilder.ToString();
 
-                // Strip [POINT:...] tags for TTS — the spoken text should not
-                // include coordinate annotations. Full pointing dispatch is US-013.
-                var spokenText = StripPointTags(fullResponse);
+                // Parse [POINT:...] tags — extracts spoken text (tags stripped)
+                // and an optional PointDirective with screenshot-space coordinates.
+                var parseResult = PointTagParser.Parse(fullResponse);
+                var spokenText = parseResult.SpokenText;
 
                 // Save this exchange to conversation history (with point tags stripped
                 // so they don't confuse future context — mirrors Mac behavior)
@@ -312,6 +314,26 @@ public sealed class CompanionManager : IDisposable
                 if (_conversationHistory.Count > MaxConversationHistory)
                 {
                     _conversationHistory.RemoveRange(0, _conversationHistory.Count - MaxConversationHistory);
+                }
+
+                // Dispatch point directive to overlay cursor if present.
+                // Mac sets voiceState=Idle BEFORE setting pointing coordinates so the
+                // triangle cursor becomes visible before the fly animation.
+                if (parseResult.Directive is { } directive && _overlayManager is not null)
+                {
+                    var converted = PointTagParser.ConvertToScreenCoordinates(directive, screens);
+                    if (converted.HasValue)
+                    {
+                        var (screenPoint, displayBounds) = converted.Value;
+                        await _dispatcher.InvokeAsync(() =>
+                        {
+                            _viewModel.VoiceState = VoiceState.Idle;
+                            _overlayManager.FlyTo(
+                                screenPoint,
+                                displayBounds,
+                                directive.Label);
+                        });
+                    }
                 }
 
                 // Play TTS if there's text to speak
@@ -350,15 +372,11 @@ public sealed class CompanionManager : IDisposable
 
     /// <summary>
     /// Strips [POINT:...] tags from Claude's response so TTS speaks clean text.
-    /// Full parsing and dispatch to the overlay cursor is handled by US-013.
+    /// Delegates to <see cref="PointTagParser.Parse"/> for consistency.
     /// </summary>
     internal static string StripPointTags(string text)
     {
-        // Matches [POINT:none], [POINT:x,y:label], [POINT:x,y:label:screenN]
-        return System.Text.RegularExpressions.Regex.Replace(
-            text,
-            @"\[POINT:[^\]]*\]",
-            "").Trim();
+        return PointTagParser.Parse(text).SpokenText;
     }
 
     public void Dispose()
