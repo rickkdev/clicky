@@ -283,8 +283,8 @@
         "Commit all changes with message: feat: US-017 - Installer / publish pipeline"
       ],
       "priority": 17,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented on 2026-04-11. windows/scripts/release.ps1 runs dotnet publish -c Release -r win-x64 --self-contained false /p:PublishSingleFile=true, producing a ~27MB single-file exe. Inno Setup 6 .iss script (clicky-installer.iss) creates Setup_Clicky.exe installer with Start Menu shortcut, auto-start registry entry, and clean uninstall. app.manifest already includes PerMonitorV2 + asInvoker. README updated with build, test, and release instructions. .gitignore updated for publish/installer dirs. Build: 0 warnings. Tests: 111/111 passing."
     }
   ]
 }

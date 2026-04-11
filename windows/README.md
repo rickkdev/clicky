@@ -52,3 +52,59 @@ windows/
 
 Each user story in `../prd.json` is sized to land in roughly one of these
 projects so a single Ralph iteration can complete it end-to-end.
+
+## Prerequisites
+
+- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) (8.0.x)
+- Windows 10 version 1903+ or Windows 11
+- (Optional) [Inno Setup 6](https://jrsoftware.org/isinfo.php) for building the installer
+
+## Building
+
+```powershell
+# Restore + build (debug)
+dotnet build windows/Clicky.sln
+
+# Run tests
+dotnet test windows/Clicky.sln
+```
+
+## Publishing a release
+
+The release script publishes a framework-dependent single-file `.exe` and
+optionally wraps it in an Inno Setup installer:
+
+```powershell
+# Full release (publish + installer if Inno Setup is installed)
+powershell -ExecutionPolicy Bypass -File windows/scripts/release.ps1
+
+# Publish only (skip installer)
+powershell -ExecutionPolicy Bypass -File windows/scripts/release.ps1 -SkipInstaller
+
+# Custom configuration / runtime
+powershell -ExecutionPolicy Bypass -File windows/scripts/release.ps1 -Configuration Debug -Runtime win-arm64
+```
+
+Output locations:
+- **Published files:** `windows/publish/win-x64/`
+- **Installer:** `windows/installer/Setup_Clicky_0.1.0.exe`
+
+### Manual publish (without the script)
+
+```powershell
+dotnet publish windows/src/Clicky.App/Clicky.App.csproj `
+    -c Release -r win-x64 --self-contained false /p:PublishSingleFile=true `
+    -o windows/publish/win-x64
+```
+
+## Configuration
+
+The worker base URL is read from `appsettings.json` at startup:
+
+```json
+{
+  "WorkerBaseUrl": "https://your-worker-name.your-subdomain.workers.dev"
+}
+```
+
+Edit this file (next to the `.exe`) to point at your own Cloudflare Worker deployment.

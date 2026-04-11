@@ -304,3 +304,30 @@ Reset: Fri Apr 10 21:20 CEST 2026 (full Windows-port restart)
   - WinSparkle NuGet package (0.9.2) is a native C DLL — use DllImport with CallingConvention.Cdecl; catch DllNotFoundException for dev environments
   - WinSparkle's `win_sparkle_set_app_details` takes wchar_t* (Unicode), but `win_sparkle_set_appcast_url` takes char* (ANSI)
 ---
+
+## 2026-04-11 - US-017
+- Created `windows/scripts/release.ps1` — PowerShell release script that:
+  - Runs `dotnet publish -c Release -r win-x64 --self-contained false /p:PublishSingleFile=true`
+  - Produces ~27MB single-file exe in `windows/publish/win-x64/`
+  - Optionally invokes Inno Setup (iscc.exe) if installed to build the installer
+  - Supports `-SkipInstaller`, `-Configuration`, `-Runtime` params
+- Created `windows/scripts/clicky-installer.iss` — Inno Setup 6 script that:
+  - Produces `Setup_Clicky_0.1.0.exe` installer
+  - Registers HKCU Run-key for auto-start (user-level, matches AutoStartRegistration.cs)
+  - Creates Start Menu shortcut
+  - Uninstalls cleanly (kills process, removes registry entry, deletes files)
+  - Offers to launch app after install
+- Updated `windows/README.md` with prerequisites, build, test, and release instructions
+- Updated `.gitignore` to exclude `windows/publish/` and `windows/installer/`
+- app.manifest already has PerMonitorV2 + asInvoker (from US-011)
+- Verified `dotnet publish` succeeds and produces correct output
+- Files changed:
+  - `windows/scripts/release.ps1` (new)
+  - `windows/scripts/clicky-installer.iss` (new)
+  - `windows/README.md` (updated with build/release docs)
+  - `.gitignore` (added publish/installer exclusions)
+- **Learnings for future iterations:**
+  - `/p:` MSBuild properties need quoting in bash (`"-p:PublishSingleFile=true"`) to avoid being split as separate args
+  - Inno Setup 6 `{autopf}` resolves to the correct Program Files path based on architecture
+  - `PrivilegesRequired=lowest` in Inno Setup allows per-user install without elevation
+---

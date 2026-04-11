@@ -13,6 +13,8 @@ coding-plans/
 *.user
 *.suo
 .vs/
+windows/publish/
+windows/installer/
 
 # Ralph runtime state
 .last-branch
