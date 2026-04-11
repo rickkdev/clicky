@@ -14,6 +14,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Update="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Clicky.Companion\Clicky.Companion.csproj" />
     <ProjectReference Include="..\Clicky.Audio\Clicky.Audio.csproj" />
     <ProjectReference Include="..\Clicky.Capture\Clicky.Capture.csproj" />
