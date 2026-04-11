@@ -22,6 +22,8 @@ Reset: Fri Apr 10 21:20 CEST 2026 (full Windows-port restart)
 - TFM: all projects target `net8.0-windows10.0.19041.0` (not plain `net8.0-windows`). Changing one project's TFM cascades to ALL projects that reference it — update them all together.
 - `LibraryImport` source generators don't handle delegate params with `ref` — use `DllImport` for callbacks like `MonitorEnumProc`.
 - WGC Win11+ APIs (IsBorderRequired, IsCursorCaptureEnabled) must be called via reflection when targeting SDK 10.0.19041.
+- Overlay windows must set `WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE` via `SetWindowLong` in `OnSourceInitialized` — these Win32 flags cannot be set via WPF properties alone.
+- `app.manifest` with `PerMonitorV2` is required for correct overlay/capture coordinates on mixed-DPI multi-monitor setups.
 
 ## Completed Stories
 
@@ -158,4 +160,29 @@ Reset: Fri Apr 10 21:20 CEST 2026 (full Windows-port restart)
   - The Mac `sendTranscriptToClaudeWithScreenshot` sets `voiceState = .idle` BEFORE setting pointing coordinates so the triangle cursor becomes visible before the fly animation — the Windows port will need to replicate this in US-013 when PointTagParser + OverlayWindowManager are wired in.
   - Mac appends dimension info to screenshot labels (e.g., `(image dimensions: 1280x831 pixels)`) so Claude can return coordinates in the correct pixel space — this is done in CompanionManager, not in ScreenCapture itself.
   - `Dispatcher.InvokeAsync` is needed for all ViewModel property updates from background tasks — WPF bindings are thread-affine.
+---
+
+## 2026-04-11 - US-011
+- Implemented transparent click-through overlay windows for each monitor in `Clicky.Overlay`, mirroring `OverlayWindow.swift` from the Mac reference
+- `OverlayWindow` is a borderless, transparent, always-on-top WPF Window: `AllowsTransparency=true`, `WindowStyle=None`, `Background=Transparent`, `Topmost=true`, `ShowInTaskbar=false`, `IsHitTestVisible=false`
+- Sets `WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE` via `SetWindowLong` in `OnSourceInitialized` so clicks pass through, it never appears in Alt+Tab, and it never steals focus
+- `OverlayWindowManager` creates one `OverlayWindow` per connected monitor via `EnumDisplayMonitors` P/Invoke, exposes `OverlayHwnds` for screenshot exclusion, and recreates overlays on `SystemEvents.DisplaySettingsChanged`
+- Added `app.manifest` to `Clicky.App` with `dpiAwareness=PerMonitorV2` for correct overlay coordinate math on mixed-DPI multi-monitor setups
+- `CompanionManager` updated to accept `OverlayWindowManager` and pass overlay HWNDs to `ScreenCapture.CaptureAllScreensAsJpegAsync(excludeHwnds)` so overlays don't appear in screenshots sent to Claude
+- `App.xaml.cs` creates and starts `OverlayWindowManager` before `CompanionManager`, disposes on exit
+- Files changed:
+  - `windows/src/Clicky.Overlay/NativeMethods.cs` (new — P/Invoke for SetWindowLong, GetWindowLong, EnumDisplayMonitors, GetMonitorInfo)
+  - `windows/src/Clicky.Overlay/OverlayWindow.cs` (new — transparent click-through WPF Window)
+  - `windows/src/Clicky.Overlay/OverlayWindowManager.cs` (new — one overlay per monitor, display change handling)
+  - `windows/src/Clicky.Overlay/Clicky.Overlay.csproj` (added System.Drawing.Common, InternalsVisibleTo)
+  - `windows/src/Clicky.App/app.manifest` (new — PerMonitorV2 DPI awareness)
+  - `windows/src/Clicky.App/App.xaml.cs` (added OverlayWindowManager lifecycle)
+  - `windows/src/Clicky.Companion/CompanionManager.cs` (added OverlayWindowManager dependency, overlay HWND exclusion)
+  - `windows/tests/Clicky.Tests/OverlayWindowManagerTests.cs` (new, 7 tests)
+- **Learnings for future iterations:**
+  - Clicky.Overlay has its own P/Invoke for `EnumDisplayMonitors`/`GetMonitorInfo` to avoid a circular dependency with Clicky.Capture. Both projects enumerate monitors independently.
+  - `WS_EX_TRANSPARENT` on WPF windows with `AllowsTransparency=true` makes mouse clicks fully pass through to underlying windows. This is the Win32 equivalent of Mac's `ignoresMouseEvents = true`.
+  - `WS_EX_TOOLWINDOW` prevents the overlay from appearing in Alt+Tab, equivalent to Mac's `.fullScreenAuxiliary` collection behavior.
+  - `SystemEvents.DisplaySettingsChanged` fires on the UI thread when the app has a WPF message pump — safe to create/destroy windows directly in the handler.
+  - The `app.manifest` with `PerMonitorV2` DPI awareness is critical for overlay positioning — without it, WPF uses System DPI scaling and overlay bounds won't match monitor pixels on mixed-DPI setups.
 ---

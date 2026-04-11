@@ -7,6 +7,7 @@ using Clicky.Audio;
 using Clicky.Capture;
 using Clicky.Companion;
 using Clicky.Hotkey;
+using Clicky.Overlay;
 
 namespace Clicky.App;
 
@@ -17,6 +18,7 @@ public partial class App : Application
     private CompanionViewModel? _companionViewModel;
     private GlobalPushToTalkHook? _pushToTalkHook;
     private CompanionManager? _companionManager;
+    private OverlayWindowManager? _overlayManager;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -47,6 +49,12 @@ public partial class App : Application
         _pushToTalkHook = new GlobalPushToTalkHook(_companionViewModel.PushToTalkShortcut);
         _pushToTalkHook.Start();
 
+        // Create transparent overlay windows for each monitor (US-011).
+        // Must be created on the dispatcher thread before CompanionManager
+        // so overlay HWNDs can be excluded from screen captures.
+        _overlayManager = new OverlayWindowManager();
+        _overlayManager.Start();
+
         // Read worker base URL from appsettings.json.
         var workerBaseUrl = ReadWorkerBaseUrl();
 
@@ -56,7 +64,8 @@ public partial class App : Application
             _companionViewModel,
             _pushToTalkHook,
             workerBaseUrl,
-            Dispatcher);
+            Dispatcher,
+            _overlayManager);
         _companionManager.Start();
     }
 
@@ -116,6 +125,9 @@ public partial class App : Application
     {
         _companionManager?.Dispose();
         _companionManager = null;
+
+        _overlayManager?.Dispose();
+        _overlayManager = null;
 
         _pushToTalkHook?.Dispose();
         _pushToTalkHook = null;

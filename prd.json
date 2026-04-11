@@ -185,8 +185,8 @@
         "Commit all changes with message: feat: US-011 - Transparent click-through overlay window per monitor"
       ],
       "priority": 11,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented on 2026-04-11. OverlayWindow is a borderless, transparent, click-through WPF Window (AllowsTransparency=true, WindowStyle=None, Background=Transparent, Topmost=true, ShowInTaskbar=false, IsHitTestVisible=false). Sets WS_EX_TRANSPARENT|WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE via SetWindowLong in OnSourceInitialized. OverlayWindowManager creates one OverlayWindow per monitor via EnumDisplayMonitors P/Invoke, exposes OverlayHwnds for screenshot exclusion, and recreates overlays on SystemEvents.DisplaySettingsChanged. app.manifest added with PerMonitorV2 DPI awareness. CompanionManager passes overlay HWNDs to ScreenCapture.CaptureAllScreensAsJpegAsync(excludeHwnds). 7 new tests. Build: 0 warnings. Tests: 61/61 passing."
     },
     {
       "id": "US-012",

@@ -4,6 +4,7 @@ using Clicky.Api;
 using Clicky.Audio;
 using Clicky.Capture;
 using Clicky.Hotkey;
+using Clicky.Overlay;
 
 namespace Clicky.Companion;
 
@@ -22,6 +23,7 @@ public sealed class CompanionManager : IDisposable
     private readonly AssemblyAiStreamingTranscriber _transcriber;
     private readonly ElevenLabsTtsClient _ttsClient;
     private readonly Dispatcher _dispatcher;
+    private readonly OverlayWindowManager? _overlayManager;
 
     private readonly List<Message> _conversationHistory = new();
     private CancellationTokenSource? _hookConsumerCts;
@@ -73,11 +75,13 @@ public sealed class CompanionManager : IDisposable
         CompanionViewModel viewModel,
         GlobalPushToTalkHook hook,
         string workerBaseUrl,
-        Dispatcher dispatcher)
+        Dispatcher dispatcher,
+        OverlayWindowManager? overlayManager = null)
     {
         _viewModel = viewModel;
         _hook = hook;
         _dispatcher = dispatcher;
+        _overlayManager = overlayManager;
 
         _claudeClient = new ClaudeClient(workerBaseUrl);
         _transcriber = new AssemblyAiStreamingTranscriber(workerBaseUrl);
@@ -93,7 +97,8 @@ public sealed class CompanionManager : IDisposable
         ClaudeClient claudeClient,
         AssemblyAiStreamingTranscriber transcriber,
         ElevenLabsTtsClient ttsClient,
-        Dispatcher dispatcher)
+        Dispatcher dispatcher,
+        OverlayWindowManager? overlayManager = null)
     {
         _viewModel = viewModel;
         _hook = hook;
@@ -101,6 +106,7 @@ public sealed class CompanionManager : IDisposable
         _transcriber = transcriber;
         _ttsClient = ttsClient;
         _dispatcher = dispatcher;
+        _overlayManager = overlayManager;
     }
 
     /// <summary>
@@ -259,8 +265,10 @@ public sealed class CompanionManager : IDisposable
 
             try
             {
-                // Capture all connected screens
-                var screens = await ScreenCapture.CaptureAllScreensAsJpegAsync().ConfigureAwait(false);
+                // Capture all connected screens (exclude overlay HWNDs so they
+                // don't appear in the screenshots sent to Claude)
+                var excludeHwnds = _overlayManager?.OverlayHwnds;
+                var screens = await ScreenCapture.CaptureAllScreensAsJpegAsync(excludeHwnds).ConfigureAwait(false);
 
                 if (ct.IsCancellationRequested) return;
 
