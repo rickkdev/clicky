@@ -166,7 +166,7 @@
         "Commit all changes with message: feat: US-025 - Shippable polish for README installer copy analytics"
       ],
       "priority": 8,
-      "passes": false,
+      "passes": true,
       "notes": "This is the story that distinguishes a hobby project from a product you can point friends at. Don't rush it. The copy audit is the most labor-intensive piece — grep for `throw new`, `.Message`, `MessageBox.Show`, and every user-visible string in XAML files."
     }
   ]

@@ -1,0 +1,333 @@
+# Ralph Progress Log — Clicky for Windows
+Started: Fri Apr 10 21:17:53 CEST 2026
+Reset: Fri Apr 10 21:20 CEST 2026 (full Windows-port restart)
+
+## Codebase Patterns
+- Repo is a multi-platform monorepo: `mac/` holds the Swift/Xcode reference implementation, `windows/` holds the new C#/.NET 8 port, `worker/` is the shared Cloudflare Worker proxy used by both.
+- The Mac code in `mac/leanring-buddy/` is the source of truth for behavior. When in doubt about how a feature should work, read the matching Swift file before writing C#. The mapping for each story is documented in `prd.json` (each acceptance criterion names the Swift file it mirrors).
+- The Cloudflare Worker (`worker/src/index.ts`) is shared and must NOT be modified by Windows stories. Both clients hit the same `/chat`, `/tts`, and `/transcribe-token` endpoints.
+- Windows target stack: C# 12 / .NET 8 / WPF / NAudio / Windows.Graphics.Capture / WinSparkle. See `windows/README.md` for the rationale on each library choice.
+- All Windows stories live under `windows/`. Do not edit `mac/` from a Windows story.
+- Per-monitor DPI: every WPF window in this app must opt into PerMonitorV2 via `app.manifest`. Do not rely on System DPI — the overlay coordinate math will break on mixed-DPI setups.
+- The push-to-talk hook must be listen-only (CallNextHookEx) — it must never swallow keys, the same way the Mac CGEventTap uses `.listenOnly`.
+- AssemblyAI: reuse a single long-lived `HttpClient` / `ClientWebSocket` factory across sessions. The Mac code has a hard-won note that per-session sockets corrupt the connection pool — do not regress this on Windows.
+- Image media_type: when sending screenshots to Claude, sniff PNG vs JPEG by magic bytes. Anthropic rejects mismatched declared types.
+- Worker URL is configurable: read it from `appsettings.json` rather than hardcoding, so users can point at their own deployment without recompiling.
+- `ReadOnlySpan<T>` cannot be used inside `async` iterator methods (`IAsyncEnumerable`) in C# 12 — use `string`/`Substring` instead.
+- `internal` members need `<InternalsVisibleTo Include="Clicky.Tests" />` in the library .csproj for test access.
+- Git user config is not set on this Windows host — use `git -c user.name="rickkdev" -c user.email="mail@riccardolamanna.de"` for commits.
+- `CompanionManager` owns the hotkey consumer loop and all state transitions. `App.xaml.cs` constructs it and calls `Start()` / `Dispose()` — it does not consume hotkey transitions directly.
+- Screenshot labels must include dimension info `(image dimensions: WxH pixels)` when sent to Claude — this is appended in CompanionManager, not in ScreenCapture.
+- Branch: all Windows-port work happens on `ralph/windows-port`, branched from main.
+- TFM: all projects target `net8.0-windows10.0.19041.0` (not plain `net8.0-windows`). Changing one project's TFM cascades to ALL projects that reference it — update them all together.
+- `LibraryImport` source generators don't handle delegate params with `ref` — use `DllImport` for callbacks like `MonitorEnumProc`.
+- WGC Win11+ APIs (IsBorderRequired, IsCursorCaptureEnabled) must be called via reflection when targeting SDK 10.0.19041.
+- Overlay windows must set `WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE` via `SetWindowLong` in `OnSourceInitialized` — these Win32 flags cannot be set via WPF properties alone.
+- `app.manifest` with `PerMonitorV2` is required for correct overlay/capture coordinates on mixed-DPI multi-monitor setups.
+
+## Completed Stories
+
+### US-001 — Scaffold Clicky.sln and project layout (2026-04-10)
+- Created `windows/Clicky.sln` referencing all 9 projects (8 src + 1 test)
+- Created .csproj files for: Clicky.App, Clicky.Companion, Clicky.Audio, Clicky.Capture, Clicky.Hotkey, Clicky.Overlay, Clicky.Api, Clicky.Pointing
+- All projects target `net8.0-windows`; App/Companion/Overlay use `<UseWPF>true</UseWPF>`
+- `Clicky.App` has `App.xaml` with `ShutdownMode=OnExplicitShutdown`
+- `Clicky.Tests` uses xUnit with a placeholder test asserting true
+- **Note:** Build verification requires .NET 8 SDK (not available in this WSL2 environment)
+
+### US-003 — Settings/control panel WPF window (2026-04-10)
+- Added `CompanionViewModel` (INotifyPropertyChanged) in `Clicky.Companion` exposing `VoiceState`, `HasMicrophonePermission`, `HasScreenCapturePermission`, `PushToTalkShortcut`, `IsShortcutPressed`, plus display-string helpers and `AppVersion`. Mirrors the Mac `@Published` surface in `CompanionManager.swift` so later stories (US-005/US-010) can drive it directly.
+- Added `VoiceState` enum (Idle/Listening/Processing/Responding) and `PushToTalkShortcut` enum (ControlAlt default, mirrors `BuddyPushToTalkShortcut.ShortcutOption`) with `DisplayName()` extension.
+- Created `CompanionPanelWindow.xaml` — borderless popup (`WindowStyle=None`, `AllowsTransparency=true`, `ShowInTaskbar=false`, `Topmost=true`, `SizeToContent=Height`) with dark rounded panel, Loom-style layout: header (status dot + voice state), version, push-to-talk chord row, permissions section (Microphone + Screen Capture), footer with Quit button.
+- Code-behind anchors the panel near the tray using `SystemParameters.WorkArea` bottom-right, sets `WS_EX_TOOLWINDOW` in `OnSourceInitialized` (so it never shows in Alt+Tab), and auto-hides on `Deactivated` — same behavior as the Mac panel losing menu-bar focus.
+- `App.xaml.cs`: constructs `CompanionViewModel` + `CompanionPanelWindow` on startup, wires `TrayIconManager.TrayIconClicked` to `panel.Toggle()`, closes the panel on `OnExit`.
+- `TrayIconManager.BuildContextMenu`: "Open" menu item now raises the same `TrayIconClicked` event so left-click and right-click → Open behave identically.
+- **Build:** .NET 8.0.419 SDK is available on this Windows host. `dotnet build windows/Clicky.sln` succeeds with 0 warnings / 0 errors.
+
+### US-004 — Microphone permission + WASAPI capture (2026-04-10)
+- Added `NAudio.Wasapi` 2.2.1 package reference to `Clicky.Audio.csproj` (pulls in `NAudio.Core` transitively).
+- `Clicky.Audio.PcmResampler` — pure-managed helpers: `ResampleLinearMono` (linear interpolation with integer output length = `input.Length * outputRate / inputRate`), `DownmixToMono` (average across N interleaved channels), `FloatToPcm16LE` (clip to ±1 then encode signed 16-bit little-endian). Linear resampling is quality-sufficient for speech and lets the test suite run without a MediaFoundation dependency.
+- `Clicky.Audio.MicrophoneCapture` — wraps `NAudio.CoreAudioApi.WasapiCapture` on the default capture device. Asserts the device format is `WaveFormatEncoding.IeeeFloat` (WASAPI shared mode default on modern Windows), then for each `DataAvailable` event: downmix → resample to 16 kHz → PCM16 LE → buffer and flush as 50 ms (1600-byte / 800-sample) frames into an unbounded `Channel<byte[]>`. `CaptureFramesAsync` is an `async IAsyncEnumerable<ReadOnlyMemory<byte>>` that yields until the caller cancels; cleanly stops and disposes the capture device in `finally`. Constants `TargetSampleRate=16_000`, `FrameDurationMilliseconds=50`, `SamplesPerFrame=800`, `BytesPerFrame=1600`.
+- `Clicky.Audio.MicrophonePermissions.ProbeAsync()` — one-shot `WasapiCapture` start/stop on a thread pool thread, returns `false` on any exception. Mirrors Mac's `AVCaptureDevice.requestAccess` probe. The Windows 10/11 mic privacy gate causes `StartRecording` to throw when blocked, so catching broadly is the correct check. Avoids `Windows.Security.Authorization.AppCapabilityAccess` because it requires a packaged identity that Clicky does not have during the dev loop.
+- `Clicky.App/App.xaml.cs` — `OnStartup` now fires `ProbeMicrophonePermissionAsync()` in the background and marshals the result back onto the UI dispatcher to set `CompanionViewModel.HasMicrophonePermission`, so the panel row from US-003 reflects real state.
+- `Clicky.Tests/PcmResamplerTests.cs` — five xUnit facts cover: 48 kHz → 16 kHz sample count (4800 → 1600, the acceptance criterion), same-rate copy fast path, stereo downmix averaging, PCM16 LE encoding of ±1.0 and 0.0, and clipping of out-of-range samples.
+- **Build + test:** `dotnet build windows/Clicky.sln` → 0 warnings / 0 errors. `dotnet test` → 6 passed / 0 failed.
+
+### US-005 — Low-level keyboard hook for push-to-talk (2026-04-10)
+- Moved `PushToTalkShortcut` enum + `DisplayName()` extension from `Clicky.Companion` into `Clicky.Hotkey` so the hook project can own the chord model. `Clicky.Companion` already depends on `Clicky.Hotkey`, so `CompanionViewModel` just adds `using Clicky.Hotkey;`. XAML binding to `PushToTalkShortcutDisplay` (a string) did not need changes.
+- `Clicky.Hotkey.ShortcutTransition` — enum `None | Pressed | Released`, mirrors `BuddyPushToTalkShortcut.ShortcutTransition` from BuddyDictationManager.swift.
+- `Clicky.Hotkey.PushToTalkShortcutEngine` — pure testable state machine. Tracks Ctrl/Alt/Shift/Win (left + right VK codes treated as equivalent), handles the modifier-only branch of Mac's `shortcutTransition` (superset semantics: chord stays pressed as long as all required modifiers are held, other keys/modifiers don't matter). Emits `Pressed`/`Released` exactly on the rising/falling edge, and is idempotent against auto-repeat (pressing an already-held modifier yields `None`). Exposes `Reset()` so the hook can clear stale state on Start()/Stop().
+- `Clicky.Hotkey.NativeMethods` — internal P/Invoke surface: `SetWindowsHookEx`, `UnhookWindowsHookEx`, `CallNextHookEx`, `KBDLLHOOKSTRUCT`, `LowLevelKeyboardProc`, `GetModuleHandle`, and the `WH_KEYBOARD_LL` + `WM_KEYDOWN/UP/SYSKEYDOWN/SYSKEYUP` constants.
+- `Clicky.Hotkey.GlobalPushToTalkHook` — installs `WH_KEYBOARD_LL` via `SetWindowsHookEx`. Keeps the `LowLevelKeyboardProc` delegate as an instance field so the GC can't collect it while Windows still calls into it (a classic P/Invoke gotcha that would otherwise crash on the first keystroke). Publishes `ShortcutTransition`s to an unbounded `Channel<ShortcutTransition>` (single-writer, single-reader). The callback is **always listen-only**: it calls `CallNextHookEx` with the original event whether or not it matched the chord, mirroring the `.listenOnly` flag on Mac's CGEvent tap — no keys are ever swallowed. `Start()` is idempotent (second call is a no-op, like the `guard globalEventTap == nil` check in `GlobalPushToTalkShortcutMonitor.start()`); `Stop()` unhooks and drops the delegate; `Dispose()` stops and completes the channel writer.
+- `Clicky.App/App.xaml.cs` — `OnStartup` constructs `GlobalPushToTalkHook` with `CompanionViewModel.PushToTalkShortcut`, starts it on the WPF dispatcher thread (which already pumps messages), and spins up `ConsumeHotkeyTransitionsAsync` to marshal transitions back to the UI thread and flip `CompanionViewModel.IsShortcutPressed`. `OnExit` cancels the consumer, disposes the hook, and disposes the CTS — no leaked Win32 handles.
+- `Clicky.Tests/PushToTalkShortcutEngineTests.cs` — seven xUnit facts covering: Ctrl+Alt pressed edge, released edge, auto-repeat idempotence, unrelated-key no-op, left/right modifier equivalence, alternate `AltShift` configuration, and `Reset()` clearing state.
+- **Build + test:** `dotnet build windows/Clicky.sln` → 0 warnings / 0 errors. `dotnet test` → 13 passed / 0 failed.
+
+### US-006 — Multi-monitor screen capture via Windows.Graphics.Capture (2026-04-10)
+- Upgraded all 9 projects from `net8.0-windows` to `net8.0-windows10.0.19041.0` TFM for WinRT API access (Windows.Graphics.Capture, Windows.Graphics.Imaging).
+- Added `System.Drawing.Common 8.0.0` to `Clicky.Capture` for JPEG encoding and GDI+ fallback capture.
+- `Clicky.Capture.CapturedScreen` — data class with `ImageBytes`, `Label`, `IsCursorScreen`, `DisplayBounds`, `ScreenshotPixelWidth`, `ScreenshotPixelHeight`. Mirrors Mac's `CompanionScreenCapture` struct.
+- `Clicky.Capture.NativeMethods` — P/Invoke for `EnumDisplayMonitors`, `GetMonitorInfoW`, `GetCursorPos`, `D3D11CreateDevice`, `CreateDirect3D11DeviceFromDXGIDevice`, `RoGetActivationFactory`. COM interface definitions for `IGraphicsCaptureItemInterop` (GUID `3628E81B-...`) and `IMemoryBufferByteAccess` (GUID `5B0D3235-...`).
+- `Clicky.Capture.ScreenCapture` — main capture class exposing `CaptureAllScreensAsJpegAsync()` and `DumpToTempAsync()`. **WGC path**: creates D3D11 device → IDXGIDevice → WinRT IDirect3DDevice; creates `GraphicsCaptureItem` from each HMONITOR via `IGraphicsCaptureItemInterop.CreateForMonitor`; captures single frame via `Direct3D11CaptureFramePool.CreateFreeThreaded` + `GraphicsCaptureSession`; converts surface to `SoftwareBitmap` then JPEG via WinRT `BitmapEncoder` with resize transform. **GDI+ fallback**: `Graphics.CopyFromScreen` per monitor when WGC is unavailable. Both paths share: `EnumDisplayMonitors` enumeration, cursor-screen-first sorting, 1280px max edge resize, quality-80 JPEG encoding, and Mac-matching label format.
+- `Clicky.Capture.ScreenCapturePermissions.ProbeAsync()` — checks `GraphicsCaptureSession.IsSupported()` on a thread pool thread. Returns true for unpackaged desktop apps (Windows doesn't require explicit consent for screen capture unlike macOS).
+- `Clicky.App/App.xaml.cs` — `OnStartup` now probes screen capture permission in background and sets `CompanionViewModel.HasScreenCapturePermission`.
+- `Clicky.Tests/ScreenCaptureTests.cs` — 7 xUnit facts: 3 label-format tests (single screen, multi cursor, multi secondary), monitor enumeration, live capture returns ≥1 screen, cursor screen is first, JPEG magic bytes.
+- **Build + test:** `dotnet build windows/Clicky.sln` → 0 warnings / 0 errors. `dotnet test` → 20 passed / 0 failed.
+- **Learnings for future iterations:**
+  - Changing one project's TFM to `net8.0-windows10.0.19041.0` requires ALL referencing projects to use the same TFM — `net8.0-windows` cannot reference `net8.0-windows10.0.19041.0` (NU1201 error). Upgrading all projects at once is the pragmatic fix.
+  - `LibraryImport` source generators don't support delegate parameters with `ref` — use `DllImport` instead for callbacks like `MonitorEnumProc`.
+  - Lambdas with `ref` parameters can't be passed as delegate arguments in some C# contexts — use a named static method + thread-static field pattern instead.
+  - `GraphicsCaptureSession.IsBorderRequired` and `.IsCursorCaptureEnabled` are Win11+ (SDK 10.0.20348+). Use reflection to call them when targeting 10.0.19041 to avoid compile errors.
+  - `Direct3D11CaptureFramePool.CreateCaptureSession(item)` requires the `GraphicsCaptureItem` as a parameter — it's on the frame pool, not the item.
+---
+
+## 2026-04-11 - US-007
+- Implemented `ClaudeClient` in `Clicky.Api` — streams Claude responses token-by-token through the Cloudflare Worker proxy, mirroring `ClaudeAPI.swift`
+- `SendAsync` returns `IAsyncEnumerable<string>` of text deltas from Anthropic SSE stream
+- POSTs to `{proxyUrl}/chat` with same JSON shape as Mac: model, max_tokens, stream, system prompt, messages with interleaved base64 image content blocks + labels
+- `DetectImageMediaType` sniffs PNG (89 50 4E 47) vs JPEG magic bytes — matches Mac's `detectImageMediaType`
+- TLS warmup via background HEAD request on construction — matches Mac's `warmUpTLSConnectionIfNeeded`
+- `Message` record stores `(UserText, AssistantText)` conversation history turns, maps to Mac's `(userPlaceholder, assistantResponse)` tuples
+- Files changed:
+  - `windows/src/Clicky.Api/ClaudeClient.cs` (new)
+  - `windows/src/Clicky.Api/Message.cs` (new, was untracked from prior iteration)
+  - `windows/src/Clicky.Api/Clicky.Api.csproj` (added ProjectReference to Clicky.Capture, InternalsVisibleTo for tests)
+  - `windows/tests/Clicky.Tests/ClaudeClientTests.cs` (new, 7 tests)
+- **Learnings for future iterations:**
+  - `ReadOnlySpan<T>` cannot be used inside `async` iterator methods (`IAsyncEnumerable`) in C# 12 without preview features — use `string`/`Substring` instead of `Span`/`AsSpan` in async generators
+  - `internal` members in a library project need `<InternalsVisibleTo Include="Clicky.Tests" />` in the .csproj for the test project to access them
+  - Git config for user.name/email is not set on this Windows host — use `git -c user.name=... -c user.email=...` for commits
+---
+
+## 2026-04-11 - US-008
+- Implemented `AssemblyAiStreamingTranscriber` + `TranscriptionSession` in `Clicky.Api` — real-time speech-to-text via AssemblyAI's v3 WebSocket API, mirroring `AssemblyAIStreamingTranscriptionProvider.swift`
+- `AssemblyAiStreamingTranscriber` fetches short-lived tokens from `{proxyUrl}/transcribe-token` (single-use, never cached), then opens WebSocket to `wss://streaming.assemblyai.com/v3/ws` with query params: `sample_rate=16000`, `encoding=pcm_s16le`, `format_turns=true`, `speech_model=u3-rt-pro`, optional `keyterms_prompt`
+- `TranscriptionSession` wraps `ClientWebSocket`: sends PCM16 binary frames via `SendAudioAsync`, receives turn messages in background receive loop, tracks turns in `SortedDictionary<int, string>` (mirrors Mac's `storedTurnTranscriptsByOrder`)
+- Partial transcripts dispatched via `PartialTranscriptUpdated` event with full composed transcript (all stored turns + active partial)
+- Final transcript via `RequestFinalTranscriptAsync`: sends `ForceEndpoint`, waits up to 1.4s grace period for end-of-turn, falls back to best available transcript
+- Reuses single long-lived `HttpClient` across sessions (Mac note: per-session URLSession corrupts connection pool)
+- Errors surfaced via `OnError` callback; receive loop never throws
+- Files changed:
+  - `windows/src/Clicky.Api/AssemblyAiStreamingTranscriber.cs` (new)
+  - `windows/tests/Clicky.Tests/AssemblyAiTranscriberTests.cs` (new, 10 tests)
+- **Learnings for future iterations:**
+  - AssemblyAI v3 uses turn-based messages (`type: "turn"` with `end_of_turn`/`turn_is_formatted` flags) rather than v2's `partial`/`final` distinction
+  - `ClientWebSocket` in .NET cannot be used with a `using` statement that spans async operations if you also need the `Dispose` to happen on a different thread — use explicit `CloseOutputAsync` + `Dispose` in a `finally` block
+  - To test `TranscriptionSession.ProcessMessage` without a real WebSocket, create a session with a never-connected `ClientWebSocket` — the receive loop exits immediately on error, but `ProcessMessage`/`ComposeTranscript` can be called directly via `internal` access
+---
+
+## 2026-04-11 - US-009
+- Implemented `ElevenLabsTtsClient` in `Clicky.Api` — TTS playback via ElevenLabs through the Cloudflare Worker proxy, mirroring `ElevenLabsTTSClient.swift`
+- `SpeakAsync(text, ct)` POSTs to `{proxyUrl}/tts` with JSON body `{text, model_id: "eleven_flash_v2_5", voice_settings: {stability: 0.5, similarity_boost: 0.75}}`
+- Downloads full MP3 response (not streamed), decodes via NAudio `Mp3FileReader`, plays through `WaveOutEvent` on default output device
+- `StopPlayback()` immediately halts current audio so a new utterance can interrupt — mirrors Mac's `audioPlayer?.stop(); audioPlayer = nil`
+- `IsPlaying` property reflects `WaveOutEvent.PlaybackState == Playing`
+- Cancellation-safe: `CancellationToken` registration stops playback and sets `TaskCompletionSource` to cancelled
+- `PlayMp3Async` is `internal` for testability
+- Files changed:
+  - `windows/src/Clicky.Api/ElevenLabsTtsClient.cs` (new)
+  - `windows/src/Clicky.Api/Clicky.Api.csproj` (added NAudio 2.2.1 package reference)
+  - `windows/tests/Clicky.Tests/ElevenLabsTtsClientTests.cs` (new, 7 tests)
+- **Learnings for future iterations:**
+  - NAudio `WaveOutEvent` fires `PlaybackStopped` both on natural completion and on `Stop()` — use a `TaskCompletionSource` to bridge the event-based API to async/await
+  - `Mp3FileReader` takes ownership of the stream but needs the stream to stay alive for the duration of playback — keep both the `MemoryStream` and `Mp3FileReader` alive until `WaveOutEvent` is done
+  - The Mac implementation downloads the full MP3 before playing (not streaming) — this is sufficient for TTS utterances which are typically small
+---
+
+## 2026-04-11 - US-010
+- Implemented `CompanionManager` in `Clicky.Companion` — orchestrates push-to-talk → capture → transcribe → Claude → TTS pipeline, mirroring `CompanionManager.swift`
+- State machine subscribes to `GlobalPushToTalkHook` transitions via `ChannelReader<ShortcutTransition>`:
+  - **Pressed**: cancels any in-flight response/TTS, starts `MicrophoneCapture` + `AssemblyAiStreamingTranscriber` session, sets `VoiceState=Listening`
+  - **Released**: stops mic capture, awaits final transcript from `TranscriptionSession.RequestFinalTranscriptAsync`, captures all screens via `ScreenCapture.CaptureAllScreensAsJpegAsync`, sends to `ClaudeClient.SendAsync` with system prompt + conversation history, streams response tokens into buffer, hands full text to `ElevenLabsTtsClient.SpeakAsync` (`VoiceState=Responding`), returns to `Idle` when playback ends
+- `ConversationHistory` stores `(UserText, AssistantText)` pairs, trimmed to last 10 exchanges (FIFO), with `[POINT:...]` tags stripped from assistant text before storage (matches Mac behavior)
+- `StripPointTags` regex removes `[POINT:none]`, `[POINT:x,y:label]`, `[POINT:x,y:label:screenN]` from Claude's response for clean TTS speech
+- `CancelCurrentResponse()` cancels `CancellationTokenSource` + `StopPlayback()` — called on re-press so new utterance interrupts old one (mirrors `currentResponseTask?.cancel()` + `elevenLabsTTSClient.stopPlayback()`)
+- System prompt matches Mac's `companionVoiceResponseSystemPrompt` (adapted "menu bar" → "system tray" for Windows)
+- Screenshot labels include dimension info `(image dimensions: WxH pixels)` so Claude knows the coordinate space
+- App.xaml.cs: constructs `CompanionManager` with worker URL from `appsettings.json`, manages lifecycle (Start on startup, Dispose on exit)
+- `appsettings.json` added with configurable `WorkerBaseUrl` (default placeholder)
+- `InternalsVisibleTo` added to `Clicky.Companion.csproj` for test access
+- Internal test constructor accepts pre-built service instances for future integration testing
+- Files changed:
+  - `windows/src/Clicky.Companion/CompanionManager.cs` (new)
+  - `windows/src/Clicky.Companion/Clicky.Companion.csproj` (added InternalsVisibleTo)
+  - `windows/src/Clicky.App/App.xaml.cs` (rewired to construct + start CompanionManager)
+  - `windows/src/Clicky.App/Clicky.App.csproj` (added appsettings.json copy-to-output)
+  - `windows/src/Clicky.App/appsettings.json` (new)
+  - `windows/tests/Clicky.Tests/CompanionManagerTests.cs` (new, 10 tests)
+- **Learnings for future iterations:**
+  - CompanionManager owns the hotkey consumer loop now — App.xaml.cs no longer needs its own `ConsumeHotkeyTransitionsAsync`. The `IsShortcutPressed` property on the VM is still set by the manager.
+  - The Mac `sendTranscriptToClaudeWithScreenshot` sets `voiceState = .idle` BEFORE setting pointing coordinates so the triangle cursor becomes visible before the fly animation — the Windows port will need to replicate this in US-013 when PointTagParser + OverlayWindowManager are wired in.
+  - Mac appends dimension info to screenshot labels (e.g., `(image dimensions: 1280x831 pixels)`) so Claude can return coordinates in the correct pixel space — this is done in CompanionManager, not in ScreenCapture itself.
+  - `Dispatcher.InvokeAsync` is needed for all ViewModel property updates from background tasks — WPF bindings are thread-affine.
+---
+
+## 2026-04-11 - US-011
+- Implemented transparent click-through overlay windows for each monitor in `Clicky.Overlay`, mirroring `OverlayWindow.swift` from the Mac reference
+- `OverlayWindow` is a borderless, transparent, always-on-top WPF Window: `AllowsTransparency=true`, `WindowStyle=None`, `Background=Transparent`, `Topmost=true`, `ShowInTaskbar=false`, `IsHitTestVisible=false`
+- Sets `WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE` via `SetWindowLong` in `OnSourceInitialized` so clicks pass through, it never appears in Alt+Tab, and it never steals focus
+- `OverlayWindowManager` creates one `OverlayWindow` per connected monitor via `EnumDisplayMonitors` P/Invoke, exposes `OverlayHwnds` for screenshot exclusion, and recreates overlays on `SystemEvents.DisplaySettingsChanged`
+- Added `app.manifest` to `Clicky.App` with `dpiAwareness=PerMonitorV2` for correct overlay coordinate math on mixed-DPI multi-monitor setups
+- `CompanionManager` updated to accept `OverlayWindowManager` and pass overlay HWNDs to `ScreenCapture.CaptureAllScreensAsJpegAsync(excludeHwnds)` so overlays don't appear in screenshots sent to Claude
+- `App.xaml.cs` creates and starts `OverlayWindowManager` before `CompanionManager`, disposes on exit
+- Files changed:
+  - `windows/src/Clicky.Overlay/NativeMethods.cs` (new — P/Invoke for SetWindowLong, GetWindowLong, EnumDisplayMonitors, GetMonitorInfo)
+  - `windows/src/Clicky.Overlay/OverlayWindow.cs` (new — transparent click-through WPF Window)
+  - `windows/src/Clicky.Overlay/OverlayWindowManager.cs` (new — one overlay per monitor, display change handling)
+  - `windows/src/Clicky.Overlay/Clicky.Overlay.csproj` (added System.Drawing.Common, InternalsVisibleTo)
+  - `windows/src/Clicky.App/app.manifest` (new — PerMonitorV2 DPI awareness)
+  - `windows/src/Clicky.App/App.xaml.cs` (added OverlayWindowManager lifecycle)
+  - `windows/src/Clicky.Companion/CompanionManager.cs` (added OverlayWindowManager dependency, overlay HWND exclusion)
+  - `windows/tests/Clicky.Tests/OverlayWindowManagerTests.cs` (new, 7 tests)
+- **Learnings for future iterations:**
+  - Clicky.Overlay has its own P/Invoke for `EnumDisplayMonitors`/`GetMonitorInfo` to avoid a circular dependency with Clicky.Capture. Both projects enumerate monitors independently.
+  - `WS_EX_TRANSPARENT` on WPF windows with `AllowsTransparency=true` makes mouse clicks fully pass through to underlying windows. This is the Win32 equivalent of Mac's `ignoresMouseEvents = true`.
+  - `WS_EX_TOOLWINDOW` prevents the overlay from appearing in Alt+Tab, equivalent to Mac's `.fullScreenAuxiliary` collection behavior.
+  - `SystemEvents.DisplaySettingsChanged` fires on the UI thread when the app has a WPF message pump — safe to create/destroy windows directly in the handler.
+  - The `app.manifest` with `PerMonitorV2` DPI awareness is critical for overlay positioning — without it, WPF uses System DPI scaling and overlay bounds won't match monitor pixels on mixed-DPI setups.
+---
+
+## 2026-04-11 - US-012
+- Implemented animated blue cursor that flies to a target point on the overlay, mirroring `BlueCursorView` from the Mac reference (OverlayWindow.swift)
+- `BlueCursorControl` renders a 16×16 DIP equilateral triangle (#3380FF) with `DropShadowEffect` glow on a Canvas
+- `FlyTo(screenPoint, overlayBounds, bubbleText)` animates from current OS cursor position (via `GetCursorPos` P/Invoke) to target point along a quadratic Bézier arc:
+  - Distance-based flight duration: `min(max(distance/800, 0.6), 1.4)` seconds
+  - Smoothstep ease-in-out: `t² × (3 − 2t)`
+  - Arc height: `min(distance × 0.2, 80)` pixels above midpoint
+  - Scale pulse: `1.0 + sin(π·progress) × 0.3` (peaks at 1.3× midway)
+  - Dynamic glow: `8 + (scale − 1.0) × 20` blur radius
+  - Rotation toward direction of travel via Bézier tangent + atan2
+- Speech bubble pops in with `ElasticEase` spring animation (0.4s, scale 0.5→1.0) and glow burst (blur 22→6, opacity 1.0→0.5)
+- Random pointer phrases: "right here!", "this one!", "over here!", "click this!", "here it is!", "found it!"
+- Cursor lingers 3 seconds then fades out over 0.5s with `QuadraticEase` easeOut
+- `OverlayWindow` updated to host `BlueCursorControl` as child Canvas, disposes on close
+- `OverlayWindowManager.FlyTo` dispatches to correct monitor overlay by matching `displayBounds` or point containment, hides active cursors on other overlays first
+- `GetCursorPos` P/Invoke added to `Clicky.Overlay.NativeMethods`
+- Files changed:
+  - `windows/src/Clicky.Overlay/BlueCursorControl.cs` (new — triangle, glow, bubble, Bézier flight animation)
+  - `windows/src/Clicky.Overlay/OverlayWindow.cs` (updated — hosts BlueCursorControl, disposes on close)
+  - `windows/src/Clicky.Overlay/OverlayWindowManager.cs` (updated — FlyTo dispatch to correct monitor)
+  - `windows/src/Clicky.Overlay/NativeMethods.cs` (updated — added GetCursorPos + POINT struct)
+  - `windows/tests/Clicky.Tests/BlueCursorControlTests.cs` (new, 18 tests)
+- **Learnings for future iterations:**
+  - `System.Drawing.Point` and `System.Windows.Point` conflict when both namespaces are imported — use fully qualified types in methods that cross the boundary (e.g., `OverlayWindowManager.FlyTo` takes `System.Windows.Point`)
+  - WPF `DispatcherTimer` at 60 FPS (16.67ms interval) with `DispatcherPriority.Render` is the WPF equivalent of Mac's `Timer.scheduledTimer(withTimeInterval: 1.0/60.0)` for frame-by-frame animation
+  - `DropShadowEffect` with `ShadowDepth=0` creates a centered glow effect equivalent to Mac's `.shadow(color:radius:)` modifier
+  - `ElasticEase` with `Oscillations=1, Springiness=8` approximates SwiftUI's `Spring(response: 0.4, dampingFraction: 0.6)` for pop-in animations
+  - WPF `BeginAnimation(property, null)` removes a running animation and returns the property to its base value — needed for `StopAllAnimations()` cleanup
+---
+
+## 2026-04-11 - US-013
+- Implemented `PointTagParser` in `Clicky.Pointing` — parses `[POINT:x,y:label:screenN]` tags from Claude's streamed response and converts screenshot-space coordinates to desktop screen coordinates, mirroring `parsePointingCoordinates` in Mac's CompanionManager.swift
+- `PointTagParser.Parse(responseText)` uses `GeneratedRegex` to extract coordinate tag at end of response, returns `PointingParseResult` with stripped spoken text + optional `PointDirective` (X, Y, Label, ScreenNumber)
+- `PointTagParser.ConvertToScreenCoordinates(directive, screens)` maps screenshot pixels → desktop coordinates: selects target screen by 1-based `ScreenNumber` (falls back to cursor screen), clamps coordinates to screenshot bounds, scales by `DisplayBounds / ScreenshotPixel` ratios, offsets by display origin. No Y-flip needed on Windows (both screenshot and desktop use top-left origin, unlike Mac/AppKit)
+- `CompanionManager.SendTranscriptToClaudeWithScreenshot` updated: replaces raw `StripPointTags` with `PointTagParser.Parse`, dispatches `OverlayWindowManager.FlyTo` with converted coordinates + label when directive is present. Replicates Mac's pattern of setting `VoiceState=Idle` before FlyTo so cursor is visible before animation
+- `StripPointTags` now delegates to `PointTagParser.Parse` for consistency
+- Files changed:
+  - `windows/src/Clicky.Pointing/PointDirective.cs` (new — PointDirective + PointingParseResult records)
+  - `windows/src/Clicky.Pointing/PointTagParser.cs` (new — Parse + ConvertToScreenCoordinates)
+  - `windows/src/Clicky.Pointing/Clicky.Pointing.csproj` (added UseWPF, Clicky.Capture reference, InternalsVisibleTo)
+  - `windows/src/Clicky.Companion/CompanionManager.cs` (wired PointTagParser into response pipeline, added FlyTo dispatch)
+  - `windows/tests/Clicky.Tests/PointTagParserTests.cs` (new, 15 tests)
+- **Learnings for future iterations:**
+  - Windows uses top-left origin for both screenshot and desktop coordinates — no Y-flip is needed (unlike Mac where AppKit uses bottom-left origin and requires conversion)
+  - `GeneratedRegex` (source-generated regex) is preferred over `new Regex(...)` in .NET 8 for performance — requires `partial class` and `partial method` with `[GeneratedRegex]` attribute
+  - The `screens` list passed to `ConvertToScreenCoordinates` must be the original captures (not `labeledScreens`), since `labeledScreens` has appended dimension text in the Label field but the same `DisplayBounds`/`ScreenshotPixelWidth`/`Height` — either works for conversion, but the original is semantically cleaner
+  - Mac sets `voiceState = .idle` BEFORE setting pointing coordinates so the overlay cursor becomes visible before the fly animation — replicated on Windows by dispatching `VoiceState=Idle` then `FlyTo` in the same `InvokeAsync` call
+---
+
+## 2026-04-11 - US-014
+- Implemented permissions onboarding flow mirroring Mac's CompanionAppDelegate.applicationDidFinishLaunching permission check
+- `OnboardingService` in `Clicky.Companion` wraps HKCU\Software\Clicky\onboarded registry value (mirrors Mac's `hasCompletedOnboarding` UserDefaults key)
+- `CompanionViewModel` gains `HasCompletedOnboarding` bool + `IsOnboardingVisible` computed property (true when not onboarded or permissions revoked)
+- `CompanionPanelWindow.xaml` updated: shows onboarding step cards with Grant buttons when `IsOnboardingVisible=true`, normal permissions display when onboarded + all granted
+- Grant buttons open Windows Settings (ms-settings:privacy-microphone, ms-settings:display) so users can enable access
+- `App.xaml.cs` auto-opens panel on first launch (no registry value) or when any permission is missing on subsequent launches
+- 1.5s `DispatcherTimer` polls `MicrophonePermissions.ProbeAsync` + `ScreenCapturePermissions.ProbeAsync` (mirrors Mac's `accessibilityCheckTimer`)
+- When all permissions become granted during polling, sets HKCU\Software\Clicky\onboarded=1 and updates HasCompletedOnboarding
+- Files changed:
+  - `windows/src/Clicky.Companion/OnboardingService.cs` (new — registry read/write for onboarded state)
+  - `windows/src/Clicky.Companion/CompanionViewModel.cs` (added HasCompletedOnboarding, IsOnboardingVisible, updated PropertyChanged notifications)
+  - `windows/src/Clicky.App/CompanionPanelWindow.xaml` (onboarding step cards with Grant buttons + BooleanToVisibilityConverter)
+  - `windows/src/Clicky.App/CompanionPanelWindow.xaml.cs` (Grant button handlers, ShowForOnboarding method)
+  - `windows/src/Clicky.App/App.xaml.cs` (permission poll timer, auto-open panel, onboarding state load, RefreshPermissionsAsync)
+  - `windows/tests/Clicky.Tests/OnboardingTests.cs` (new, 9 tests)
+- **Learnings for future iterations:**
+  - Windows Settings deep links use `ms-settings:` URI scheme — `ms-settings:privacy-microphone` opens the microphone privacy page
+  - `DispatcherTimer` is the correct WPF timer for periodic UI-thread work (not `System.Timers.Timer` which fires on thread pool)
+  - `BooleanToVisibilityConverter` is built into WPF — no need to write a custom converter for bool→Visibility binding
+  - `Dispatcher.InvokeAsync` with `DispatcherPriority.Loaded` defers work until after the window is fully initialized — useful for auto-opening the panel after all components are constructed
+  - Registry writes use `RegistryValueKind.DWord` for integer values (not String) to match the acceptance criteria format of `onboarded=1`
+---
+
+## 2026-04-11 - US-015
+- Verified that full pipeline wiring was already completed incrementally during US-010 through US-014
+- App.OnStartup constructs components in correct order: MainWindow → CompanionViewModel → CompanionPanelWindow → TrayIconManager → GlobalPushToTalkHook → OverlayWindowManager → CompanionManager
+- CompanionManager.Start() begins consuming push-to-talk transitions and orchestrates the full Pressed→Recording→Released→Claude→TTS pipeline
+- App.OnExit cleanly disposes: permission timer, CompanionManager (cancels in-flight Claude/TTS tasks), OverlayWindowManager, GlobalPushToTalkHook, TrayIconManager, and closes the panel
+- Worker base URL read from appsettings.json with default fallback (ReadWorkerBaseUrl method)
+- No code changes needed — all acceptance criteria already satisfied
+- Files verified (no changes):
+  - `windows/src/Clicky.App/App.xaml.cs` (full startup/shutdown wiring)
+  - `windows/src/Clicky.App/appsettings.json` (WorkerBaseUrl config)
+  - `windows/src/Clicky.Companion/CompanionManager.cs` (state machine with Start/Dispose)
+  - `windows/src/Clicky.Overlay/OverlayWindowManager.cs` (overlay lifecycle)
+- **Learnings for future iterations:**
+  - Wiring stories may be completed organically as individual components are built — always verify before writing new code
+  - The startup order matters: overlays must be created before CompanionManager so their HWNDs can be excluded from screen captures
+---
+
+## 2026-04-11 - US-016
+- Implemented ClickyAnalytics in Clicky.Companion wrapping PostHog .NET SDK 2.4.1
+  - Configure() initializes PostHogClient with same API key + host as Mac app
+  - TrackAppOpened() captures 'app_opened' event with app_version and platform properties
+  - Respects HKCU\Software\Clicky\analyticsOptOut registry flag (IsOptedOut check before Configure)
+  - Generates stable anonymous distinct ID stored in registry (HKCU\Software\Clicky\analyticsDistinctId)
+  - Shutdown() flushes pending events and disposes client
+- Implemented AutoUpdateService in Clicky.App wrapping WinSparkle 0.9.2 native DLL via P/Invoke
+  - Configures app details, sets appcast URL (placeholder: Mac's GitHub-hosted feed)
+  - Disables automatic periodic checks; runs one explicit check per launch (matches Mac where Sparkle is commented out)
+  - DllNotFoundException caught gracefully for dev builds without WinSparkle.dll
+  - Cleanup on dispose
+- App.xaml.cs: ClickyAnalytics.Configure() + TrackAppOpened() called after AutoStartRegistration; AutoUpdateService initialized after CompanionManager.Start(); both cleaned up in OnExit
+- Added InternalsVisibleTo for Clicky.App → Clicky.Tests
+- Files changed:
+  - `windows/src/Clicky.Companion/ClickyAnalytics.cs` (new)
+  - `windows/src/Clicky.Companion/Clicky.Companion.csproj` (added PostHog 2.4.1 package)
+  - `windows/src/Clicky.App/AutoUpdateService.cs` (new)
+  - `windows/src/Clicky.App/Clicky.App.csproj` (added WinSparkle 0.9.2 package, InternalsVisibleTo)
+  - `windows/src/Clicky.App/App.xaml.cs` (wired analytics + auto-update into startup/shutdown)
+  - `windows/tests/Clicky.Tests/ClickyAnalyticsTests.cs` (new, 5 tests)
+  - `windows/tests/Clicky.Tests/AutoUpdateServiceTests.cs` (new, 3 tests)
+- **Learnings for future iterations:**
+  - PostHog .NET SDK 2.4.1 uses `HostUrl` (Uri) not `Host` (string), and `Capture` takes `Dictionary<string, object>` for properties
+  - WinSparkle NuGet package (0.9.2) is a native C DLL — use DllImport with CallingConvention.Cdecl; catch DllNotFoundException for dev environments
+  - WinSparkle's `win_sparkle_set_app_details` takes wchar_t* (Unicode), but `win_sparkle_set_appcast_url` takes char* (ANSI)
+---
+
+## 2026-04-11 - US-017
+- Created `windows/scripts/release.ps1` — PowerShell release script that:
+  - Runs `dotnet publish -c Release -r win-x64 --self-contained false /p:PublishSingleFile=true`
+  - Produces ~27MB single-file exe in `windows/publish/win-x64/`
+  - Optionally invokes Inno Setup (iscc.exe) if installed to build the installer
+  - Supports `-SkipInstaller`, `-Configuration`, `-Runtime` params
+- Created `windows/scripts/clicky-installer.iss` — Inno Setup 6 script that:
+  - Produces `Setup_Clicky_0.1.0.exe` installer
+  - Registers HKCU Run-key for auto-start (user-level, matches AutoStartRegistration.cs)
+  - Creates Start Menu shortcut
+  - Uninstalls cleanly (kills process, removes registry entry, deletes files)
+  - Offers to launch app after install
+- Updated `windows/README.md` with prerequisites, build, test, and release instructions
+- Updated `.gitignore` to exclude `windows/publish/` and `windows/installer/`
+- app.manifest already has PerMonitorV2 + asInvoker (from US-011)
+- Verified `dotnet publish` succeeds and produces correct output
+- Files changed:
+  - `windows/scripts/release.ps1` (new)
+  - `windows/scripts/clicky-installer.iss` (new)
+  - `windows/README.md` (updated with build/release docs)
+  - `.gitignore` (added publish/installer exclusions)
+- **Learnings for future iterations:**
+  - `/p:` MSBuild properties need quoting in bash (`"-p:PublishSingleFile=true"`) to avoid being split as separate args
+  - Inno Setup 6 `{autopf}` resolves to the correct Program Files path based on architecture
+  - `PrivilegesRequired=lowest` in Inno Setup allows per-user install without elevation
+---

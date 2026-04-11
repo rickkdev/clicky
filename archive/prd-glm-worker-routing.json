@@ -1,0 +1,99 @@
+{
+  "project": "Clicky — GLM provider integration",
+  "branchName": "ralph/windows-port",
+  "description": "Add z.ai's GLM vision model as an additional LLM backend alongside the existing Anthropic Claude path. This extends the completed Windows port (see archive/prd-windows-port.json) without replacing anything: the Anthropic path must continue to work byte-for-byte, AssemblyAI (transcription) and ElevenLabs (TTS) stay as-is, and GLM is selected by setting Clicky.App's appsettings.json LlmModel field to a glm-* model name (default remains claude-sonnet-4-6). The Cloudflare Worker grows a provider-routing layer on its existing /chat endpoint: requests with claude-* models continue straight through to api.anthropic.com unchanged, while glm-* models are translated into z.ai's OpenAI-compatible chat-completions shape and forwarded to https://api.z.ai/api/paas/v4/chat/completions. The streaming response is translated back into Anthropic SSE shape (content_block_delta / text_delta) so Clicky.Api.ClaudeClient does not need to change. Target vision model: glm-4.6v (has first-class multimodal + GUI-agent support; GLM-5.1 is text-only and not usable for Clicky's screen-pointing feature). This PRD is allowed to modify worker/ — unlike the Windows port PRD, which explicitly could not.",
+  "userStories": [
+    {
+      "id": "US-018",
+      "title": "Worker provider routing on /chat",
+      "description": "As a Clicky user, I want the worker to choose the right LLM backend based on the model name in my request so I can switch between Claude and GLM by changing a single config value, without recompiling the client.",
+      "acceptanceCriteria": [
+        "worker/src/index.ts /chat handler inspects the incoming JSON body's `model` field and picks a backend: models starting with 'glm-' route to the z.ai path (added in US-019/US-020), all other models (including 'claude-*') continue to the existing Anthropic path",
+        "The existing Anthropic code path is byte-for-byte unchanged for claude-* models — same headers (x-api-key, anthropic-version), same URL (https://api.anthropic.com/v1/messages), same streaming passthrough. Verified by a Vitest test that snapshots the request the worker would emit for a canned claude-sonnet-4-6 input",
+        "The Env interface gains a ZAI_API_KEY field (alongside the existing ANTHROPIC_API_KEY / ELEVENLABS_API_KEY / ASSEMBLYAI_API_KEY / ELEVENLABS_VOICE_ID)",
+        "When a glm-* model is requested and ZAI_API_KEY is missing, the worker returns HTTP 500 with a clear JSON error `{error: \"ZAI_API_KEY not configured on worker\"}` rather than forwarding an unauthenticated request",
+        "Routing logic lives in a small pure helper function `pickProvider(model: string): 'anthropic' | 'zai'` that is separately unit-testable",
+        "Vitest tests: `pickProvider('claude-sonnet-4-6') === 'anthropic'`, `pickProvider('glm-4.6v') === 'zai'`, `pickProvider('glm-4.7') === 'zai'`, `pickProvider('') === 'anthropic'` (default fallback), and the end-to-end routing smoke test with a fetch mock",
+        "worker/package.json adds vitest as a devDependency if not already present; `npm test` in worker/ passes",
+        "Commit all changes with message: feat: US-018 - Worker provider routing on /chat"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": "Keep the routing logic tiny — it's a pre-dispatch fork, not a strategy pattern. The translation code in US-019/US-020 should live in a separate zai.ts module so index.ts stays readable. Absolutely no changes to the existing Anthropic branch — any refactor that touches it needs a matching snapshot test to prove no regression."
+    },
+    {
+      "id": "US-019",
+      "title": "Anthropic → OpenAI request translation for z.ai",
+      "description": "As a developer, when the worker routes a Clicky request to z.ai, I need the Anthropic-shaped request body (which Clicky.Api.ClaudeClient sends) translated into the OpenAI chat-completions shape z.ai's /api/paas/v4/chat/completions endpoint expects — including multimodal image content blocks — so the Windows client does not need to learn a second request format.",
+      "acceptanceCriteria": [
+        "New module `worker/src/zai.ts` exports `translateAnthropicRequestToOpenAI(anthropicBody): OpenAIChatCompletionsBody`",
+        "The Anthropic `system` string becomes the first OpenAI message: `{role: 'system', content: systemPrompt}`",
+        "Anthropic `messages[]` with `role: 'user' | 'assistant'` map to OpenAI messages with the same role",
+        "Anthropic text content blocks `{type: 'text', text}` become OpenAI `{type: 'text', text}` inside a content array",
+        "Anthropic image content blocks `{type: 'image', source: {type: 'base64', media_type, data}}` become OpenAI `{type: 'image_url', image_url: {url: 'data:<media_type>;base64,<data>'}}` — critical for Clicky's screen-pointing feature",
+        "Top-level fields preserved: `max_tokens` → `max_tokens`, `temperature` → `temperature`, `stream: true` passed through",
+        "The model name is passed through unchanged (e.g. `glm-4.6v`) — the worker does NOT rewrite model aliases",
+        "The translated request is POSTed to https://api.z.ai/api/paas/v4/chat/completions with headers: `Authorization: Bearer ${env.ZAI_API_KEY}`, `Content-Type: application/json`, `Accept: text/event-stream`",
+        "Vitest tests cover: text-only turn, single-image turn (base64 JPEG), multi-image turn with mixed text+image blocks (matches Clicky's CapturedScreen flow from US-006), multi-turn conversation history with alternating user/assistant, and system-prompt-plus-history combined",
+        "Commit all changes with message: feat: US-019 - Anthropic to OpenAI request translation for z.ai"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "Pay special attention to image_url data-URL formatting — z.ai's OpenAI-compatible endpoint follows the standard OpenAI spec where image_url.url is a data: URI containing the media_type. Sniffing PNG vs JPEG magic bytes is already done by Clicky.Api.ClaudeClient.DetectImageMediaType (US-007 notes in archive/progress-windows-port.txt); the worker just forwards whatever the client declares."
+    },
+    {
+      "id": "US-020",
+      "title": "OpenAI → Anthropic SSE response translation for z.ai",
+      "description": "As a developer, I need z.ai's OpenAI-format streaming response translated back into Anthropic SSE events so Clicky.Api.ClaudeClient (which only knows how to parse `event: content_block_delta` with `text_delta`) keeps working without changes.",
+      "acceptanceCriteria": [
+        "worker/src/zai.ts exports `translateOpenAIStreamToAnthropic(upstream: ReadableStream<Uint8Array>): ReadableStream<Uint8Array>` that consumes an OpenAI SSE stream and emits an Anthropic-compatible SSE stream",
+        "At stream start, emit `event: message_start\\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"...\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"<model>\",\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":0,\"output_tokens\":0}}}\\n\\n` followed by `event: content_block_start\\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\\n\\n`",
+        "For each `data: {...}` line with `choices[0].delta.content` text, emit `event: content_block_delta\\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"<chunk>\"}}\\n\\n`",
+        "The OpenAI `[DONE]` sentinel is consumed but not forwarded; instead, at end-of-stream emit `event: content_block_stop\\ndata: {\"type\":\"content_block_stop\",\"index\":0}\\n\\n` and `event: message_stop\\ndata: {\"type\":\"message_stop\"}\\n\\n`",
+        "Malformed or non-JSON `data:` lines are logged and skipped — the stream never throws",
+        "OpenAI finish_reason (stop / length / tool_calls) is captured and included in the emitted message_stop event as `{\"stop_reason\":\"end_turn\"}` (mapped: stop→end_turn, length→max_tokens, else→end_turn)",
+        "Vitest test: feeds a canned OpenAI SSE fixture (realistic z.ai glm-4.6v response including a [POINT:x,y:label:screen1] tag mid-stream) and asserts the emitted Anthropic SSE output parses cleanly through Clicky.Api.ClaudeClient's existing parser (replicated in TS for the test, or via a simple contract test that checks the event shapes)",
+        "Vitest test: partial UTF-8 / chunk-boundary split (a multi-byte char split across two fetch reads) does not corrupt the emitted text",
+        "Commit all changes with message: feat: US-020 - OpenAI to Anthropic SSE response translation for z.ai"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "Clicky.Api.ClaudeClient already parses the `event: content_block_delta` / `data: {...text_delta...}` shape (US-007). Do NOT change the client — this story is 100% worker-side. The [POINT:x,y:label:screenN] tags are plain text and need no special handling; they're only parsed on the client by Clicky.Pointing.PointTagParser (US-013)."
+    },
+    {
+      "id": "US-021",
+      "title": "Clicky.App LlmModel config via appsettings.json",
+      "description": "As a user, I want to switch Clicky between Claude and GLM by editing a single value in appsettings.json — no recompile, no new UI, no second API key paste.",
+      "acceptanceCriteria": [
+        "windows/src/Clicky.App/appsettings.json gains a new `LlmModel` field with default value `claude-sonnet-4-6`",
+        "Clicky.App/App.xaml.cs reads `LlmModel` at startup (alongside the existing `WorkerBaseUrl` read from US-015) and passes it to the CompanionManager / ClaudeClient constructor, which already accepts a model parameter (US-007)",
+        "When `LlmModel` is missing from appsettings.json, the app defaults to `claude-sonnet-4-6` and logs a debug message — no crash, no error dialog",
+        "CompanionViewModel exposes a `LlmModelDisplay` read-only string property bound into CompanionPanelWindow.xaml's footer (same visual weight as the existing push-to-talk chord label), so users can see which backend is active",
+        "Setting `LlmModel` to `glm-4.6v` and running `wrangler dev` with ZAI_API_KEY set causes end-to-end requests to go through the z.ai path added in US-018–US-020. Manual smoke test: press push-to-talk, ask 'where is the start button?', observe the cursor fly animation",
+        "Unit test in Clicky.Tests: CompanionViewModel.LlmModelDisplay reflects the value passed in, and PropertyChanged fires when it changes",
+        "No changes to Clicky.Api.ClaudeClient — routing is fully worker-side",
+        "Commit all changes with message: feat: US-021 - Clicky.App LlmModel config via appsettings.json"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "The Publish-output appsettings.json in windows/publish/win-x64 is a build artifact and should not be hand-edited; the source of truth is windows/src/Clicky.App/appsettings.json. If release.ps1 copies a fresh appsettings.json into publish/win-x64 on each build, the new LlmModel field will flow through automatically."
+    },
+    {
+      "id": "US-022",
+      "title": "Local wrangler dev setup + GLM usage docs",
+      "description": "As a first-time user, I want to run Clicky end-to-end on my own machine with a z.ai API key and no Cloudflare account, so I can test GLM without signing up for a hosted worker.",
+      "acceptanceCriteria": [
+        "worker/.dev.vars.example committed with placeholder slots for ANTHROPIC_API_KEY, ZAI_API_KEY, ASSEMBLYAI_API_KEY, ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID — values are empty strings with a `# add your key here` comment",
+        "worker/.gitignore (create if missing) excludes `.dev.vars` — actual secrets must never be committed",
+        "worker/README.md (new file) documents the local dev flow: `cd worker`, `npm install`, `cp .dev.vars.example .dev.vars`, fill in keys, `npx wrangler dev`, then set Clicky.App's `WorkerBaseUrl` to `http://localhost:8787`",
+        "windows/README.md gains a `## Using GLM instead of Claude` section that explains: the `LlmModel` appsettings.json field, the difference between glm-4.6v (vision, the right default for Clicky) and glm-5.1 (text-only, unusable for the pointing feature), and a link to z.ai's signup page",
+        "windows/README.md clarifies that AssemblyAI and ElevenLabs API keys are still required even in GLM mode — z.ai does not provide streaming ASR or TTS",
+        "A quick `worker/README.md` troubleshooting block lists: 401 from z.ai (wrong ZAI_API_KEY), 404 from api.z.ai (wrong base URL — confirm /api/paas/v4/chat/completions), empty stream (check that stream: true is set in the translated request), images rejected (confirm data-URL media_type matches the actual bytes)",
+        "Commit all changes with message: feat: US-022 - Local wrangler dev setup and GLM usage docs"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "This is the last story in the set — by the time Ralph picks it up, US-018 through US-021 should already be working end-to-end, so the docs are grounded in a working configuration, not aspirational."
+    }
+  ]
+}

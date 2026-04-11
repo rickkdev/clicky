@@ -1,0 +1,54 @@
+# Ralph Progress Log — Clicky for Windows
+Started: Fri Apr 10 21:17:53 CEST 2026
+Reset: Fri Apr 10 21:20 CEST 2026 (full Windows-port restart)
+
+## Codebase Patterns
+- Repo is a multi-platform monorepo: `mac/` holds the Swift/Xcode reference implementation, `windows/` holds the new C#/.NET 8 port, `worker/` is the shared Cloudflare Worker proxy used by both.
+- The Mac code in `mac/leanring-buddy/` is the source of truth for behavior. When in doubt about how a feature should work, read the matching Swift file before writing C#. The mapping for each story is documented in `prd.json` (each acceptance criterion names the Swift file it mirrors).
+- The Cloudflare Worker (`worker/src/index.ts`) is shared and must NOT be modified by Windows stories. Both clients hit the same `/chat`, `/tts`, and `/transcribe-token` endpoints.
+- Windows target stack: C# 12 / .NET 8 / WPF / NAudio / Windows.Graphics.Capture / WinSparkle. See `windows/README.md` for the rationale on each library choice.
+- All Windows stories live under `windows/`. Do not edit `mac/` from a Windows story.
+- Per-monitor DPI: every WPF window in this app must opt into PerMonitorV2 via `app.manifest`. Do not rely on System DPI — the overlay coordinate math will break on mixed-DPI setups.
+- The push-to-talk hook must be listen-only (CallNextHookEx) — it must never swallow keys, the same way the Mac CGEventTap uses `.listenOnly`.
+- AssemblyAI: reuse a single long-lived `HttpClient` / `ClientWebSocket` factory across sessions. The Mac code has a hard-won note that per-session sockets corrupt the connection pool — do not regress this on Windows.
+- Image media_type: when sending screenshots to Claude, sniff PNG vs JPEG by magic bytes. Anthropic rejects mismatched declared types.
+- Worker URL is configurable: read it from `appsettings.json` rather than hardcoding, so users can point at their own deployment without recompiling.
+- Branch: all Windows-port work happens on `ralph/windows-port`, branched from main.
+
+## Completed Stories
+
+### US-001 — Scaffold Clicky.sln and project layout (2026-04-10)
+- Created `windows/Clicky.sln` referencing all 9 projects (8 src + 1 test)
+- Created .csproj files for: Clicky.App, Clicky.Companion, Clicky.Audio, Clicky.Capture, Clicky.Hotkey, Clicky.Overlay, Clicky.Api, Clicky.Pointing
+- All projects target `net8.0-windows`; App/Companion/Overlay use `<UseWPF>true</UseWPF>`
+- `Clicky.App` has `App.xaml` with `ShutdownMode=OnExplicitShutdown`
+- `Clicky.Tests` uses xUnit with a placeholder test asserting true
+- **Note:** Build verification requires .NET 8 SDK (not available in this WSL2 environment)
+
+### US-003 — Settings/control panel WPF window (2026-04-10)
+- Added `CompanionViewModel` (INotifyPropertyChanged) in `Clicky.Companion` exposing `VoiceState`, `HasMicrophonePermission`, `HasScreenCapturePermission`, `PushToTalkShortcut`, `IsShortcutPressed`, plus display-string helpers and `AppVersion`. Mirrors the Mac `@Published` surface in `CompanionManager.swift` so later stories (US-005/US-010) can drive it directly.
+- Added `VoiceState` enum (Idle/Listening/Processing/Responding) and `PushToTalkShortcut` enum (ControlAlt default, mirrors `BuddyPushToTalkShortcut.ShortcutOption`) with `DisplayName()` extension.
+- Created `CompanionPanelWindow.xaml` — borderless popup (`WindowStyle=None`, `AllowsTransparency=true`, `ShowInTaskbar=false`, `Topmost=true`, `SizeToContent=Height`) with dark rounded panel, Loom-style layout: header (status dot + voice state), version, push-to-talk chord row, permissions section (Microphone + Screen Capture), footer with Quit button.
+- Code-behind anchors the panel near the tray using `SystemParameters.WorkArea` bottom-right, sets `WS_EX_TOOLWINDOW` in `OnSourceInitialized` (so it never shows in Alt+Tab), and auto-hides on `Deactivated` — same behavior as the Mac panel losing menu-bar focus.
+- `App.xaml.cs`: constructs `CompanionViewModel` + `CompanionPanelWindow` on startup, wires `TrayIconManager.TrayIconClicked` to `panel.Toggle()`, closes the panel on `OnExit`.
+- `TrayIconManager.BuildContextMenu`: "Open" menu item now raises the same `TrayIconClicked` event so left-click and right-click → Open behave identically.
+- **Build:** .NET 8.0.419 SDK is available on this Windows host. `dotnet build windows/Clicky.sln` succeeds with 0 warnings / 0 errors.
+
+### US-004 — Microphone permission + WASAPI capture (2026-04-10)
+- Added `NAudio.Wasapi` 2.2.1 package reference to `Clicky.Audio.csproj` (pulls in `NAudio.Core` transitively).
+- `Clicky.Audio.PcmResampler` — pure-managed helpers: `ResampleLinearMono` (linear interpolation with integer output length = `input.Length * outputRate / inputRate`), `DownmixToMono` (average across N interleaved channels), `FloatToPcm16LE` (clip to ±1 then encode signed 16-bit little-endian). Linear resampling is quality-sufficient for speech and lets the test suite run without a MediaFoundation dependency.
+- `Clicky.Audio.MicrophoneCapture` — wraps `NAudio.CoreAudioApi.WasapiCapture` on the default capture device. Asserts the device format is `WaveFormatEncoding.IeeeFloat` (WASAPI shared mode default on modern Windows), then for each `DataAvailable` event: downmix → resample to 16 kHz → PCM16 LE → buffer and flush as 50 ms (1600-byte / 800-sample) frames into an unbounded `Channel<byte[]>`. `CaptureFramesAsync` is an `async IAsyncEnumerable<ReadOnlyMemory<byte>>` that yields until the caller cancels; cleanly stops and disposes the capture device in `finally`. Constants `TargetSampleRate=16_000`, `FrameDurationMilliseconds=50`, `SamplesPerFrame=800`, `BytesPerFrame=1600`.
+- `Clicky.Audio.MicrophonePermissions.ProbeAsync()` — one-shot `WasapiCapture` start/stop on a thread pool thread, returns `false` on any exception. Mirrors Mac's `AVCaptureDevice.requestAccess` probe. The Windows 10/11 mic privacy gate causes `StartRecording` to throw when blocked, so catching broadly is the correct check. Avoids `Windows.Security.Authorization.AppCapabilityAccess` because it requires a packaged identity that Clicky does not have during the dev loop.
+- `Clicky.App/App.xaml.cs` — `OnStartup` now fires `ProbeMicrophonePermissionAsync()` in the background and marshals the result back onto the UI dispatcher to set `CompanionViewModel.HasMicrophonePermission`, so the panel row from US-003 reflects real state.
+- `Clicky.Tests/PcmResamplerTests.cs` — five xUnit facts cover: 48 kHz → 16 kHz sample count (4800 → 1600, the acceptance criterion), same-rate copy fast path, stereo downmix averaging, PCM16 LE encoding of ±1.0 and 0.0, and clipping of out-of-range samples.
+- **Build + test:** `dotnet build windows/Clicky.sln` → 0 warnings / 0 errors. `dotnet test` → 6 passed / 0 failed.
+
+### US-005 — Low-level keyboard hook for push-to-talk (2026-04-10)
+- Moved `PushToTalkShortcut` enum + `DisplayName()` extension from `Clicky.Companion` into `Clicky.Hotkey` so the hook project can own the chord model. `Clicky.Companion` already depends on `Clicky.Hotkey`, so `CompanionViewModel` just adds `using Clicky.Hotkey;`. XAML binding to `PushToTalkShortcutDisplay` (a string) did not need changes.
+- `Clicky.Hotkey.ShortcutTransition` — enum `None | Pressed | Released`, mirrors `BuddyPushToTalkShortcut.ShortcutTransition` from BuddyDictationManager.swift.
+- `Clicky.Hotkey.PushToTalkShortcutEngine` — pure testable state machine. Tracks Ctrl/Alt/Shift/Win (left + right VK codes treated as equivalent), handles the modifier-only branch of Mac's `shortcutTransition` (superset semantics: chord stays pressed as long as all required modifiers are held, other keys/modifiers don't matter). Emits `Pressed`/`Released` exactly on the rising/falling edge, and is idempotent against auto-repeat (pressing an already-held modifier yields `None`). Exposes `Reset()` so the hook can clear stale state on Start()/Stop().
+- `Clicky.Hotkey.NativeMethods` — internal P/Invoke surface: `SetWindowsHookEx`, `UnhookWindowsHookEx`, `CallNextHookEx`, `KBDLLHOOKSTRUCT`, `LowLevelKeyboardProc`, `GetModuleHandle`, and the `WH_KEYBOARD_LL` + `WM_KEYDOWN/UP/SYSKEYDOWN/SYSKEYUP` constants.
+- `Clicky.Hotkey.GlobalPushToTalkHook` — installs `WH_KEYBOARD_LL` via `SetWindowsHookEx`. Keeps the `LowLevelKeyboardProc` delegate as an instance field so the GC can't collect it while Windows still calls into it (a classic P/Invoke gotcha that would otherwise crash on the first keystroke). Publishes `ShortcutTransition`s to an unbounded `Channel<ShortcutTransition>` (single-writer, single-reader). The callback is **always listen-only**: it calls `CallNextHookEx` with the original event whether or not it matched the chord, mirroring the `.listenOnly` flag on Mac's CGEvent tap — no keys are ever swallowed. `Start()` is idempotent (second call is a no-op, like the `guard globalEventTap == nil` check in `GlobalPushToTalkShortcutMonitor.start()`); `Stop()` unhooks and drops the delegate; `Dispose()` stops and completes the channel writer.
+- `Clicky.App/App.xaml.cs` — `OnStartup` constructs `GlobalPushToTalkHook` with `CompanionViewModel.PushToTalkShortcut`, starts it on the WPF dispatcher thread (which already pumps messages), and spins up `ConsumeHotkeyTransitionsAsync` to marshal transitions back to the UI thread and flip `CompanionViewModel.IsShortcutPressed`. `OnExit` cancels the consumer, disposes the hook, and disposes the CTS — no leaked Win32 handles.
+- `Clicky.Tests/PushToTalkShortcutEngineTests.cs` — seven xUnit facts covering: Ctrl+Alt pressed edge, released edge, auto-repeat idempotence, unrelated-key no-op, left/right modifier equivalence, alternate `AltShift` configuration, and `Reset()` clearing state.
+- **Build + test:** `dotnet build windows/Clicky.sln` → 0 warnings / 0 errors. `dotnet test` → 13 passed / 0 failed.
