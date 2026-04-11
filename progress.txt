@@ -13,6 +13,9 @@ Reset: Fri Apr 10 21:20 CEST 2026 (full Windows-port restart)
 - AssemblyAI: reuse a single long-lived `HttpClient` / `ClientWebSocket` factory across sessions. The Mac code has a hard-won note that per-session sockets corrupt the connection pool — do not regress this on Windows.
 - Image media_type: when sending screenshots to Claude, sniff PNG vs JPEG by magic bytes. Anthropic rejects mismatched declared types.
 - Worker URL is configurable: read it from `appsettings.json` rather than hardcoding, so users can point at their own deployment without recompiling.
+- `ReadOnlySpan<T>` cannot be used inside `async` iterator methods (`IAsyncEnumerable`) in C# 12 — use `string`/`Substring` instead.
+- `internal` members need `<InternalsVisibleTo Include="Clicky.Tests" />` in the library .csproj for test access.
+- Git user config is not set on this Windows host — use `git -c user.name="rickkdev" -c user.email="mail@riccardolamanna.de"` for commits.
 - Branch: all Windows-port work happens on `ralph/windows-port`, branched from main.
 - TFM: all projects target `net8.0-windows10.0.19041.0` (not plain `net8.0-windows`). Changing one project's TFM cascades to ALL projects that reference it — update them all together.
 - `LibraryImport` source generators don't handle delegate params with `ref` — use `DllImport` for callbacks like `MonitorEnumProc`.
@@ -72,4 +75,39 @@ Reset: Fri Apr 10 21:20 CEST 2026 (full Windows-port restart)
   - Lambdas with `ref` parameters can't be passed as delegate arguments in some C# contexts — use a named static method + thread-static field pattern instead.
   - `GraphicsCaptureSession.IsBorderRequired` and `.IsCursorCaptureEnabled` are Win11+ (SDK 10.0.20348+). Use reflection to call them when targeting 10.0.19041 to avoid compile errors.
   - `Direct3D11CaptureFramePool.CreateCaptureSession(item)` requires the `GraphicsCaptureItem` as a parameter — it's on the frame pool, not the item.
+---
+
+## 2026-04-11 - US-007
+- Implemented `ClaudeClient` in `Clicky.Api` — streams Claude responses token-by-token through the Cloudflare Worker proxy, mirroring `ClaudeAPI.swift`
+- `SendAsync` returns `IAsyncEnumerable<string>` of text deltas from Anthropic SSE stream
+- POSTs to `{proxyUrl}/chat` with same JSON shape as Mac: model, max_tokens, stream, system prompt, messages with interleaved base64 image content blocks + labels
+- `DetectImageMediaType` sniffs PNG (89 50 4E 47) vs JPEG magic bytes — matches Mac's `detectImageMediaType`
+- TLS warmup via background HEAD request on construction — matches Mac's `warmUpTLSConnectionIfNeeded`
+- `Message` record stores `(UserText, AssistantText)` conversation history turns, maps to Mac's `(userPlaceholder, assistantResponse)` tuples
+- Files changed:
+  - `windows/src/Clicky.Api/ClaudeClient.cs` (new)
+  - `windows/src/Clicky.Api/Message.cs` (new, was untracked from prior iteration)
+  - `windows/src/Clicky.Api/Clicky.Api.csproj` (added ProjectReference to Clicky.Capture, InternalsVisibleTo for tests)
+  - `windows/tests/Clicky.Tests/ClaudeClientTests.cs` (new, 7 tests)
+- **Learnings for future iterations:**
+  - `ReadOnlySpan<T>` cannot be used inside `async` iterator methods (`IAsyncEnumerable`) in C# 12 without preview features — use `string`/`Substring` instead of `Span`/`AsSpan` in async generators
+  - `internal` members in a library project need `<InternalsVisibleTo Include="Clicky.Tests" />` in the .csproj for the test project to access them
+  - Git config for user.name/email is not set on this Windows host — use `git -c user.name=... -c user.email=...` for commits
+---
+
+## 2026-04-11 - US-008
+- Implemented `AssemblyAiStreamingTranscriber` + `TranscriptionSession` in `Clicky.Api` — real-time speech-to-text via AssemblyAI's v3 WebSocket API, mirroring `AssemblyAIStreamingTranscriptionProvider.swift`
+- `AssemblyAiStreamingTranscriber` fetches short-lived tokens from `{proxyUrl}/transcribe-token` (single-use, never cached), then opens WebSocket to `wss://streaming.assemblyai.com/v3/ws` with query params: `sample_rate=16000`, `encoding=pcm_s16le`, `format_turns=true`, `speech_model=u3-rt-pro`, optional `keyterms_prompt`
+- `TranscriptionSession` wraps `ClientWebSocket`: sends PCM16 binary frames via `SendAudioAsync`, receives turn messages in background receive loop, tracks turns in `SortedDictionary<int, string>` (mirrors Mac's `storedTurnTranscriptsByOrder`)
+- Partial transcripts dispatched via `PartialTranscriptUpdated` event with full composed transcript (all stored turns + active partial)
+- Final transcript via `RequestFinalTranscriptAsync`: sends `ForceEndpoint`, waits up to 1.4s grace period for end-of-turn, falls back to best available transcript
+- Reuses single long-lived `HttpClient` across sessions (Mac note: per-session URLSession corrupts connection pool)
+- Errors surfaced via `OnError` callback; receive loop never throws
+- Files changed:
+  - `windows/src/Clicky.Api/AssemblyAiStreamingTranscriber.cs` (new)
+  - `windows/tests/Clicky.Tests/AssemblyAiTranscriberTests.cs` (new, 10 tests)
+- **Learnings for future iterations:**
+  - AssemblyAI v3 uses turn-based messages (`type: "turn"` with `end_of_turn`/`turn_is_formatted` flags) rather than v2's `partial`/`final` distinction
+  - `ClientWebSocket` in .NET cannot be used with a `using` statement that spans async operations if you also need the `Dispose` to happen on a different thread — use explicit `CloseOutputAsync` + `Dispose` in a `finally` block
+  - To test `TranscriptionSession.ProcessMessage` without a real WebSocket, create a session with a never-connected `ClientWebSocket` — the receive loop exits immediately on error, but `ProcessMessage`/`ComposeTranscript` can be called directly via `internal` access
 ---

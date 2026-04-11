@@ -116,8 +116,8 @@
         "Commit all changes with message: feat: US-007 - Claude streaming chat client (SSE)"
       ],
       "priority": 7,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented on 2026-04-11. ClaudeClient in Clicky.Api wraps HttpClient with SSE streaming. SendAsync returns IAsyncEnumerable<string> token deltas. POSTs to {proxyUrl}/chat with same JSON shape as Mac (multi-image base64 content blocks, system prompt, conversation history). Parses content_block_delta/text_delta events from Anthropic SSE stream. DetectImageMediaType sniffs PNG vs JPEG magic bytes. TLS warmup HEAD request on construction. Message record stores conversation history turns. 7 new tests (SSE parsing, delta extraction, media type detection). InternalsVisibleTo for test access. Build: 0 warnings. Tests: 27/27 passing."
     },
     {
       "id": "US-008",
@@ -133,8 +133,8 @@
         "Commit all changes with message: feat: US-008 - AssemblyAI streaming transcription via WebSocket"
       ],
       "priority": 8,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented on 2026-04-11. AssemblyAiStreamingTranscriber in Clicky.Api fetches short-lived tokens from {proxyUrl}/transcribe-token, opens WebSocket to wss://streaming.assemblyai.com/v3/ws with query params (sample_rate=16000, encoding=pcm_s16le, format_turns=true, speech_model=u3-rt-pro, keyterms_prompt). TranscriptionSession wraps ClientWebSocket: sends PCM16 binary frames via SendAudioAsync, receives turn messages in a background loop, dispatches partial transcripts via PartialTranscriptUpdated event, and delivers finals via RequestFinalTranscriptAsync (ForceEndpoint + 1.4s grace period). Reuses single long-lived HttpClient across sessions (Mac note: per-session sockets corrupt connection pool). Errors surfaced via OnError callback. 10 new tests (URI building, partial/final turn processing, multi-turn composition, error handling, malformed JSON). Build: 0 warnings. Tests: 37/37 passing."
     },
     {
       "id": "US-009",
