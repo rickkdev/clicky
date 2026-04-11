@@ -231,7 +231,7 @@
         "Commit all changes with message: feat: US-028 - Fix DPI scaling for pointer accuracy on high-DPI displays"
       ],
       "priority": 11,
-      "passes": false,
+      "passes": true,
       "notes": "The secondary hypothesis — that the image dimensions sent to Claude (AnthropicDirectClient.cs:63-76) disagree with the resized JPEG dimensions — should only be investigated if DPI alone doesn't close the gap. Measure before and after. Do NOT change the coordinate contract of PointTagParser; keeping it in physical pixels means future code (e.g. a hypothetical Win32 SendInput click feature) still has the right reference frame."
     },
     {

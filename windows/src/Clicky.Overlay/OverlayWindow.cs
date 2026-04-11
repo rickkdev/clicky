@@ -18,15 +18,21 @@ public class OverlayWindow : Window
     /// <summary>The HWND of this overlay, available after the window is shown.</summary>
     public IntPtr Hwnd { get; private set; }
 
-    /// <summary>The monitor bounds this overlay covers (in physical pixels).</summary>
+    /// <summary>The monitor bounds this overlay covers (in physical pixels, for matching against PointDirective.DisplayBounds).</summary>
     public Rectangle MonitorBounds { get; }
+
+    /// <summary>The DPI scale factors for this monitor (1.0 at 100%, 1.5 at 150%, etc.).</summary>
+    public double DpiScaleX { get; }
+    public double DpiScaleY { get; }
 
     /// <summary>The blue cursor control hosted on this overlay.</summary>
     public BlueCursorControl BlueCursor { get; }
 
-    public OverlayWindow(Rectangle monitorBounds)
+    public OverlayWindow(Rectangle monitorBounds, double dpiScaleX = 1.0, double dpiScaleY = 1.0)
     {
         MonitorBounds = monitorBounds;
+        DpiScaleX = dpiScaleX;
+        DpiScaleY = dpiScaleY;
 
         // Borderless, transparent, always-on-top, no taskbar entry, not hit-testable
         WindowStyle = WindowStyle.None;
@@ -38,14 +44,15 @@ public class OverlayWindow : Window
         ResizeMode = ResizeMode.NoResize;
 
         // Position and size to cover the monitor.
-        // We use the raw pixel bounds here; WPF's layout system + PerMonitorV2
-        // DPI awareness means WPF coordinates == physical pixels for windows
-        // positioned with WindowStartupLocation.Manual + Left/Top/Width/Height.
+        // WPF Left/Top/Width/Height are always in DIPs (device-independent pixels at 96 DPI).
+        // Monitor bounds from GetMonitorInfo are physical pixels, so we must divide by the
+        // monitor's DPI scale to get correct DIP values.
+        var dipBounds = DpiHelper.ToDips(monitorBounds, dpiScaleX, dpiScaleY);
         WindowStartupLocation = WindowStartupLocation.Manual;
-        Left = monitorBounds.X;
-        Top = monitorBounds.Y;
-        Width = monitorBounds.Width;
-        Height = monitorBounds.Height;
+        Left = dipBounds.X;
+        Top = dipBounds.Y;
+        Width = dipBounds.Width;
+        Height = dipBounds.Height;
 
         // Host the blue cursor control on a Canvas that fills the overlay
         BlueCursor = new BlueCursorControl();

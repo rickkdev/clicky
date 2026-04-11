@@ -61,6 +61,22 @@ internal static class NativeMethods
         public string szDevice;
     }
 
+    // ── DPI ───────────────────────────────────────────────────────────
+
+    public enum MONITOR_DPI_TYPE
+    {
+        MDT_EFFECTIVE_DPI = 0,
+        MDT_ANGULAR_DPI = 1,
+        MDT_RAW_DPI = 2,
+    }
+
+    [DllImport("shcore.dll")]
+    public static extern int GetDpiForMonitor(
+        IntPtr hmonitor,
+        MONITOR_DPI_TYPE dpiType,
+        out uint dpiX,
+        out uint dpiY);
+
     // ── Cursor position ───────────────────────────────────────────────
 
     [StructLayout(LayoutKind.Sequential)]

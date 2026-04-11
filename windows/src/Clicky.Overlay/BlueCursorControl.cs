@@ -179,23 +179,31 @@ public sealed class BlueCursorControl : IDisposable
     /// <summary>
     /// Animates the blue cursor from the current OS cursor position to <paramref name="targetPoint"/>
     /// on the overlay whose bounds contain the target, showing <paramref name="bubbleText"/> on arrival.
-    /// Coordinates are in global desktop pixel space and will be converted to overlay-local.
+    /// Coordinates are in global physical pixel space and will be converted to overlay-local DIPs.
     /// </summary>
-    /// <param name="targetPoint">Target point in global desktop pixels.</param>
-    /// <param name="overlayBounds">The monitor bounds of the overlay this cursor lives on (global desktop pixels).</param>
+    /// <param name="targetPoint">Target point in global physical desktop pixels.</param>
+    /// <param name="overlayBounds">The monitor bounds of the overlay (physical pixels).</param>
+    /// <param name="dpiScaleX">DPI scale factor for the monitor (1.0 at 100%, 1.5 at 150%).</param>
+    /// <param name="dpiScaleY">DPI scale factor for the monitor (1.0 at 100%, 1.5 at 150%).</param>
     /// <param name="bubbleText">Text to show in the speech bubble (if null/empty, a random phrase is picked).</param>
-    public void FlyTo(Point targetPoint, System.Drawing.Rectangle overlayBounds, string? bubbleText)
+    public void FlyTo(Point targetPoint, System.Drawing.Rectangle overlayBounds, double dpiScaleX, double dpiScaleY, string? bubbleText)
     {
         // Cancel any in-progress animation
         StopAllAnimations();
 
-        // Determine start point: current OS cursor position
+        // Determine start point: current OS cursor position (physical pixels)
         NativeMethods.GetCursorPos(out var cursorPos);
-        var startGlobal = new Point(cursorPos.X + FollowOffsetX, cursorPos.Y + FollowOffsetY);
+        var startGlobalPhysical = new Point(cursorPos.X + FollowOffsetX, cursorPos.Y + FollowOffsetY);
 
-        // Convert global desktop coords to overlay-local coords
-        var startLocal = new Point(startGlobal.X - overlayBounds.X, startGlobal.Y - overlayBounds.Y);
-        var endLocal = new Point(targetPoint.X - overlayBounds.X, targetPoint.Y - overlayBounds.Y);
+        // Convert from physical pixels to overlay-local DIPs:
+        // 1. Subtract the physical monitor origin to get monitor-local physical coords
+        // 2. Divide by DPI scale to get DIPs
+        var startLocal = new Point(
+            (startGlobalPhysical.X - overlayBounds.X) / dpiScaleX,
+            (startGlobalPhysical.Y - overlayBounds.Y) / dpiScaleY);
+        var endLocal = new Point(
+            (targetPoint.X - overlayBounds.X) / dpiScaleX,
+            (targetPoint.Y - overlayBounds.Y) / dpiScaleY);
 
         // Compute Bézier arc: P0=start, P2=end, P1=control point (offset upward)
         var dx = endLocal.X - startLocal.X;

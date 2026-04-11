@@ -53,6 +53,7 @@ Branch: ralph/windows-port (continues from the completed Windows port — see ar
 - AssemblyAI: reuse a single long-lived `HttpClient` / `ClientWebSocket` factory across sessions. Per-session sockets corrupt the connection pool.
 - Push-to-talk hook must be listen-only (always `CallNextHookEx`) — never swallow keys.
 - Per-monitor DPI: every WPF window must opt into PerMonitorV2 via `app.manifest`. Overlay coordinate math breaks on mixed-DPI setups otherwise.
+- WPF `Window.Left/Top/Width/Height` are always DIPs. Win32 APIs (`GetMonitorInfo`, `GetCursorPos`) return physical pixels. Convert via `DpiHelper.ToDips()` at the WPF boundary. `PointTagParser` stays in physical pixels.
 - Overlay windows must set `WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE` via `SetWindowLong` in `OnSourceInitialized`.
 - WGC Win11+ APIs (IsBorderRequired, IsCursorCaptureEnabled) must be called via reflection when targeting SDK 10.0.19041.
 - `LibraryImport` source generators don't handle delegate params with `ref` — use `DllImport` for callbacks like `MonitorEnumProc`.
@@ -326,4 +327,27 @@ Branch: ralph/windows-port (continues from the completed Windows port — see ar
   - `<Version>` in the csproj flows into `AssemblyInformationalVersionAttribute` at build time. The SDK may append `+<commithash>` — always strip it for display.
   - `VersionInfo.Current` is a static property suitable for use from both WPF code-behind and WinForms-style tray code without any DI.
   - Manual verification needed: hover tray icon, right-click tray menu, open Settings — all three should show the version string.
+---
+
+## 2026-04-11 - US-028
+- Fixed DPI-scaling bug where the blue pointer cursor landed far from intended targets on high-DPI displays (125%, 150%, 200%). Root cause: physical pixel coordinates from `GetMonitorInfo` and `GetCursorPos` were passed directly to WPF `Window.Left/Top/Width/Height` and canvas-local positioning, but WPF always interprets those properties as DIPs (device-independent pixels at 96 DPI baseline). On a 150% display, a 1920px monitor is 1280 DIPs wide, so physical coordinates were overshooting by the scale factor.
+- Created `DpiHelper` utility class (`Clicky.Overlay.DpiHelper`) that queries per-monitor DPI via `GetDpiForMonitor(MDT_EFFECTIVE_DPI)` P/Invoke and provides `ToDips`/`ToPhysical` conversion methods.
+- Extended `MonitorRect` record to carry `DpiScaleX`/`DpiScaleY` (defaulting to 1.0 for backward compat). `OverlayWindowManager.EnumerateMonitorsFromSystem` now queries DPI per monitor handle during enumeration.
+- Fixed `OverlayWindow` constructor: physical pixel bounds are now converted to DIPs before assigning `Left/Top/Width/Height`. The original physical `MonitorBounds` property is preserved for matching against `PointDirective.DisplayBounds`. Deleted the incorrect comment claiming "WPF coordinates == physical pixels".
+- Fixed `BlueCursorControl.FlyTo`: `targetPoint` and `GetCursorPos` results (both physical pixels) are now converted to overlay-local DIPs by subtracting the physical monitor origin then dividing by DPI scale. Method signature extended with `dpiScaleX`/`dpiScaleY` parameters.
+- `PointTagParser.ConvertToScreenCoordinates` is NOT changed — it continues to return physical-pixel global coordinates per the story requirements. The DIP conversion happens at the overlay-layer boundary only.
+- Files changed:
+  - NEW: `windows/src/Clicky.Overlay/DpiHelper.cs`
+  - MODIFIED: `windows/src/Clicky.Overlay/NativeMethods.cs` (added `GetDpiForMonitor` P/Invoke + `MONITOR_DPI_TYPE` enum)
+  - MODIFIED: `windows/src/Clicky.Overlay/OverlayWindow.cs` (DPI-aware positioning, new `DpiScaleX`/`DpiScaleY` properties)
+  - MODIFIED: `windows/src/Clicky.Overlay/OverlayWindowManager.cs` (queries DPI per monitor, passes scale to overlay + cursor)
+  - MODIFIED: `windows/src/Clicky.Overlay/BlueCursorControl.cs` (physical→DIP conversion in `FlyTo`)
+  - NEW: `windows/tests/Clicky.Tests/DpiHelperTests.cs` (15 tests)
+  - MODIFIED: `windows/tests/Clicky.Tests/OverlayWindowManagerTests.cs` (2 new high-DPI overlay tests)
+- Build: 0 warnings. Tests: 248 passed (17 new), 0 failed.
+- **Learnings for future iterations:**
+  - WPF `Window.Left/Top/Width/Height` are ALWAYS in DIPs, regardless of PerMonitorV2 DPI awareness. Never pass raw physical pixel values from Win32 APIs (`GetMonitorInfo`, `GetCursorPos`) to WPF layout properties without dividing by the monitor's DPI scale.
+  - `GetDpiForMonitor` requires `shcore.dll` — available on Windows 8.1+. The codebase targets Windows 10 19041 so this is safe.
+  - The DIP conversion must happen at the overlay/WPF boundary, NOT in `PointTagParser`. Keeping `PointTagParser` in physical pixels preserves the correct coordinate space for future Win32-level features (e.g., `SendInput` click simulation).
+  - Manual verification needed on a high-DPI display: ask Clicky to point at the Windows clock → cursor should land on it. Test on 100%, 150%, and 200% scaling. Multi-monitor with mixed DPI is the hardest case.
 ---

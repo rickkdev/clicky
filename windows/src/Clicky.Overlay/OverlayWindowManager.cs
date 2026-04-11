@@ -87,7 +87,7 @@ public sealed class OverlayWindowManager : IDisposable
         // Fallback to first overlay if point is outside all monitors
         target ??= _overlays.FirstOrDefault();
 
-        target?.BlueCursor.FlyTo(screenPoint, target.MonitorBounds, bubbleText);
+        target?.BlueCursor.FlyTo(screenPoint, target.MonitorBounds, target.DpiScaleX, target.DpiScaleY, bubbleText);
     }
 
     /// <summary>
@@ -127,7 +127,7 @@ public sealed class OverlayWindowManager : IDisposable
 
         foreach (var monitor in monitors)
         {
-            var overlay = new OverlayWindow(monitor.Bounds);
+            var overlay = new OverlayWindow(monitor.Bounds, monitor.DpiScaleX, monitor.DpiScaleY);
             overlay.Show();
             _overlays.Add(overlay);
         }
@@ -170,16 +170,20 @@ public sealed class OverlayWindowManager : IDisposable
 
         if (NativeMethods.GetMonitorInfo(hMonitor, ref info))
         {
-            s_monitorRectList?.Add(new MonitorRect(new Rectangle(
-                info.rcMonitor.Left,
-                info.rcMonitor.Top,
-                info.rcMonitor.Width,
-                info.rcMonitor.Height)));
+            var (scaleX, scaleY) = DpiHelper.GetDpiScale(hMonitor);
+            s_monitorRectList?.Add(new MonitorRect(
+                new Rectangle(
+                    info.rcMonitor.Left,
+                    info.rcMonitor.Top,
+                    info.rcMonitor.Width,
+                    info.rcMonitor.Height),
+                scaleX,
+                scaleY));
         }
 
         return true;
     }
 }
 
-/// <summary>Simple record wrapping a monitor's bounds for overlay placement.</summary>
-public record MonitorRect(Rectangle Bounds);
+/// <summary>Monitor bounds (physical pixels) plus per-monitor DPI scale for overlay placement.</summary>
+public record MonitorRect(Rectangle Bounds, double DpiScaleX = 1.0, double DpiScaleY = 1.0);

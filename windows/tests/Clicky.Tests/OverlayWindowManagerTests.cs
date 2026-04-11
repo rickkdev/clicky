@@ -115,6 +115,65 @@ public class OverlayWindowManagerTests
     }
 
     [Fact]
+    public void OverlayWindow_HighDpi150_ConvertsBoundsToDips()
+    {
+        try
+        {
+            var thread = new System.Threading.Thread(() =>
+            {
+                var bounds = new Rectangle(0, 0, 1920, 1080);
+                var overlay = new OverlayWindow(bounds, 1.5, 1.5);
+
+                Assert.Equal(bounds, overlay.MonitorBounds); // physical bounds preserved
+                Assert.Equal(1.5, overlay.DpiScaleX);
+                Assert.Equal(1.5, overlay.DpiScaleY);
+
+                // WPF Left/Top/Width/Height should be in DIPs
+                Assert.Equal(0.0, overlay.Left, 6);
+                Assert.Equal(0.0, overlay.Top, 6);
+                Assert.Equal(1280.0, overlay.Width, 6);  // 1920 / 1.5
+                Assert.Equal(720.0, overlay.Height, 6);   // 1080 / 1.5
+            });
+            thread.SetApartmentState(System.Threading.ApartmentState.STA);
+            thread.Start();
+            thread.Join();
+        }
+        catch (System.InvalidOperationException)
+        {
+            // WPF not available in headless CI
+        }
+    }
+
+    [Fact]
+    public void OverlayWindow_HighDpi200_OffsetMonitor_ConvertsToDips()
+    {
+        try
+        {
+            var thread = new System.Threading.Thread(() =>
+            {
+                var bounds = new Rectangle(1920, 0, 3840, 2160);
+                var overlay = new OverlayWindow(bounds, 2.0, 2.0);
+
+                // Physical bounds for matching
+                Assert.Equal(bounds, overlay.MonitorBounds);
+
+                // WPF position in DIPs
+                Assert.Equal(960.0, overlay.Left, 6);   // 1920 / 2.0
+                Assert.Equal(0.0, overlay.Top, 6);
+                Assert.Equal(1920.0, overlay.Width, 6);  // 3840 / 2.0
+                Assert.Equal(1080.0, overlay.Height, 6); // 2160 / 2.0
+            });
+            thread.SetApartmentState(System.Threading.ApartmentState.STA);
+            thread.Start();
+            thread.Join();
+        }
+        catch (System.InvalidOperationException)
+        {
+            // WPF not available in headless CI
+        }
+    }
+
+    [Fact]
     public void EnumerateMonitors_ReturnsAtLeastOne()
     {
         // Live test: verifies EnumDisplayMonitors P/Invoke works on this machine.
