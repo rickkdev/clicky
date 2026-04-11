@@ -289,3 +289,24 @@ Branch: ralph/windows-port (continues from the completed Windows port — see ar
   - SettingsWindow binds ComboBox items by `Id` via `SelectedValuePath="Id"` + `DisplayMemberPath="FriendlyName"` — this avoids needing custom equality on the `DeviceInfo` record struct.
   - Device IDs are stable MMDevice GUIDs of the form `{0.0.1.00000000}.{guid}`, so they survive app restarts as long as the hardware is still plugged in. A missing device is silently ignored on load (falls back to System default) — do NOT error out.
 ---
+
+## 2026-04-11 - US-026
+- Diagnosed root cause of Quit hang: `CompanionManager.Dispose()` cancelled background CancellationTokenSources but never awaited the fire-and-forget tasks they governed. Three tasks were discarded with `_ = ...`: `ConsumeHotkeyTransitionsAsync` (line 110), `StartRecordingAsync` (line 160), and `StopRecordingAndProcessAsync` (line 173). After a full push-to-talk turn, these tasks hold live HttpClient streams, WebSocket connections, and NAudio WASAPI threads. Under `ShutdownMode="OnExplicitShutdown"`, any non-background foreground thread prevents process exit — the un-awaited tasks kept the process alive indefinitely.
+- Fix 1: Converted `CompanionManager` from `IDisposable` to `IAsyncDisposable` (also keeps `IDisposable` as synchronous fallback). `DisposeAsync` cancels all CancellationTokenSources, then awaits all tracked background tasks with a 2-second `Task.WhenAll(...).WaitAsync(TimeSpan)` timeout. If tasks don't finish in 2s, cleanup proceeds anyway.
+- Fix 2: Stored all previously fire-and-forget tasks as `Task` fields (`_hookConsumerTask`, `_recordingTask`, `_stopRecordingTask`) so `DisposeAsync` can await them. `_currentResponseTask` was already tracked.
+- Fix 3: Added `_disposed` guard to both `Dispose` and `DisposeAsync` for idempotency — prevents `ObjectDisposedException` on double-dispose.
+- Fix 4: `App.OnExit` now calls `_companionManager.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(2))` instead of synchronous `Dispose()`, giving background tasks time to wind down. Disposal order is deterministic: (1) timers/analytics, (2) CompanionManager (async, 2s timeout), (3) overlay manager, (4) push-to-talk hook, (5) tray icon.
+- Fix 5: Added `Environment.Exit(0)` safety net via `Task.Delay(500).ContinueWith(...)` after `base.OnExit(e)` — belt-and-braces to prevent the process lingering if an unforeseen thread survives the dispose chain.
+- Fix 6: `BuildAndStartCompanionManager()` (called on settings save to rebuild clients) now uses `DisposeAsync` instead of synchronous `Dispose` for the old manager, preventing the same hang during runtime client rebuild.
+- Build: 0 warnings. Tests: 229 passed, 0 failed (6 new shutdown tests).
+- Files changed:
+  - MODIFIED: `windows/src/Clicky.Companion/CompanionManager.cs` (IAsyncDisposable, tracked tasks, _disposed guard)
+  - MODIFIED: `windows/src/Clicky.App/App.xaml.cs` (async dispose in OnExit, ordered disposal, safety net)
+  - NEW: `windows/tests/Clicky.Tests/ShutdownTests.cs` (6 tests)
+- **Learnings for future iterations:**
+  - Never use `_ = SomeAsync()` for tasks that hold network resources or OS handles — always store the Task and await it in Dispose. The fire-and-forget pattern is only safe for truly self-contained work that doesn't block process exit.
+  - `Task.WhenAll(...).WaitAsync(TimeSpan)` (.NET 6+) is the clean way to await multiple tasks with a unified timeout. Catches `TimeoutException` on expiry.
+  - `IAsyncDisposable` with `DisposeAsync` is the right pattern when cleanup involves awaiting tasks. Keep `IDisposable` as a synchronous fallback for contexts that can't await.
+  - `CancellationTokenSource.Cancel()` throws `ObjectDisposedException` if the CTS was already disposed — guard with a `_disposed` flag to make disposal idempotent.
+  - Manual verification still needed: launch Clicky, do one push-to-talk turn, click Quit, verify process exits from Task Manager within 1 second. No browser testing tools configured.
+---

@@ -158,7 +158,7 @@ public partial class App : Application
         if (_companionManager is not null)
         {
             _companionManager.OpenSettingsRequested -= OnPipelineKeyError;
-            _companionManager.Dispose();
+            _companionManager.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(2));
             _companionManager = null;
         }
 
@@ -426,6 +426,7 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        // 1. Stop timers and analytics first (no async work).
         _permissionPollTimer?.Stop();
         _permissionPollTimer = null;
 
@@ -434,19 +435,23 @@ public partial class App : Application
 
         ClickyAnalytics.Shutdown();
 
+        // 2. Async-dispose CompanionManager with 2s timeout for background tasks.
         if (_companionManager is not null)
         {
             _companionManager.OpenSettingsRequested -= OnPipelineKeyError;
-            _companionManager.Dispose();
+            _companionManager.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(2));
             _companionManager = null;
         }
 
+        // 3. Dispose overlay manager.
         _overlayManager?.Dispose();
         _overlayManager = null;
 
+        // 4. Dispose push-to-talk hook.
         _pushToTalkHook?.Dispose();
         _pushToTalkHook = null;
 
+        // 5. Dispose tray icon.
         if (_trayIconManager is not null)
         {
             _trayIconManager.TrayIconClicked -= OnTrayIconClicked;
@@ -456,5 +461,11 @@ public partial class App : Application
         }
         _companionPanel?.Close();
         base.OnExit(e);
+
+        // Safety net: if any foreground thread is still alive after disposal,
+        // force-exit to prevent the process from lingering in Task Manager.
+        // This should not be needed — the dispose chain above should handle
+        // everything — but it prevents edge cases from keeping the process alive.
+        Task.Delay(500).ContinueWith(_ => Environment.Exit(0));
     }
 }

@@ -14,7 +14,7 @@ namespace Clicky.Companion;
 /// Orchestrates the push-to-talk → capture → transcribe → Claude → TTS pipeline,
 /// mirroring <c>CompanionManager.swift</c> in the Mac reference implementation.
 /// </summary>
-public sealed class CompanionManager : IDisposable
+public sealed class CompanionManager : IAsyncDisposable, IDisposable
 {
     /// <summary>Max conversation history exchanges to keep (prevents unbounded context growth).</summary>
     private const int MaxConversationHistory = 10;
@@ -33,6 +33,9 @@ public sealed class CompanionManager : IDisposable
     private CancellationTokenSource? _hookConsumerCts;
     private CancellationTokenSource? _responseCts;
     private Task? _currentResponseTask;
+    private Task? _hookConsumerTask;
+    private Task? _recordingTask;
+    private Task? _stopRecordingTask;
 
     // Active recording session state
     private MicrophoneCapture? _activeMicCapture;
@@ -107,7 +110,7 @@ public sealed class CompanionManager : IDisposable
     public void Start()
     {
         _hookConsumerCts = new CancellationTokenSource();
-        _ = ConsumeHotkeyTransitionsAsync(_hookConsumerCts.Token);
+        _hookConsumerTask = ConsumeHotkeyTransitionsAsync(_hookConsumerCts.Token);
     }
 
     /// <summary>Conversation history, exposed for testing.</summary>
@@ -157,7 +160,7 @@ public sealed class CompanionManager : IDisposable
 
         // Start mic capture + transcription session on a background task
         _micCaptureCts = new CancellationTokenSource();
-        _ = StartRecordingAsync(_micCaptureCts.Token);
+        _recordingTask = StartRecordingAsync(_micCaptureCts.Token);
     }
 
     private void HandleReleased()
@@ -170,7 +173,7 @@ public sealed class CompanionManager : IDisposable
         _viewModel.VoiceState = VoiceState.Processing;
 
         // Stop mic capture and request final transcript
-        _ = StopRecordingAndProcessAsync();
+        _stopRecordingTask = StopRecordingAndProcessAsync();
     }
 
     private async Task StartRecordingAsync(CancellationToken ct)
@@ -499,15 +502,65 @@ public sealed class CompanionManager : IDisposable
         await _dispatcher.InvokeAsync(() => _viewModel.VoiceState = VoiceState.Idle);
     }
 
-    public void Dispose()
+    private bool _disposed;
+
+    public async ValueTask DisposeAsync()
     {
+        if (_disposed) return;
+        _disposed = true;
+
+        // 1. Cancel all token sources to signal shutdown.
         _hookConsumerCts?.Cancel();
         CancelCurrentResponse();
-
         _micCaptureCts?.Cancel();
+
+        // 2. Await all tracked background tasks with a 2-second timeout.
+        var tasks = new List<Task>();
+        if (_hookConsumerTask is not null) tasks.Add(_hookConsumerTask);
+        if (_currentResponseTask is not null) tasks.Add(_currentResponseTask);
+        if (_recordingTask is not null) tasks.Add(_recordingTask);
+        if (_stopRecordingTask is not null) tasks.Add(_stopRecordingTask);
+
+        if (tasks.Count > 0)
+        {
+            try
+            {
+                await Task.WhenAll(tasks).WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+            }
+            catch (TimeoutException)
+            {
+                // Tasks didn't finish within 2 seconds — proceed with cleanup anyway.
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected — tasks were cancelled.
+            }
+            catch
+            {
+                // Swallow any other exceptions during shutdown.
+            }
+        }
+
+        // 3. Synchronous cleanup.
         _activeMicCapture?.Dispose();
         _activeTranscriptionSession?.Dispose();
+        _ttsClient.Dispose();
+        _hookConsumerCts?.Dispose();
+        _micCaptureCts?.Dispose();
+    }
 
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+
+        // Synchronous fallback — cancels everything but cannot await tasks.
+        _hookConsumerCts?.Cancel();
+        CancelCurrentResponse();
+        _micCaptureCts?.Cancel();
+
+        _activeMicCapture?.Dispose();
+        _activeTranscriptionSession?.Dispose();
         _ttsClient.Dispose();
         _hookConsumerCts?.Dispose();
         _micCaptureCts?.Dispose();

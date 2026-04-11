@@ -168,6 +168,94 @@
       "priority": 8,
       "passes": true,
       "notes": "This is the story that distinguishes a hobby project from a product you can point friends at. Don't rush it. The copy audit is the most labor-intensive piece — grep for `throw new`, `.Message`, `MessageBox.Show`, and every user-visible string in XAML files."
+    },
+    {
+      "id": "US-026",
+      "title": "Quit reliably terminates the process",
+      "description": "As a user, when I click Quit from the tray menu I want the app to actually exit — no lingering Clicky.App.exe in Task Manager, no orphaned WASAPI / WebSocket / HttpClient threads keeping the process alive.",
+      "acceptanceCriteria": [
+        "Reproduce the bug first: launch Clicky, do at least one push-to-talk turn (so mic capture + transcription WebSocket + LLM stream + TTS playback have all run), then click tray → Quit. Confirm Clicky.App.exe is still in Task Manager. Capture a managed-thread dump (procdump -ma, or debugger attach) BEFORE writing any fix so the culprit thread is identified, not guessed",
+        "Root-cause the hang. Likely suspects, in order: (a) `CompanionManager.Dispose` at `windows/src/Clicky.Companion/CompanionManager.cs:502-514` cancels `_hookConsumerCts` but never awaits the fire-and-forget `ConsumeHotkeyTransitionsAsync` task started at line 110; (b) `MicrophoneCapture.Dispose` at `windows/src/Clicky.Audio/MicrophoneCapture.cs:150-155` may not join the NAudio WASAPI thread; (c) HTTP calls inside `AnthropicDirectClient`, `ZaiDirectClient`, `ElevenLabsTtsClient`, `AssemblyAiStreamingTranscriber` may be running without a shutdown CancellationToken and blocking the dispatcher. Document in progress.txt which one(s) were actually holding the process alive",
+        "Fix the identified root cause(s). Required changes: store long-running background tasks as `Task` fields (not `_ = ...`) and `await` them with a 2-second timeout inside the owner's `Dispose`/`DisposeAsync`. Any new worker `Thread` must be `IsBackground = true`. Every outbound `HttpClient.SendAsync` / `ClientWebSocket.ReceiveAsync` on the shutdown path must accept a `CancellationToken` wired to a shutdown `CancellationTokenSource` owned by `App`",
+        "`App.xaml.cs` gains a shutdown `CancellationTokenSource` created in `OnStartup`, cancelled at the top of `OnExit` before any Dispose calls, and passed into CompanionManager/clients through their existing constructors (or a new `SetShutdownToken` method if adding a ctor param ripples too widely)",
+        "`App.OnExit` at `windows/src/Clicky.App/App.xaml.cs:427-459` is converted to dispose in a deterministic order: (1) cancel shutdown token, (2) await CompanionManager.DisposeAsync with 2s timeout, (3) dispose overlay manager, (4) dispose push-to-talk hook, (5) dispose tray icon. Add a final safety net: after `base.OnExit(e)`, if any foreground thread is still alive after 500ms, call `Environment.Exit(0)`. The safety net is belt-and-braces — it must NOT be used to paper over a hang the dispose chain should have prevented",
+        "Unit test: a `FakeLlmClient` and `FakeTranscriber` that intentionally block forever on an `HttpClient`-like stream. `CompanionManager.DisposeAsync` must still return within 2 seconds by cancelling them. Same pattern for `MicrophoneCapture`",
+        "Manual verification: after the fix, perform the original repro (one full push-to-talk turn, then Quit). Task Manager must show Clicky.App.exe gone within 1 second of the click. Repeat 3× — all three must terminate cleanly",
+        "Regression check: Quit from a cold state (app just started, no turn performed) must also work. Quit mid-turn (while TTS is speaking) must cancel playback AND exit within 1 second",
+        "Build: 0 warnings. Tests: all pass",
+        "Append diagnosis + fix summary to progress.txt, including the exact thread stack(s) that were blocking shutdown",
+        "Commit all changes with message: feat: US-026 - Quit reliably terminates the process"
+      ],
+      "priority": 9,
+      "passes": true,
+      "notes": "Diagnose before fixing. `Environment.Exit(0)` is a hammer that will hide bugs — fix the actual blocker first, then add the safety net. The `ShutdownMode=\"OnExplicitShutdown\"` in App.xaml is correct for a tray app and must not be changed; any non-background foreground thread will prevent process exit under that mode, which is why hunting down the specific blocker matters."
+    },
+    {
+      "id": "US-027",
+      "title": "Show Clicky version in tray menu + Settings window",
+      "description": "As a user who just ran an auto-update, I want to see the current Clicky version in the tray and in Settings so I can verify the update actually installed without digging into Task Manager or the filesystem.",
+      "acceptanceCriteria": [
+        "Add `<Version>1.0.0</Version>` to `windows/src/Clicky.App/Clicky.App.csproj` inside the existing `<PropertyGroup>`. This becomes the single source of truth that flows into `AssemblyInformationalVersion` at build time",
+        "New helper `Clicky.App.VersionInfo.Current` returns the version string via `Assembly.GetExecutingAssembly().GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? \"dev\"`. Strip any `+<commithash>` suffix before returning",
+        "Tray icon tooltip is updated in `TrayIconManager.cs` where the `NotifyIcon` is constructed: set `Text = $\"Clicky {VersionInfo.Current}\"` so hovering the tray icon shows the version",
+        "Tray context menu gains a disabled info item `Version {x.y.z}` inserted just above the `Quit` item at `windows/src/Clicky.App/TrayIconManager.cs:89`. Use `IsEnabled = false` so it's visually greyed and non-clickable",
+        "Settings window shows the version at the bottom of the main grid in `windows/src/Clicky.App/SettingsWindow.xaml` as a small muted TextBlock (e.g. `Foreground=\"#888\" FontSize=\"11\"`) reading `Clicky {x.y.z}`. Place it alongside or just above the existing DPAPI help footnote",
+        "If `AutoUpdateService` is able to expose a `LatestKnownVersion` property without significant refactor, the Settings footer additionally reads `Clicky {current} — update available: {latest}` when latest > current. If exposing that is non-trivial, skip it for this story and leave a TODO — do NOT rewrite the auto-update plumbing",
+        "Unit test: `VersionInfo.Current` returns a non-empty string in a test run (validates the attribute is actually emitted by the csproj change)",
+        "Manual verification: build the installer, install it, hover the tray icon → tooltip shows `Clicky 1.0.0`. Right-click → menu shows `Version 1.0.0` greyed above Quit. Open Settings → footer shows `Clicky 1.0.0`. Bump the csproj version to 1.0.1, rebuild, reinstall → all three surfaces show 1.0.1",
+        "Build: 0 warnings. Tests: all pass",
+        "Commit all changes with message: feat: US-027 - Show version in tray and settings"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": "Tiny story on purpose — the goal is a reliable visual confirmation that updates landed, not a polished About dialog. Do not add an About window, changelog viewer, or update-check button in this story. Keep the diff under ~60 lines across 4 files."
+    },
+    {
+      "id": "US-028",
+      "title": "Fix DPI-scaling bug that breaks pointer accuracy on high-DPI displays",
+      "description": "As a user on a high-DPI Windows laptop, when I ask Clicky to point at something on screen I want the blue cursor to land on the actual target, not 20–50% off. On scaled displays (125%, 150%, 200%) the pointer currently lands far from the intended element, and the error grows with distance from the monitor origin.",
+      "acceptanceCriteria": [
+        "Reproduce the bug on a 150% DPI display first. Ask Clicky to point at a well-known target (Windows taskbar clock, a specific file in the VS Code explorer). Document the pixel offset and its scaling behavior in progress.txt before fixing",
+        "Root cause: physical pixels are being handed to WPF APIs that expect DIPs. Three files are implicated: `windows/src/Clicky.Capture/ScreenCapture.cs:425-437` returns monitor bounds from `GetMonitorInfo` in physical pixels; `windows/src/Clicky.Pointing/PointTagParser.cs:94-103` produces a `screenPoint` in physical pixels by scaling and offsetting with those bounds; `windows/src/Clicky.Overlay/OverlayWindow.cs:41-48` assigns those physical-pixel values directly to WPF `Window.Left/Top/Width/Height` which are always DIPs (the comment on line 41-43 asserting otherwise is wrong); `windows/src/Clicky.Overlay/BlueCursorControl.cs:197-198` then subtracts physical-pixel overlay bounds from a physical-pixel target to compute canvas-local coordinates, which WPF also interprets as DIPs",
+        "Fix strategy: keep screenshot→physical-pixel math in the capture/parser layer, and convert to DIPs exactly once at the WPF boundary. Introduce a `DpiHelper` (or similar) that calls `GetDpiForMonitor(MDT_EFFECTIVE_DPI)` per `HMONITOR` and returns a `(double ScaleX, double ScaleY)` tuple, plus a convenience `System.Windows.Point ToDips(System.Drawing.Point physical, HMONITOR monitor)`",
+        "`OverlayWindow` constructor converts `monitorBounds` from physical pixels to DIPs before assigning `Left/Top/Width/Height`. Store both the original physical `MonitorBounds` (for matching against PointDirective.DisplayBounds) AND the new DIP bounds (for layout). The comment on line 41-43 is deleted and replaced with one that correctly describes WPF's DIP coordinate system",
+        "`BlueCursorControl.FlyTo` converts `targetPoint` and the `GetCursorPos` result from physical pixels to DIPs before computing canvas-local coordinates. Uses the overlay's cached DPI scale to avoid re-querying the OS on every animation tick",
+        "`PointTagParser.ConvertToScreenCoordinates` is NOT changed — it continues to return physical-pixel global coordinates. The DIP conversion happens at the overlay-layer boundary, giving a single conversion point that future code can trust",
+        "Unit test: `DpiHelper` round-trip (physical → DIP → physical) is identity for a monitor at 100%, and scales correctly for 125% / 150% / 200%. Provide a fake monitor-DPI source so tests don't depend on the real display config",
+        "Unit test: `PointTagParser` output is unchanged (no regression in the existing physical-pixel contract)",
+        "Unit test: a test `OverlayWindow` (or extracted helper) given a physical-pixel target on a 150% monitor produces a DIP canvas-local point matching the expected value within 0.5 DIP",
+        "Manual verification on a high-DPI laptop: hotkey → \"point at the Windows clock\" → the blue cursor must land on the clock, not beside it. Repeat on the far corner of the screen (where the DPI bug causes the largest offset) — must still land within ~20 px of the target. If multi-monitor is available, test the same on a secondary monitor at a different DPI",
+        "Regression check on a 100% single-monitor setup: accuracy must be unchanged from before the fix",
+        "Build: 0 warnings. Tests: all pass",
+        "Append the reproduced offset values (before) and the post-fix measurements (after) to progress.txt",
+        "Commit all changes with message: feat: US-028 - Fix DPI scaling for pointer accuracy on high-DPI displays"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": "The secondary hypothesis — that the image dimensions sent to Claude (AnthropicDirectClient.cs:63-76) disagree with the resized JPEG dimensions — should only be investigated if DPI alone doesn't close the gap. Measure before and after. Do NOT change the coordinate contract of PointTagParser; keeping it in physical pixels means future code (e.g. a hypothetical Win32 SendInput click feature) still has the right reference frame."
+    },
+    {
+      "id": "US-029",
+      "title": "Stream TTS + overlap capture to cut perceived latency",
+      "description": "As a user, I want Clicky to start speaking almost as soon as I let go of the push-to-talk key, not after several seconds of silence. Today, TTS only starts playing after the whole ElevenLabs MP3 has been downloaded AND the entire LLM response has streamed — both are serialized pointlessly.",
+      "acceptanceCriteria": [
+        "Measure current latency as a baseline before changing anything. Instrument `CompanionManager.SendTranscriptToClaudeWithScreenshot` at `windows/src/Clicky.Companion/CompanionManager.cs:318-396` to log (a) key-release→first-LLM-token, (b) first-LLM-token→first-TTS-byte, (c) first-TTS-byte→first-audio-heard. Record the baseline numbers in progress.txt",
+        "Change 1 — stream TTS audio instead of buffering the whole MP3. Update `windows/src/Clicky.Api/ElevenLabsTtsClient.cs:62-92` to consume the HTTP response as a `Stream` and feed it into NAudio via a buffered pipe (`MediaFoundationReader` over a `BufferedWaveProvider`, or a custom `Stream` wrapper that blocks `Read` until more bytes arrive). First audio sample must leave the speakers no later than ~300 ms after the first HTTP response byte arrives, not after the full MP3 is downloaded",
+        "Change 2 — start TTS on sentence boundaries instead of waiting for the whole LLM response. In `CompanionManager` where the LLM `IAsyncEnumerable<string>` is consumed, buffer tokens until the first sentence terminator (`.`, `!`, `?`, or two consecutive newlines), kick off an ElevenLabs TTS request for that chunk, continue buffering the next sentence, and queue subsequent TTS requests to play sequentially without gaps. The `[POINT:x,y:label:screenN]` tag must still be stripped before the text is spoken (`PointTagParser.Parse` already handles this — call it per-sentence)",
+        "Change 3 — overlap screen capture with the hotkey press. Today capture runs after key release. Kick off `ScreenCapture.CaptureAllScreensAsJpegAsync` when the key is first pressed (inside the hotkey press handler in `CompanionManager`), store the `Task<List<CapturedScreen>>`, and `await` it at the point the LLM request is built. On key release the capture is usually already done, saving 300–1000 ms. Cancel the capture task if the press is shorter than ~100 ms (accidental tap)",
+        "Change 4 — tighten the WGC first-frame timeout at `windows/src/Clicky.Capture/ScreenCapture.cs:171` from 2 seconds to 800 ms. On Windows 11, WGC first-frame is normally <300 ms; the 2 s ceiling just prolongs failure fallback to GDI+",
+        "Change 5 (optional, only if time permits) — pre-warm HTTPS connections to `api.anthropic.com`, `api.z.ai`, `api.elevenlabs.io`, and `streaming.assemblyai.com` on `App.OnStartup` with a throwaway HEAD or GET. Skip with a TODO if it adds complexity",
+        "Cancellation: every new async path (pipelined TTS queue, capture-on-press, streamed audio reader) must honor `CompanionManager`'s existing cancellation plumbing from US-010. A new push-to-talk must cleanly cancel any in-flight TTS playback and queued sentences, matching the existing behavior for full-response TTS",
+        "Ordering guarantee: sentences must play in the order they were emitted by the LLM. Test with a mocked LLM that emits sentences at varying speeds and a mocked TTS client with variable latency — the audio queue must never reorder",
+        "Unit tests: sentence-boundary tokenizer (handles `[POINT:...]` tag stripped mid-sentence, handles newlines, handles abbreviations like `Dr.` or `e.g.` gracefully — accept some false positives but document them), streaming MP3 reader starts playback before stream completes, pipelined TTS queue preserves order under varying latency, capture-on-press cancellation on short tap",
+        "Manual measurement after the fix: the same three latency metrics from the baseline, with each change applied incrementally. Target: end-to-end key-release→first-audio-heard under 1.5 seconds on a typical broadband connection (baseline today is likely 3–6 s). Document actual before/after numbers in progress.txt",
+        "Regression check: pointing accuracy from US-028 must be unchanged — the capture-on-press change must still hand Claude the correct screenshot dimensions and `CapturedScreen.DisplayBounds`",
+        "Build: 0 warnings. Tests: all pass",
+        "Commit all changes with message: feat: US-029 - Stream TTS and overlap capture for perceived latency"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": "Ship changes 1+2+3 as the core of this story — they compound. Change 4 is a trivial one-line win. Change 5 is optional. Sentence-boundary detection is a known tar pit; accept a simple `.!?` + newline heuristic, do not pull in a sentence-tokenizer library, and do not attempt to handle edge cases like `Dr. Smith` perfectly — if a false split causes a short extra TTS call, that is acceptable. Measure, don't guess: the baseline and post-fix numbers in progress.txt are the acceptance gate, not code review aesthetics."
     }
   ]
 }
