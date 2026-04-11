@@ -62,7 +62,7 @@ public sealed class TrayIconManager : IDisposable
         _trayIcon = new TaskbarIcon
         {
             Icon = CreateDefaultIcon(),
-            ToolTipText = "Clicky",
+            ToolTipText = $"Clicky {VersionInfo.Current}",
             ContextMenu = BuildContextMenu(),
         };
 
@@ -86,6 +86,12 @@ public sealed class TrayIconManager : IDisposable
 
         _modelSubmenu = new MenuItem { Header = "Model" };
 
+        var versionItem = new MenuItem
+        {
+            Header = $"Version {VersionInfo.Current}",
+            IsEnabled = false,
+        };
+
         var quitItem = new MenuItem { Header = "Quit" };
         quitItem.Click += (_, _) => Application.Current.Shutdown();
 
@@ -93,6 +99,7 @@ public sealed class TrayIconManager : IDisposable
         menu.Items.Add(settingsItem);
         menu.Items.Add(_modelSubmenu);
         menu.Items.Add(new Separator());
+        menu.Items.Add(versionItem);
         menu.Items.Add(quitItem);
 
         return menu;

@@ -24,6 +24,8 @@ public partial class SettingsWindow : Window
         _isFirstRun = isFirstRun;
         DataContext = _viewModel;
 
+        VersionText.Text = $"Clicky {VersionInfo.Current}";
+
         if (isFirstRun)
         {
             HeaderText.Text = "Welcome to Clicky \u2014 let\u2019s set up your API keys";

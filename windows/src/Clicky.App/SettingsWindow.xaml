@@ -463,6 +463,12 @@
                         Click="Save_Click" />
             </Grid>
 
+            <!-- Version -->
+            <TextBlock x:Name="VersionText"
+                       FontSize="11"
+                       Foreground="#888"
+                       Margin="0,0,0,4" />
+
             <!-- Help footnote -->
             <TextBlock Text="Your keys are encrypted with your Windows account and stored only on this PC. Clicky never uploads them anywhere."
                        FontSize="11"
