@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -87,6 +88,7 @@ public partial class App : Application
         _trayIconManager = new TrayIconManager();
         _trayIconManager.TrayIconClicked += OnTrayIconClicked;
         _trayIconManager.SettingsClicked += OnSettingsClicked;
+        _trayIconManager.ModelSelected += OnModelSelected;
 
         // Register for auto-start on first launch (mirrors SMAppService.mainApp.register).
         AutoStartRegistration.EnsureRegistered();
@@ -131,6 +133,13 @@ public partial class App : Application
 
         // Build and start the CompanionManager with current keys/config.
         BuildAndStartCompanionManager();
+
+        // Set the initial model display name on the ViewModel.
+        _companionViewModel!.LlmModelDisplay = GetModelDisplayName(
+            _settingsStore!.LlmProvider, _settingsStore.LlmModel);
+
+        // Populate the tray Model submenu.
+        RefreshModelMenu();
 
         // Initialize WinSparkle auto-update (mirrors Sparkle integration in Mac).
         _autoUpdateService = new AutoUpdateService();
@@ -196,6 +205,79 @@ public partial class App : Application
         var key = _secretsStore!.Read(SecretsStore.ElevenLabsApiKey) ?? "";
         var voiceId = _settingsStore!.ElevenLabsVoiceId;
         return new ElevenLabsTtsClient(key, voiceId);
+    }
+
+    /// <summary>
+    /// Builds the list of (provider, model) entries for the tray Model submenu.
+    /// Items whose required API key is missing are disabled with a tooltip.
+    /// </summary>
+    internal List<ModelMenuEntry> BuildModelMenuEntries()
+    {
+        bool hasAnthropicKey = _secretsStore!.Exists(SecretsStore.AnthropicApiKey);
+        bool hasZaiKey = _secretsStore!.Exists(SecretsStore.ZaiApiKey);
+        string disabledAnthropicTip = "Add your Anthropic key in Settings to enable this model";
+        string disabledZaiTip = "Add your z.ai key in Settings to enable this model";
+
+        return new List<ModelMenuEntry>
+        {
+            new() { Provider = "anthropic", Model = "claude-sonnet-4-6", DisplayName = "Claude Sonnet 4.6", IsEnabled = hasAnthropicKey, DisabledTooltip = hasAnthropicKey ? null : disabledAnthropicTip },
+            new() { Provider = "anthropic", Model = "claude-haiku-4-5", DisplayName = "Claude Haiku 4.5", IsEnabled = hasAnthropicKey, DisabledTooltip = hasAnthropicKey ? null : disabledAnthropicTip },
+            new() { Provider = "anthropic", Model = "claude-opus-4-6", DisplayName = "Claude Opus 4.6", IsEnabled = hasAnthropicKey, DisabledTooltip = hasAnthropicKey ? null : disabledAnthropicTip },
+            new() { Provider = "zai", Model = "glm-4.6v", DisplayName = "GLM-4.6V", IsEnabled = hasZaiKey, DisabledTooltip = hasZaiKey ? null : disabledZaiTip },
+            new() { Provider = "zai", Model = "glm-4.5v", DisplayName = "GLM-4.5V", IsEnabled = hasZaiKey, DisabledTooltip = hasZaiKey ? null : disabledZaiTip },
+        };
+    }
+
+    /// <summary>
+    /// Returns a user-friendly display name for the current (provider, model) pair.
+    /// </summary>
+    internal static string GetModelDisplayName(string provider, string model)
+    {
+        return (provider, model) switch
+        {
+            ("anthropic", "claude-sonnet-4-6") => "Claude Sonnet 4.6",
+            ("anthropic", "claude-haiku-4-5") => "Claude Haiku 4.5",
+            ("anthropic", "claude-opus-4-6") => "Claude Opus 4.6",
+            ("zai", "glm-4.6v") => "GLM-4.6V",
+            ("zai", "glm-4.5v") => "GLM-4.5V",
+            _ => model,
+        };
+    }
+
+    private void RefreshModelMenu()
+    {
+        if (_trayIconManager is null || _settingsStore is null) return;
+        var entries = BuildModelMenuEntries();
+        _trayIconManager.UpdateModelMenu(entries, _settingsStore.LlmProvider, _settingsStore.LlmModel);
+    }
+
+    private async void OnModelSelected(object? sender, ModelSelectedEventArgs e)
+    {
+        if (_settingsStore is null || _secretsStore is null || _companionManager is null) return;
+
+        var fromProvider = _settingsStore.LlmProvider;
+        var fromModel = _settingsStore.LlmModel;
+
+        // No-op if the user clicked the already-active model.
+        if (fromProvider == e.Provider && fromModel == e.Model) return;
+
+        // Update settings store.
+        _settingsStore.LlmProvider = e.Provider;
+        _settingsStore.LlmModel = e.Model;
+
+        // Build new LLM client and swap it into the running CompanionManager.
+        var newClient = BuildLlmClient();
+        await _companionManager.SwapLlmClientAsync(newClient);
+
+        // Update the ViewModel display.
+        if (_companionViewModel is not null)
+            _companionViewModel.LlmModelDisplay = GetModelDisplayName(e.Provider, e.Model);
+
+        // Refresh the tray menu to reflect the new active model.
+        RefreshModelMenu();
+
+        // Track analytics event.
+        ClickyAnalytics.TrackModelSwitched(fromProvider, fromModel, e.Provider, e.Model);
     }
 
     /// <summary>
@@ -272,6 +354,12 @@ public partial class App : Application
         // Settings were saved — rebuild all clients with the new keys/config.
         _companionViewModel?.ClearError();
         BuildAndStartCompanionManager();
+
+        // Update model display and refresh menu (keys may have changed).
+        if (_companionViewModel is not null && _settingsStore is not null)
+            _companionViewModel.LlmModelDisplay = GetModelDisplayName(
+                _settingsStore.LlmProvider, _settingsStore.LlmModel);
+        RefreshModelMenu();
     }
 
     /// <summary>
@@ -359,6 +447,7 @@ public partial class App : Application
         {
             _trayIconManager.TrayIconClicked -= OnTrayIconClicked;
             _trayIconManager.SettingsClicked -= OnSettingsClicked;
+            _trayIconManager.ModelSelected -= OnModelSelected;
             _trayIconManager.Dispose();
         }
         _companionPanel?.Close();

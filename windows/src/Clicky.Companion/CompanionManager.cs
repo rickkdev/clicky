@@ -21,7 +21,8 @@ public sealed class CompanionManager : IDisposable
 
     private readonly CompanionViewModel _viewModel;
     private readonly GlobalPushToTalkHook _hook;
-    private readonly ILlmClient _llmClient;
+    private ILlmClient _llmClient;
+    private readonly object _swapLock = new();
     private readonly AssemblyAiStreamingTranscriber _transcriber;
     private readonly ElevenLabsTtsClient _ttsClient;
     private readonly Dispatcher _dispatcher;
@@ -383,6 +384,33 @@ public sealed class CompanionManager : IDisposable
     internal static string StripPointTags(string text)
     {
         return PointTagParser.Parse(text).SpokenText;
+    }
+
+    /// <summary>
+    /// Swaps the active LLM client at runtime without restarting the CompanionManager.
+    /// If a response is in-flight, it is cancelled first. The next push-to-talk turn
+    /// will use the new client. Safe to call from any VoiceState.
+    /// </summary>
+    public async Task SwapLlmClientAsync(ILlmClient newClient)
+    {
+        // Cancel any in-flight response/TTS before swapping.
+        CancelCurrentResponse();
+
+        // Wait for the current response task to finish if it's running.
+        var task = _currentResponseTask;
+        if (task is not null)
+        {
+            try { await task.ConfigureAwait(false); }
+            catch (OperationCanceledException) { }
+            catch { }
+        }
+
+        lock (_swapLock)
+        {
+            _llmClient = newClient;
+        }
+
+        await _dispatcher.InvokeAsync(() => _viewModel.VoiceState = VoiceState.Idle);
     }
 
     public void Dispose()

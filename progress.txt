@@ -205,3 +205,27 @@ Branch: ralph/windows-port (continues from the completed Windows port — see ar
   - `HasRequiredKeys` is `internal static` on App so tests can call it via InternalsVisibleTo. It checks the provider-appropriate LLM key + both audio keys.
   - Manual browser verification still needed — no browser testing tools configured.
 ---
+
+## 2026-04-11 - US-024
+- Added `CompanionManager.SwapLlmClientAsync(ILlmClient)` — cancels in-flight response/TTS, waits for current task to finish, swaps the `_llmClient` reference, and resets VoiceState to Idle. Safe to call from any VoiceState.
+- Added `CompanionViewModel.LlmModelDisplay` — observable string property for the panel footer showing the active model name.
+- Added `ClickyAnalytics.TrackModelSwitched(fromProvider, fromModel, toProvider, toModel)` event, respecting analyticsOptOut.
+- Added `ModelMenuEntry` and `ModelSelectedEventArgs` types to `Clicky.App`.
+- Updated `TrayIconManager` with a `Model` submenu between `Settings...` and the separator. `UpdateModelMenu()` populates it with radio-style bullet markers for the active model. Disabled items show a tooltip explaining which key is needed.
+- Updated `App.xaml.cs`: added `BuildModelMenuEntries()`, `GetModelDisplayName()`, `RefreshModelMenu()`, and `OnModelSelected` handler. Model menu is populated on startup, after settings save, and after model switch. `OnModelSelected` updates SettingsStore, builds a new ILlmClient via the existing `BuildLlmClient()` factory, calls `SwapLlmClientAsync`, updates the ViewModel display, refreshes the menu, and fires analytics.
+- Five (provider, model) pairs in the submenu: Claude Sonnet 4.6, Claude Haiku 4.5, Claude Opus 4.6, GLM-4.6V, GLM-4.5V. Items whose required API key is missing are grayed out.
+- Build: 0 warnings. Tests: 217 passed, 0 failed (14 new tests).
+- Files changed:
+  - MODIFIED: `windows/src/Clicky.Companion/CompanionManager.cs` (SwapLlmClientAsync, mutable _llmClient)
+  - MODIFIED: `windows/src/Clicky.Companion/CompanionViewModel.cs` (LlmModelDisplay property)
+  - MODIFIED: `windows/src/Clicky.Companion/ClickyAnalytics.cs` (TrackModelSwitched)
+  - MODIFIED: `windows/src/Clicky.App/TrayIconManager.cs` (Model submenu, ModelMenuEntry, ModelSelectedEventArgs)
+  - MODIFIED: `windows/src/Clicky.App/App.xaml.cs` (model menu wiring, OnModelSelected, RefreshModelMenu)
+  - NEW: `windows/tests/Clicky.Tests/ModelSwitchingTests.cs` (14 tests)
+- **Learnings for future iterations:**
+  - `CompanionManager._llmClient` was changed from `readonly` to mutable for `SwapLlmClientAsync`. A `_swapLock` object protects concurrent access, though in practice the swap is serialized through the dispatcher.
+  - The `ModelMenuEntry` class lives in `Clicky.App` namespace (not Companion) because it's tightly coupled to the WPF `TrayIconManager`. Tests reference it via `using Clicky.App`.
+  - `TrayIconManager.UpdateModelMenu` rebuilds items on every call rather than tracking state — simple and avoids stale item references.
+  - `OnModelSelected` is `async void` (event handler pattern) — it awaits `SwapLlmClientAsync` to ensure the swap completes before refreshing the menu.
+  - Manual browser verification still needed — no browser testing tools configured.
+---

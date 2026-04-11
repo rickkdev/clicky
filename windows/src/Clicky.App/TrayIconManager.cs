@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Windows;
@@ -8,6 +9,33 @@ using Hardcodet.Wpf.TaskbarNotification;
 namespace Clicky.App;
 
 /// <summary>
+/// Represents a (provider, model) pair for the tray Model submenu.
+/// </summary>
+public sealed class ModelMenuEntry
+{
+    public string Provider { get; init; } = "";
+    public string Model { get; init; } = "";
+    public string DisplayName { get; init; } = "";
+    public bool IsEnabled { get; init; } = true;
+    public string? DisabledTooltip { get; init; }
+}
+
+/// <summary>
+/// Event args for when the user selects a model from the tray submenu.
+/// </summary>
+public sealed class ModelSelectedEventArgs : EventArgs
+{
+    public string Provider { get; }
+    public string Model { get; }
+
+    public ModelSelectedEventArgs(string provider, string model)
+    {
+        Provider = provider;
+        Model = model;
+    }
+}
+
+/// <summary>
 /// Manages the system tray icon, context menu, and left-click events.
 /// Mirrors the Mac MenuBarPanelManager status item behavior.
 /// </summary>
@@ -15,6 +43,7 @@ public sealed class TrayIconManager : IDisposable
 {
     private readonly TaskbarIcon _trayIcon;
     private bool _disposed;
+    private MenuItem? _modelSubmenu;
 
     /// <summary>
     /// Raised when the user left-clicks the tray icon.
@@ -24,6 +53,9 @@ public sealed class TrayIconManager : IDisposable
 
     /// <summary>Raised when the user clicks Settings... in the context menu.</summary>
     public event EventHandler? SettingsClicked;
+
+    /// <summary>Raised when the user clicks a model in the Model submenu.</summary>
+    public event EventHandler<ModelSelectedEventArgs>? ModelSelected;
 
     public TrayIconManager()
     {
@@ -52,15 +84,55 @@ public sealed class TrayIconManager : IDisposable
         var settingsItem = new MenuItem { Header = "Settings..." };
         settingsItem.Click += (_, _) => SettingsClicked?.Invoke(this, EventArgs.Empty);
 
+        _modelSubmenu = new MenuItem { Header = "Model" };
+
         var quitItem = new MenuItem { Header = "Quit" };
         quitItem.Click += (_, _) => Application.Current.Shutdown();
 
         menu.Items.Add(openItem);
         menu.Items.Add(settingsItem);
+        menu.Items.Add(_modelSubmenu);
         menu.Items.Add(new Separator());
         menu.Items.Add(quitItem);
 
         return menu;
+    }
+
+    /// <summary>
+    /// Rebuilds the Model submenu items. Call after startup and after settings change.
+    /// </summary>
+    public void UpdateModelMenu(IReadOnlyList<ModelMenuEntry> entries, string activeProvider, string activeModel)
+    {
+        if (_modelSubmenu is null) return;
+
+        _modelSubmenu.Items.Clear();
+
+        foreach (var entry in entries)
+        {
+            bool isActive = entry.Provider == activeProvider && entry.Model == activeModel;
+            var item = new MenuItem
+            {
+                Header = (isActive ? "\u25CF " : "   ") + entry.DisplayName,
+                IsEnabled = entry.IsEnabled,
+                Tag = entry,
+            };
+
+            if (!entry.IsEnabled && entry.DisabledTooltip is not null)
+            {
+                item.ToolTip = entry.DisabledTooltip;
+            }
+
+            item.Click += OnModelItemClicked;
+            _modelSubmenu.Items.Add(item);
+        }
+    }
+
+    private void OnModelItemClicked(object sender, RoutedEventArgs e)
+    {
+        if (sender is MenuItem { Tag: ModelMenuEntry entry })
+        {
+            ModelSelected?.Invoke(this, new ModelSelectedEventArgs(entry.Provider, entry.Model));
+        }
     }
 
     /// <summary>

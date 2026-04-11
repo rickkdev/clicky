@@ -146,7 +146,7 @@
         "Commit all changes with message: feat: US-024 - Tray Model submenu for runtime LLM switching"
       ],
       "priority": 7,
-      "passes": false,
+      "passes": true,
       "notes": "The mid-turn swap is the tricky case. Look at how US-010's CompanionManager already cancels currentResponseTask on re-press; SwapLlmClientAsync can reuse the same cancellation plumbing."
     },
     {

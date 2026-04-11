@@ -85,6 +85,32 @@ public static class ClickyAnalytics
         }
     }
 
+    /// <summary>
+    /// Tracks the 'model_switched' event when the user changes LLM provider/model
+    /// via the tray menu. Respects the analyticsOptOut flag.
+    /// </summary>
+    public static void TrackModelSwitched(string fromProvider, string fromModel, string toProvider, string toModel)
+    {
+        try
+        {
+            _client?.Capture(
+                GetDistinctId(),
+                "model_switched",
+                new System.Collections.Generic.Dictionary<string, object>
+                {
+                    ["from_provider"] = fromProvider,
+                    ["from_model"] = fromModel,
+                    ["to_provider"] = toProvider,
+                    ["to_model"] = toModel,
+                    ["platform"] = "windows",
+                });
+        }
+        catch
+        {
+            // Never block on analytics failure.
+        }
+    }
+
     private static string ReadAppVersion()
     {
         try

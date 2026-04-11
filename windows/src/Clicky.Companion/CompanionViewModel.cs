@@ -25,6 +25,7 @@ public sealed class CompanionViewModel : INotifyPropertyChanged
     private bool _isShortcutPressed;
     private bool _hasCompletedOnboarding;
     private string? _lastError;
+    private string _llmModelDisplay = "";
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -149,6 +150,21 @@ public sealed class CompanionViewModel : INotifyPropertyChanged
     }
 
     public bool HasError => !string.IsNullOrEmpty(_lastError);
+
+    /// <summary>
+    /// Display name for the currently-active LLM model, shown in the panel footer.
+    /// Updated by App.xaml.cs when the model is switched via the tray menu.
+    /// </summary>
+    public string LlmModelDisplay
+    {
+        get => _llmModelDisplay;
+        set
+        {
+            if (_llmModelDisplay == value) return;
+            _llmModelDisplay = value;
+            OnPropertyChanged();
+        }
+    }
 
     public void ClearError() => LastError = null;
 
