@@ -24,6 +24,7 @@ public sealed class CompanionViewModel : INotifyPropertyChanged
     private PushToTalkShortcut _pushToTalkShortcut = PushToTalkShortcut.ControlAlt;
     private bool _isShortcutPressed;
     private bool _hasCompletedOnboarding;
+    private string? _lastError;
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -130,6 +131,26 @@ public sealed class CompanionViewModel : INotifyPropertyChanged
     /// either not onboarded yet, or permissions have been revoked.
     /// </summary>
     public bool IsOnboardingVisible => !_hasCompletedOnboarding || !AllPermissionsGranted;
+
+    /// <summary>
+    /// One-shot error banner text shown in the companion panel.
+    /// Set by CompanionManager when a pipeline error (e.g. missing/invalid key) occurs.
+    /// </summary>
+    public string? LastError
+    {
+        get => _lastError;
+        set
+        {
+            if (_lastError == value) return;
+            _lastError = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HasError));
+        }
+    }
+
+    public bool HasError => !string.IsNullOrEmpty(_lastError);
+
+    public void ClearError() => LastError = null;
 
     /// <summary>App version read from the entry assembly, shown in the panel header.</summary>
     public string AppVersion { get; } = ReadAppVersion();

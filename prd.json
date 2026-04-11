@@ -104,7 +104,7 @@
         "Commit all changes with message: feat: US-022 - SettingsWindow UI with Test buttons"
       ],
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "notes": "Copy matters here — this is the onboarding experience for everyone who installs Clicky. Use friendly, plain English. Avoid words like 'provider', 'endpoint', 'API key rejected (401)'. Prefer 'Service', 'Couldn't reach Anthropic — check your key'. Do not add import/export or encryption passphrase features in this story; scope-creep risk is high."
     },
     {
@@ -125,7 +125,7 @@
         "Commit all changes with message: feat: US-023 - First-run setup flow"
       ],
       "priority": 6,
-      "passes": false,
+      "passes": true,
       "notes": "The failure-mode path (key deleted or revoked mid-session) is the one most likely to cause support issues for other users. Spend time on it: make the error surfacing specific, actionable, and non-modal. Do NOT silently retry."
     },
     {

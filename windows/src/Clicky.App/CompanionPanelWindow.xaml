@@ -36,6 +36,22 @@
         </Border.Effect>
 
         <StackPanel Margin="0">
+            <!-- Error banner (dismissable, shown when LastError is set) -->
+            <Border Background="#FF453A" CornerRadius="8" Padding="12,8" Margin="16,14,16,0"
+                    Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}">
+                <Grid>
+                    <TextBlock Text="{Binding LastError}"
+                               FontSize="12" Foreground="White"
+                               TextWrapping="Wrap"
+                               Margin="0,0,24,0" />
+                    <Button HorizontalAlignment="Right" VerticalAlignment="Top"
+                            Content="&#x2715;" FontSize="10"
+                            Foreground="White" Background="Transparent"
+                            BorderThickness="0" Cursor="Hand" Padding="4,0"
+                            Click="DismissError_Click" />
+                </Grid>
+            </Border>
+
             <!-- Header -->
             <Grid Margin="16,14,16,14">
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">

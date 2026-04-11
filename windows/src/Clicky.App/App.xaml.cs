@@ -45,7 +45,43 @@ public partial class App : Application
         // Load onboarding state from SettingsStore (migrated from registry above).
         _companionViewModel.HasCompletedOnboarding = _settingsStore.OnboardingComplete;
 
-        _companionPanel = new CompanionPanelWindow(_companionViewModel);
+        // Check if first-run setup is needed: required keys missing OR not onboarded.
+        if (!HasRequiredKeys(_secretsStore, _settingsStore) || !_settingsStore.OnboardingComplete)
+        {
+            var vm = new SettingsViewModel(_secretsStore, _settingsStore);
+            var settingsWindow = new SettingsWindow(vm, isFirstRun: true);
+            bool saved = false;
+
+            settingsWindow.SettingsSaved += (_, _) =>
+            {
+                saved = true;
+                _settingsStore.OnboardingComplete = true;
+                _companionViewModel.HasCompletedOnboarding = true;
+            };
+
+            // ShowDialog blocks until the window is closed.
+            // If the user closes via X or Quit without saving, the app exits
+            // (handled in SettingsWindow.OnClosing).
+            settingsWindow.ShowDialog();
+
+            if (!saved)
+            {
+                // The app is shutting down — don't continue initialization.
+                return;
+            }
+        }
+
+        // All required keys are present — proceed with full app initialization.
+        InitializeApp();
+    }
+
+    /// <summary>
+    /// Full app initialization: tray icon, overlay, companion manager, permissions, auto-update.
+    /// Called after keys are confirmed to be present (either from prior launch or first-run setup).
+    /// </summary>
+    private void InitializeApp()
+    {
+        _companionPanel = new CompanionPanelWindow(_companionViewModel!);
 
         // Set up system tray icon with menu and left-click event.
         _trayIconManager = new TrayIconManager();
@@ -56,7 +92,6 @@ public partial class App : Application
         AutoStartRegistration.EnsureRegistered();
 
         // Configure PostHog analytics (mirrors ClickyAnalytics.configure() in Mac).
-        // Respects HKCU\Software\Clicky\analyticsOptOut registry flag.
         ClickyAnalytics.Configure();
         ClickyAnalytics.TrackAppOpened();
 
@@ -80,55 +115,112 @@ public partial class App : Application
         // We defer this so the tray icon and window are fully initialized first.
         Dispatcher.InvokeAsync(() =>
         {
-            if (_companionViewModel.IsOnboardingVisible)
+            if (_companionViewModel!.IsOnboardingVisible)
             {
                 _companionPanel.ShowForOnboarding();
             }
         }, DispatcherPriority.Loaded);
 
         // Install the global push-to-talk hook on the dispatcher thread.
-        _pushToTalkHook = new GlobalPushToTalkHook(_companionViewModel.PushToTalkShortcut);
+        _pushToTalkHook = new GlobalPushToTalkHook(_companionViewModel!.PushToTalkShortcut);
         _pushToTalkHook.Start();
 
         // Create transparent overlay windows for each monitor (US-011).
-        // Must be created on the dispatcher thread before CompanionManager
-        // so overlay HWNDs can be excluded from screen captures.
         _overlayManager = new OverlayWindowManager();
         _overlayManager.Start();
 
-        // Construct the LLM client from SecretsStore key + SettingsStore model.
-        var anthropicKey = _secretsStore.Read(SecretsStore.AnthropicApiKey) ?? "";
-        var llmClient = new AnthropicDirectClient(
-            apiKey: anthropicKey,
-            model: _settingsStore.LlmModel);
+        // Build and start the CompanionManager with current keys/config.
+        BuildAndStartCompanionManager();
 
-        // Construct audio clients with keys from SecretsStore + voice ID from SettingsStore.
-        var assemblyAiKey = _secretsStore.Read(SecretsStore.AssemblyAiApiKey) ?? "";
-        var elevenLabsKey = _secretsStore.Read(SecretsStore.ElevenLabsApiKey) ?? "";
-        var voiceId = _settingsStore.ElevenLabsVoiceId;
+        // Initialize WinSparkle auto-update (mirrors Sparkle integration in Mac).
+        _autoUpdateService = new AutoUpdateService();
+        _autoUpdateService.Initialize(
+            "https://raw.githubusercontent.com/julianjear/makesomething-mac-app/main/appcast.xml");
+    }
 
-        var transcriber = new AssemblyAiStreamingTranscriber(assemblyAiKey);
-        var ttsClient = new ElevenLabsTtsClient(elevenLabsKey, voiceId);
+    /// <summary>
+    /// Constructs an ILlmClient + audio clients from the current SecretsStore/SettingsStore
+    /// state, creates a CompanionManager, wires up error handling, and starts it.
+    /// </summary>
+    private void BuildAndStartCompanionManager()
+    {
+        // Dispose old manager if rebuilding after a settings change.
+        if (_companionManager is not null)
+        {
+            _companionManager.OpenSettingsRequested -= OnPipelineKeyError;
+            _companionManager.Dispose();
+            _companionManager = null;
+        }
 
-        // Create and start the CompanionManager state machine that orchestrates
-        // push-to-talk → capture → transcribe → LLM → TTS.
+        var llmClient = BuildLlmClient();
+        var transcriber = BuildTranscriber();
+        var ttsClient = BuildTtsClient();
+
         _companionManager = new CompanionManager(
-            _companionViewModel,
-            _pushToTalkHook,
+            _companionViewModel!,
+            _pushToTalkHook!,
             llmClient,
             transcriber,
             ttsClient,
             Dispatcher,
             _overlayManager);
+        _companionManager.OpenSettingsRequested += OnPipelineKeyError;
         _companionManager.Start();
+    }
 
-        // Initialize WinSparkle auto-update (mirrors Sparkle integration in Mac).
-        // Runs a single background update check on launch; failures are logged
-        // but never block startup. The appcast URL is a placeholder — the
-        // maintainer must replace it with a real Windows-specific feed URL.
-        _autoUpdateService = new AutoUpdateService();
-        _autoUpdateService.Initialize(
-            "https://raw.githubusercontent.com/julianjear/makesomething-mac-app/main/appcast.xml");
+    private ILlmClient BuildLlmClient()
+    {
+        var provider = _settingsStore!.LlmProvider;
+        var model = _settingsStore.LlmModel;
+
+        if (provider == "zai")
+        {
+            var key = _secretsStore!.Read(SecretsStore.ZaiApiKey) ?? "";
+            return new ZaiDirectClient(apiKey: key, model: model);
+        }
+        else
+        {
+            var key = _secretsStore!.Read(SecretsStore.AnthropicApiKey) ?? "";
+            return new AnthropicDirectClient(apiKey: key, model: model);
+        }
+    }
+
+    private AssemblyAiStreamingTranscriber BuildTranscriber()
+    {
+        var key = _secretsStore!.Read(SecretsStore.AssemblyAiApiKey) ?? "";
+        return new AssemblyAiStreamingTranscriber(key);
+    }
+
+    private ElevenLabsTtsClient BuildTtsClient()
+    {
+        var key = _secretsStore!.Read(SecretsStore.ElevenLabsApiKey) ?? "";
+        var voiceId = _settingsStore!.ElevenLabsVoiceId;
+        return new ElevenLabsTtsClient(key, voiceId);
+    }
+
+    /// <summary>
+    /// Checks whether the currently-selected provider's LLM key and both audio
+    /// keys are present in the SecretsStore.
+    /// </summary>
+    internal static bool HasRequiredKeys(SecretsStore secrets, SettingsStore settings)
+    {
+        var provider = settings.LlmProvider;
+        bool hasLlmKey = provider == "zai"
+            ? secrets.Exists(SecretsStore.ZaiApiKey)
+            : secrets.Exists(SecretsStore.AnthropicApiKey);
+
+        return hasLlmKey
+            && secrets.Exists(SecretsStore.AssemblyAiApiKey)
+            && secrets.Exists(SecretsStore.ElevenLabsApiKey);
+    }
+
+    /// <summary>
+    /// Called when CompanionManager detects a key-related pipeline error (e.g. 401).
+    /// Surfaces the error to the user and auto-opens SettingsWindow.
+    /// </summary>
+    private void OnPipelineKeyError(object? sender, System.EventArgs e)
+    {
+        OpenSettingsWindow(isFirstRun: false);
     }
 
     private async Task ProbeMicrophonePermissionAsync()
@@ -177,16 +269,14 @@ public partial class App : Application
 
     private void OnSettingsWindowSaved(object? sender, System.EventArgs e)
     {
-        // Settings were saved — future stories (US-023, US-024) will
-        // rebuild clients here. For now this is a no-op placeholder.
+        // Settings were saved — rebuild all clients with the new keys/config.
+        _companionViewModel?.ClearError();
+        BuildAndStartCompanionManager();
     }
 
     /// <summary>
     /// Polls permissions every 1.5 s so the onboarding panel reflects real-time
-    /// state as the user grants access in Windows Settings. Mirrors Mac's
-    /// accessibilityCheckTimer in CompanionManager.swift.
-    /// When all permissions are granted and onboarding hasn't been marked complete,
-    /// sets HKCU\Software\Clicky\onboarded=1 and dismisses the onboarding view.
+    /// state as the user grants access in Windows Settings.
     /// </summary>
     private void OnPermissionPollTick(object? sender, System.EventArgs e)
     {
@@ -208,8 +298,6 @@ public partial class App : Application
             _companionViewModel.HasMicrophonePermission = micGranted;
             _companionViewModel.HasScreenCapturePermission = captureGranted;
 
-            // When all permissions are granted and onboarding hasn't been
-            // completed yet, mark it done and hide the panel.
             if (_companionViewModel.AllPermissionsGranted &&
                 !_companionViewModel.HasCompletedOnboarding)
             {
@@ -223,19 +311,16 @@ public partial class App : Application
     /// <summary>
     /// Migrates onboarded and analyticsOptOut values from HKCU\Software\Clicky
     /// registry keys (US-014/US-016) to SettingsStore on first run of US-019 code.
-    /// Only copies if the SettingsStore file doesn't already contain the value.
     /// </summary>
     private static void MigrateRegistrySettings(SettingsStore settings)
     {
         try
         {
-            // Migrate onboarding state from registry if not yet set in SettingsStore.
             if (!settings.OnboardingComplete && OnboardingService.HasCompletedOnboarding())
             {
                 settings.OnboardingComplete = true;
             }
 
-            // Migrate analytics opt-out from registry if not yet set in SettingsStore.
             if (!settings.AnalyticsOptOut && ClickyAnalytics.IsOptedOut())
             {
                 settings.AnalyticsOptOut = true;
@@ -257,8 +342,12 @@ public partial class App : Application
 
         ClickyAnalytics.Shutdown();
 
-        _companionManager?.Dispose();
-        _companionManager = null;
+        if (_companionManager is not null)
+        {
+            _companionManager.OpenSettingsRequested -= OnPipelineKeyError;
+            _companionManager.Dispose();
+            _companionManager = null;
+        }
 
         _overlayManager?.Dispose();
         _overlayManager = null;

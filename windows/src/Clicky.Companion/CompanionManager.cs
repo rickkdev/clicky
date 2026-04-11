@@ -1,3 +1,4 @@
+using System.Net.Http;
 using System.Text;
 using System.Windows.Threading;
 using Clicky.Api;
@@ -71,6 +72,12 @@ public sealed class CompanionManager : IDisposable
         - user asks how to commit in xcode: "see that source control menu up top? click that and hit commit, or you can use command option c as a shortcut. [POINT:285,11:source control]"
         - element is on screen 2 (not where cursor is): "that's over on your other monitor — see the terminal window? [POINT:400,300:terminal:screen2]"
         """;
+
+    /// <summary>
+    /// Raised when the pipeline encounters a key-related error (401, empty key)
+    /// that requires the user to open Settings and fix their configuration.
+    /// </summary>
+    public event EventHandler? OpenSettingsRequested;
 
     public CompanionManager(
         CompanionViewModel viewModel,
@@ -327,6 +334,15 @@ public sealed class CompanionManager : IDisposable
             {
                 // User spoke again — response was interrupted. Expected.
             }
+            catch (HttpRequestException httpEx) when (IsKeyError(httpEx))
+            {
+                System.Diagnostics.Debug.WriteLine($"Key error in pipeline: {httpEx.Message}");
+                await _dispatcher.InvokeAsync(() =>
+                {
+                    _viewModel.LastError = "Your API key is missing or invalid. Open Settings to fix.";
+                    OpenSettingsRequested?.Invoke(this, EventArgs.Empty);
+                });
+            }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"Response pipeline error: {ex.Message}");
@@ -348,6 +364,16 @@ public sealed class CompanionManager : IDisposable
         _responseCts?.Dispose();
         _responseCts = null;
         _ttsClient.StopPlayback();
+    }
+
+    /// <summary>
+    /// Detects whether an HttpRequestException indicates a key-related error
+    /// (401 Unauthorized) that the user should fix in Settings.
+    /// </summary>
+    private static bool IsKeyError(HttpRequestException ex)
+    {
+        var msg = ex.Message;
+        return msg.Contains("(401)") || msg.Contains("Unauthorized", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

@@ -13,11 +13,15 @@ public partial class SettingsWindow : Window
     /// <summary>Raised after a successful save (bubbles from the ViewModel).</summary>
     public event EventHandler? SettingsSaved;
 
+    private readonly bool _isFirstRun;
+    private bool _savedSuccessfully;
+
     public SettingsWindow(SettingsViewModel viewModel, bool isFirstRun = false)
     {
         InitializeComponent();
 
         _viewModel = viewModel;
+        _isFirstRun = isFirstRun;
         DataContext = _viewModel;
 
         if (isFirstRun)
@@ -35,6 +39,12 @@ public partial class SettingsWindow : Window
     {
         UpdateSavedKeyVisibility();
         UpdateTestButtonStates();
+
+        // Highlight missing required fields on first-run or partial config.
+        if (_isFirstRun)
+        {
+            _viewModel.ValidateRequiredFields();
+        }
     }
 
     private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -58,6 +68,7 @@ public partial class SettingsWindow : Window
 
     private void OnViewModelSettingsSaved(object? sender, EventArgs e)
     {
+        _savedSuccessfully = true;
         SettingsSaved?.Invoke(this, EventArgs.Empty);
         Dispatcher.Invoke(Close);
     }
@@ -216,6 +227,18 @@ public partial class SettingsWindow : Window
         catch
         {
             // Best-effort — don't crash if the browser fails to open.
+        }
+    }
+
+    protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
+    {
+        base.OnClosing(e);
+
+        // If the user closes the window during first-run without saving,
+        // exit the app cleanly — never leave the app half-initialized.
+        if (_isFirstRun && !_savedSuccessfully)
+        {
+            Application.Current.Shutdown();
         }
     }
 

@@ -46,6 +46,12 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
     private string? _assemblyAiTestError;
     private string? _elevenLabsTestError;
 
+    // Inline validation errors shown when a required key is missing (first-run / partial config).
+    private string? _anthropicKeyError;
+    private string? _zaiKeyError;
+    private string? _assemblyAiKeyError;
+    private string? _elevenLabsKeyError;
+
     /// <summary>Raised after a successful Save.</summary>
     public event EventHandler? SettingsSaved;
 
@@ -123,9 +129,11 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
             _anthropicApiKey = value;
             _anthropicKeyIsSaved = false;
             _anthropicTestState = TestState.None;
+            _anthropicKeyError = null;
             OnPropertyChanged();
             OnPropertyChanged(nameof(AnthropicKeyIsSaved));
             OnPropertyChanged(nameof(AnthropicTestState));
+            OnPropertyChanged(nameof(AnthropicKeyError));
             OnPropertyChanged(nameof(CanSave));
         }
     }
@@ -145,9 +153,11 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
             _zaiApiKey = value;
             _zaiKeyIsSaved = false;
             _zaiTestState = TestState.None;
+            _zaiKeyError = null;
             OnPropertyChanged();
             OnPropertyChanged(nameof(ZaiKeyIsSaved));
             OnPropertyChanged(nameof(ZaiTestState));
+            OnPropertyChanged(nameof(ZaiKeyError));
             OnPropertyChanged(nameof(CanSave));
         }
     }
@@ -167,9 +177,11 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
             _assemblyAiApiKey = value;
             _assemblyAiKeyIsSaved = false;
             _assemblyAiTestState = TestState.None;
+            _assemblyAiKeyError = null;
             OnPropertyChanged();
             OnPropertyChanged(nameof(AssemblyAiKeyIsSaved));
             OnPropertyChanged(nameof(AssemblyAiTestState));
+            OnPropertyChanged(nameof(AssemblyAiKeyError));
             OnPropertyChanged(nameof(CanSave));
         }
     }
@@ -189,9 +201,11 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
             _elevenLabsApiKey = value;
             _elevenLabsKeyIsSaved = false;
             _elevenLabsTestState = TestState.None;
+            _elevenLabsKeyError = null;
             OnPropertyChanged();
             OnPropertyChanged(nameof(ElevenLabsKeyIsSaved));
             OnPropertyChanged(nameof(ElevenLabsTestState));
+            OnPropertyChanged(nameof(ElevenLabsKeyError));
             OnPropertyChanged(nameof(CanSave));
         }
     }
@@ -261,6 +275,59 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
     {
         get => _elevenLabsTestError;
         private set { _elevenLabsTestError = value; OnPropertyChanged(); }
+    }
+
+    // -- Field validation errors (for first-run / partial config highlighting) --
+
+    public string? AnthropicKeyError
+    {
+        get => _anthropicKeyError;
+        private set { _anthropicKeyError = value; OnPropertyChanged(); }
+    }
+
+    public string? ZaiKeyError
+    {
+        get => _zaiKeyError;
+        private set { _zaiKeyError = value; OnPropertyChanged(); }
+    }
+
+    public string? AssemblyAiKeyError
+    {
+        get => _assemblyAiKeyError;
+        private set { _assemblyAiKeyError = value; OnPropertyChanged(); }
+    }
+
+    public string? ElevenLabsKeyError
+    {
+        get => _elevenLabsKeyError;
+        private set { _elevenLabsKeyError = value; OnPropertyChanged(); }
+    }
+
+    /// <summary>
+    /// Highlights missing required fields with inline error text.
+    /// Called on first-run or when reopened due to partial config.
+    /// </summary>
+    public void ValidateRequiredFields()
+    {
+        if (_selectedProvider == "anthropic" && !HasKey(_anthropicApiKey, _anthropicKeyIsSaved))
+            AnthropicKeyError = "Required for your selected service";
+        else
+            AnthropicKeyError = null;
+
+        if (_selectedProvider == "zai" && !HasKey(_zaiApiKey, _zaiKeyIsSaved))
+            ZaiKeyError = "Required for your selected service";
+        else
+            ZaiKeyError = null;
+
+        if (!HasKey(_assemblyAiApiKey, _assemblyAiKeyIsSaved))
+            AssemblyAiKeyError = "Required";
+        else
+            AssemblyAiKeyError = null;
+
+        if (!HasKey(_elevenLabsApiKey, _elevenLabsKeyIsSaved))
+            ElevenLabsKeyError = "Required";
+        else
+            ElevenLabsKeyError = null;
     }
 
     // -- Save enablement --

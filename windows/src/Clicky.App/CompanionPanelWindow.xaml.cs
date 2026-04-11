@@ -142,6 +142,11 @@ public partial class CompanionPanelWindow : Window
         }
     }
 
+    private void DismissError_Click(object sender, RoutedEventArgs e)
+    {
+        _viewModel.ClearError();
+    }
+
     private void QuitButton_Click(object sender, RoutedEventArgs e)
     {
         Application.Current.Shutdown();

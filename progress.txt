@@ -147,3 +147,61 @@ Branch: ralph/windows-port (continues from the completed Windows port — see ar
   - Both `AssemblyAiStreamingTranscriber` and `ElevenLabsTtsClient` now accept an optional `HttpClient` for testability, matching the pattern from `AnthropicDirectClient` and `ZaiDirectClient`.
   - The `CapturingHttpMessageHandler` test helper is defined privately in each test class (not shared). If more test files need it, consider extracting to a shared test utility.
 ---
+
+## 2026-04-11 - US-022
+- Created `Clicky.Companion.SettingsViewModel` — MVVM viewmodel for the Settings window. Handles field binding, provider-dependent model list updates, CanSave logic (required keys for selected provider + both audio keys), Test button probes for all four services, Save persistence to SecretsStore + SettingsStore, and a SettingsSaved event.
+- Created `Clicky.App.SettingsWindow.xaml` — resizable WPF window with dark theme matching CompanionPanelWindow. Fields: LLM Provider (ComboBox), LLM Model (ComboBox, items change by provider), four API key PasswordBox fields each with Test + "Get key" link buttons, ElevenLabs Voice ID TextBox, Save + Quit buttons, and a help footnote about key encryption.
+- Created `Clicky.App.SettingsWindow.xaml.cs` — code-behind wiring PasswordBox changes (WPF PasswordBox doesn't support binding), saved-key placeholder visibility toggling (Change button to clear and re-enter), Test button state display (spinner → green check / red X with tooltip), and browser link openers.
+- Updated `TrayIconManager.cs` — added `Settings...` menu item between Open and Quit, with a new `SettingsClicked` event.
+- Updated `App.xaml.cs` — subscribes to `SettingsClicked`, opens SettingsWindow with a fresh ViewModel populated from SecretsStore/SettingsStore, wires up SettingsSaved event for future client rebuild (US-023/US-024).
+- Test probes: Anthropic → POST /v1/messages with max_tokens:1; z.ai → POST /api/paas/v4/chat/completions with max_tokens:1; AssemblyAI → GET /v3/token (raw Authorization header); ElevenLabs → GET /v1/user/subscription (xi-api-key header).
+- User-friendly error copy: 401 → "check your key", 429 → "rate limit", 5xx → "service issues", HttpRequestException → "check your internet", timeout → "try again".
+- When reopened after initial save, saved keys show as "••••••••" placeholder with a Change button that clears the field.
+- Build: 0 warnings. Tests: 188 passed, 0 failed (29 new SettingsViewModel tests).
+- Files changed:
+  - NEW: `windows/src/Clicky.Companion/SettingsViewModel.cs`
+  - NEW: `windows/src/Clicky.App/SettingsWindow.xaml`
+  - NEW: `windows/src/Clicky.App/SettingsWindow.xaml.cs`
+  - MODIFIED: `windows/src/Clicky.App/TrayIconManager.cs` (Settings... menu item)
+  - MODIFIED: `windows/src/Clicky.App/App.xaml.cs` (SettingsWindow wiring)
+  - NEW: `windows/tests/Clicky.Tests/SettingsViewModelTests.cs` (29 tests)
+- **Learnings for future iterations:**
+  - WPF `PasswordBox` does not support data binding — use `PasswordChanged` event handlers to push the value to the ViewModel.
+  - XAML event handlers cannot be `static` methods — the XAML codegen calls them via `this.MethodName()`, so they must be instance methods even if they don't use instance state.
+  - The `SettingsViewModel` accepts an optional `HttpClient` for testability, following the same DI pattern used by `AnthropicDirectClient` and `ZaiDirectClient`.
+  - `SettingsViewModel.CanSave` depends on the selected provider: Anthropic provider requires Anthropic key, z.ai provider requires z.ai key. Both audio keys (AssemblyAI + ElevenLabs) are always required.
+  - Saved keys use a separate `*KeyIsSaved` flag — when true, the PasswordBox is hidden and a read-only placeholder is shown. The Change button clears the flag so the user can enter a new key. Save only writes to SecretsStore when the flag is false (new key entered), preventing overwrite of saved keys with empty strings.
+  - Manual browser verification still needed — no browser testing tools configured.
+---
+
+## 2026-04-11 - US-023
+- Restructured `App.xaml.cs` startup into two phases: pre-settings check and `InitializeApp()`. On startup, checks `HasRequiredKeys()` + `OnboardingComplete`. If either fails, opens SettingsWindow as a modal dialog (`ShowDialog`) before any other initialization.
+- First-run mode: SettingsWindow shows "Welcome to Clicky — let's set up your API keys" header and calls `ValidateRequiredFields()` to highlight missing keys with inline red error text.
+- After successful save in first-run, sets `OnboardingComplete = true` and calls `InitializeApp()` to continue normal startup (tray icon, overlay, CompanionManager, permissions panel).
+- If user closes SettingsWindow via X button during first-run without saving, app exits cleanly via `OnClosing` handler — never leaves the app half-initialized.
+- Runtime key error detection: `CompanionManager` catches `HttpRequestException` with 401 status in the response pipeline, sets `CompanionViewModel.LastError` to a friendly message, and raises `OpenSettingsRequested` event which auto-opens SettingsWindow.
+- Added `CompanionViewModel.LastError` / `HasError` / `ClearError()` — shown as a dismissable red banner at the top of the CompanionPanelWindow.
+- Added `SettingsViewModel.ValidateRequiredFields()` + per-field `*KeyError` properties that highlight missing required keys with inline error text in the XAML. Errors clear automatically when the user types in the field.
+- `OnSettingsWindowSaved` now rebuilds all clients: disposes old `CompanionManager`, constructs new `ILlmClient` + audio clients from updated `SecretsStore`/`SettingsStore`, starts a new `CompanionManager`.
+- Added `BuildLlmClient()` factory method that reads provider from `SettingsStore` and constructs `AnthropicDirectClient` or `ZaiDirectClient` accordingly — prepares for US-024 runtime model switching.
+- Created `NullToVisibilityConverter` for binding error text visibility in XAML.
+- Build: 0 warnings. Tests: 203 passed, 0 failed (15 new tests).
+- Files changed:
+  - MODIFIED: `windows/src/Clicky.Companion/CompanionViewModel.cs` (LastError, HasError, ClearError)
+  - MODIFIED: `windows/src/Clicky.Companion/CompanionManager.cs` (OpenSettingsRequested event, key error detection)
+  - MODIFIED: `windows/src/Clicky.Companion/SettingsViewModel.cs` (ValidateRequiredFields, per-field errors)
+  - MODIFIED: `windows/src/Clicky.App/App.xaml.cs` (first-run flow, InitializeApp, BuildAndStartCompanionManager, client rebuild)
+  - MODIFIED: `windows/src/Clicky.App/SettingsWindow.xaml` (inline error text, NullToCollapsed converter)
+  - MODIFIED: `windows/src/Clicky.App/SettingsWindow.xaml.cs` (first-run close handling, validate on load)
+  - MODIFIED: `windows/src/Clicky.App/CompanionPanelWindow.xaml` (error banner)
+  - MODIFIED: `windows/src/Clicky.App/CompanionPanelWindow.xaml.cs` (dismiss error handler)
+  - NEW: `windows/src/Clicky.App/NullToVisibilityConverter.cs`
+  - NEW: `windows/tests/Clicky.Tests/FirstRunFlowTests.cs` (15 tests)
+- **Learnings for future iterations:**
+  - `ShowDialog()` blocks the calling thread until the dialog closes — use it for first-run gating where you need to block startup until the user completes setup. `Show()` is non-blocking for the normal tray menu → Settings path.
+  - `SettingsWindow.OnClosing` runs before `OnClosed` — use it to trigger `Application.Current.Shutdown()` for the first-run X-close case. The Quit button already calls Shutdown directly.
+  - `CompanionManager.OpenSettingsRequested` fires on the dispatcher thread (via `_dispatcher.InvokeAsync`) so the handler can safely open WPF windows.
+  - The `BuildAndStartCompanionManager()` pattern (dispose old, construct new) is safer than swapping individual clients because CompanionManager owns CancellationTokenSources and task state. US-024 can add a more surgical `SwapLlmClientAsync` if needed.
+  - `HasRequiredKeys` is `internal static` on App so tests can call it via InternalsVisibleTo. It checks the provider-appropriate LLM key + both audio keys.
+  - Manual browser verification still needed — no browser testing tools configured.
+---

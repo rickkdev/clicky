@@ -2,6 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:companion="clr-namespace:Clicky.Companion;assembly=Clicky.Companion"
+        xmlns:local="clr-namespace:Clicky.App"
         Title="Settings"
         Width="480" Height="640"
         MinWidth="400" MinHeight="540"
@@ -21,6 +22,9 @@
         <SolidColorBrush x:Key="Accent" Color="#3B82F6" />
         <SolidColorBrush x:Key="InputBackground" Color="#38383A" />
         <BooleanToVisibilityConverter x:Key="BoolToVis" />
+
+        <!-- Converts non-null to Visible, null to Collapsed -->
+        <local:NullToVisibilityConverter x:Key="NullToCollapsed" />
 
         <!-- Rounded button style -->
         <Style x:Key="AccentButton" TargetType="Button">
@@ -240,6 +244,12 @@
                         Click="AnthropicTest_Click" />
             </Grid>
 
+            <!-- Anthropic key error -->
+            <TextBlock Text="{Binding AnthropicKeyError}"
+                       FontSize="11" Foreground="{StaticResource Failure}"
+                       Margin="0,0,0,4"
+                       Visibility="{Binding AnthropicKeyError, Converter={StaticResource NullToCollapsed}}" />
+
             <!-- z.ai API Key -->
             <Grid Margin="0,0,0,4">
                 <TextBlock Text="z.ai"
@@ -282,6 +292,12 @@
                         Style="{StaticResource TestButton}"
                         Click="ZaiTest_Click" />
             </Grid>
+
+            <!-- z.ai key error -->
+            <TextBlock Text="{Binding ZaiKeyError}"
+                       FontSize="11" Foreground="{StaticResource Failure}"
+                       Margin="0,0,0,4"
+                       Visibility="{Binding ZaiKeyError, Converter={StaticResource NullToCollapsed}}" />
 
             <!-- AssemblyAI API Key -->
             <Grid Margin="0,0,0,4">
@@ -326,6 +342,12 @@
                         Click="AssemblyAiTest_Click" />
             </Grid>
 
+            <!-- AssemblyAI key error -->
+            <TextBlock Text="{Binding AssemblyAiKeyError}"
+                       FontSize="11" Foreground="{StaticResource Failure}"
+                       Margin="0,0,0,4"
+                       Visibility="{Binding AssemblyAiKeyError, Converter={StaticResource NullToCollapsed}}" />
+
             <!-- ElevenLabs API Key -->
             <Grid Margin="0,0,0,4">
                 <TextBlock Text="ElevenLabs (text-to-speech)"
@@ -368,6 +390,12 @@
                         Style="{StaticResource TestButton}"
                         Click="ElevenLabsTest_Click" />
             </Grid>
+
+            <!-- ElevenLabs key error -->
+            <TextBlock Text="{Binding ElevenLabsKeyError}"
+                       FontSize="11" Foreground="{StaticResource Failure}"
+                       Margin="0,0,0,4"
+                       Visibility="{Binding ElevenLabsKeyError, Converter={StaticResource NullToCollapsed}}" />
 
             <!-- ElevenLabs Voice ID -->
             <TextBlock Text="ELEVENLABS VOICE ID"
