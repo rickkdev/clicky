@@ -61,7 +61,7 @@
         "Commit all changes with message: feat: US-020 - ZaiDirectClient for GLM-4.6V"
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "This is the most algorithmically dense story. Budget time for the SSE chunk-boundary tests — getting them right is what separates a demo-quality integration from a shippable one. The Anthropic-shape system prompt (built by CompanionManager in US-010, includes the [POINT:x,y:label:screenN] tag instructions) passes through unchanged — GLM-4.6V is prompted in the same English, it just speaks OpenAI over the wire."
     },
     {
@@ -82,7 +82,7 @@
         "Commit all changes with message: feat: US-021 - Direct AssemblyAI and ElevenLabs clients"
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": "AssemblyAI's token-fetch auth uses the raw key in the Authorization header, not `Bearer <key>` — double-check this before coding. This is the last story that touches the Clicky.Api layer; after it, the worker is completely unused by the Windows client."
     },
     {

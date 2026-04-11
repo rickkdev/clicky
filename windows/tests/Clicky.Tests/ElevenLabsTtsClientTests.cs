@@ -11,28 +11,28 @@ public class ElevenLabsTtsClientTests
     [Fact]
     public void IsPlaying_WhenNoPlayback_ReturnsFalse()
     {
-        using var client = new ElevenLabsTtsClient("https://example.com");
+        using var client = new ElevenLabsTtsClient("test-key", "test-voice-id");
         Assert.False(client.IsPlaying);
     }
 
     [Fact]
     public void StopPlayback_WhenNotPlaying_DoesNotThrow()
     {
-        using var client = new ElevenLabsTtsClient("https://example.com");
+        using var client = new ElevenLabsTtsClient("test-key", "test-voice-id");
         client.StopPlayback(); // Should be a no-op
     }
 
     [Fact]
     public void Dispose_WhenNotPlaying_DoesNotThrow()
     {
-        var client = new ElevenLabsTtsClient("https://example.com");
+        var client = new ElevenLabsTtsClient("test-key", "test-voice-id");
         client.Dispose(); // Should clean up without error
     }
 
     [Fact]
     public void Dispose_CalledTwice_DoesNotThrow()
     {
-        var client = new ElevenLabsTtsClient("https://example.com");
+        var client = new ElevenLabsTtsClient("test-key", "test-voice-id");
         client.Dispose();
         client.Dispose(); // Second dispose is a no-op
     }
@@ -58,9 +58,54 @@ public class ElevenLabsTtsClientTests
     }
 
     [Fact]
+    public async Task SpeakAsync_SendsDirectPostWithCorrectUrlAndHeaders()
+    {
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(new byte[] { 0xFF, 0xFB, 0x90, 0x00 })
+        });
+        var httpClient = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
+        using var client = new ElevenLabsTtsClient("my-eleven-key", "kPzsL2i3teMYv0FxEYQ6", httpClient);
+
+        try
+        {
+            await client.SpeakAsync("hello", CancellationToken.None);
+        }
+        catch
+        {
+            // MP3 playback will fail with fake data — that's fine, we're testing the HTTP request
+        }
+
+        Assert.NotNull(handler.CapturedRequest);
+        Assert.Equal(HttpMethod.Post, handler.CapturedRequest!.Method);
+        Assert.Equal(
+            "https://api.elevenlabs.io/v1/text-to-speech/kPzsL2i3teMYv0FxEYQ6/stream",
+            handler.CapturedRequest.RequestUri!.ToString());
+        Assert.True(handler.CapturedRequest.Headers.TryGetValues("xi-api-key", out var apiKeyValues));
+        Assert.Equal("my-eleven-key", apiKeyValues!.First());
+        Assert.Contains("audio/mpeg", handler.CapturedRequest.Headers.Accept.ToString());
+    }
+
+    [Fact]
+    public async Task SpeakAsync_DifferentVoiceId_UsesCorrectUrl()
+    {
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(new byte[] { 0xFF, 0xFB, 0x90, 0x00 })
+        });
+        var httpClient = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
+        using var client = new ElevenLabsTtsClient("key", "my-custom-voice", httpClient);
+
+        try { await client.SpeakAsync("hi", CancellationToken.None); } catch { }
+
+        Assert.NotNull(handler.CapturedRequest);
+        Assert.Contains("/my-custom-voice/stream", handler.CapturedRequest!.RequestUri!.ToString());
+    }
+
+    [Fact]
     public async Task SpeakAsync_ThrowsOnCancellation()
     {
-        using var client = new ElevenLabsTtsClient("https://example.com");
+        using var client = new ElevenLabsTtsClient("test-key", "test-voice-id");
         var cts = new CancellationTokenSource();
         cts.Cancel();
 
@@ -71,7 +116,7 @@ public class ElevenLabsTtsClientTests
     [Fact]
     public async Task PlayMp3Async_WithCancellation_StopsPlayback()
     {
-        using var client = new ElevenLabsTtsClient("https://example.com");
+        using var client = new ElevenLabsTtsClient("test-key", "test-voice-id");
         var cts = new CancellationTokenSource();
 
         // Generate a minimal valid MP3 frame (silence)
@@ -94,5 +139,17 @@ public class ElevenLabsTtsClientTests
         }
 
         Assert.False(client.IsPlaying);
+    }
+
+    private sealed class CapturingHttpMessageHandler(HttpResponseMessage response) : HttpMessageHandler
+    {
+        public HttpRequestMessage? CapturedRequest { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            CapturedRequest = request;
+            return Task.FromResult(response);
+        }
     }
 }

@@ -1,5 +1,3 @@
-using System.IO;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -97,18 +95,19 @@ public partial class App : Application
         _overlayManager = new OverlayWindowManager();
         _overlayManager.Start();
 
-        // Read worker base URL from appsettings.json (still used for audio clients
-        // until US-021 migrates them to direct API calls).
-        var workerBaseUrl = ReadWorkerBaseUrl();
-
         // Construct the LLM client from SecretsStore key + SettingsStore model.
         var anthropicKey = _secretsStore.Read(SecretsStore.AnthropicApiKey) ?? "";
         var llmClient = new AnthropicDirectClient(
             apiKey: anthropicKey,
             model: _settingsStore.LlmModel);
 
-        var transcriber = new AssemblyAiStreamingTranscriber(workerBaseUrl);
-        var ttsClient = new ElevenLabsTtsClient(workerBaseUrl);
+        // Construct audio clients with keys from SecretsStore + voice ID from SettingsStore.
+        var assemblyAiKey = _secretsStore.Read(SecretsStore.AssemblyAiApiKey) ?? "";
+        var elevenLabsKey = _secretsStore.Read(SecretsStore.ElevenLabsApiKey) ?? "";
+        var voiceId = _settingsStore.ElevenLabsVoiceId;
+
+        var transcriber = new AssemblyAiStreamingTranscriber(assemblyAiKey);
+        var ttsClient = new ElevenLabsTtsClient(elevenLabsKey, voiceId);
 
         // Create and start the CompanionManager state machine that orchestrates
         // push-to-talk → capture → transcribe → LLM → TTS.
@@ -129,29 +128,6 @@ public partial class App : Application
         _autoUpdateService = new AutoUpdateService();
         _autoUpdateService.Initialize(
             "https://raw.githubusercontent.com/julianjear/makesomething-mac-app/main/appcast.xml");
-    }
-
-    private static string ReadWorkerBaseUrl()
-    {
-        const string defaultUrl = "https://your-worker-name.your-subdomain.workers.dev";
-        try
-        {
-            var appDir = AppContext.BaseDirectory;
-            var settingsPath = Path.Combine(appDir, "appsettings.json");
-            if (!File.Exists(settingsPath)) return defaultUrl;
-
-            var json = File.ReadAllText(settingsPath);
-            using var doc = JsonDocument.Parse(json);
-            if (doc.RootElement.TryGetProperty("WorkerBaseUrl", out var urlProp))
-            {
-                return urlProp.GetString() ?? defaultUrl;
-            }
-        }
-        catch
-        {
-            // Fall back to default on any error
-        }
-        return defaultUrl;
     }
 
     private async Task ProbeMicrophonePermissionAsync()

@@ -12,25 +12,24 @@ namespace Clicky.Api;
 public sealed class AssemblyAiStreamingTranscriber
 {
     private static readonly Uri AssemblyAiWsBase = new("wss://streaming.assemblyai.com/v3/ws");
+    private static readonly Uri AssemblyAiTokenUri = new("https://streaming.assemblyai.com/v3/token?expires_in_seconds=60");
 
     /// <summary>
     /// Shared <see cref="HttpClient"/> reused across all sessions.
     /// Mac note: per-session URLSession corrupts the connection pool.
     /// </summary>
     private readonly HttpClient _http;
-    private readonly Uri _tokenUri;
+    private readonly string _apiKey;
 
-    public AssemblyAiStreamingTranscriber(string proxyUrl)
+    public AssemblyAiStreamingTranscriber(string apiKey, HttpClient? httpClient = null)
     {
-        var baseUri = new Uri(proxyUrl.TrimEnd('/'));
-        _tokenUri = new Uri(baseUri, "/transcribe-token");
-        _http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        _apiKey = apiKey;
+        _http = httpClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
     }
 
     /// <summary>
     /// Starts a new streaming transcription session.
-    /// Fetches a short-lived token from the worker proxy, then opens a WebSocket
-    /// to AssemblyAI.
+    /// Fetches a short-lived token directly from AssemblyAI, then opens a WebSocket.
     /// </summary>
     public async Task<TranscriptionSession> StartSessionAsync(
         IReadOnlyList<string>? keyterms = null,
@@ -48,12 +47,14 @@ public sealed class AssemblyAiStreamingTranscriber
     }
 
     /// <summary>
-    /// Fetches a single-use temporary token from the Cloudflare Worker proxy.
+    /// Fetches a single-use temporary token directly from AssemblyAI's token endpoint.
+    /// Uses the raw API key in the Authorization header (not Bearer).
     /// Tokens must never be cached — each session needs its own.
     /// </summary>
     internal async Task<string> FetchTokenAsync(CancellationToken ct)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, _tokenUri);
+        using var request = new HttpRequestMessage(HttpMethod.Get, AssemblyAiTokenUri);
+        request.Headers.TryAddWithoutValidation("Authorization", _apiKey);
         using var response = await _http.SendAsync(request, ct).ConfigureAwait(false);
 
         if (!response.IsSuccessStatusCode)

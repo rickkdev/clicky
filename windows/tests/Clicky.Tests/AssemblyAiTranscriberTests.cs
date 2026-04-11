@@ -1,3 +1,4 @@
+using System.Net;
 using Clicky.Api;
 using Xunit;
 
@@ -5,6 +6,43 @@ namespace Clicky.Tests;
 
 public class AssemblyAiTranscriberTests
 {
+    [Fact]
+    public async Task FetchTokenAsync_UsesDirectEndpointWithRawApiKey()
+    {
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""{"token":"temp-session-token-123"}""")
+        });
+        var httpClient = new HttpClient(handler);
+        var transcriber = new AssemblyAiStreamingTranscriber("my-assemblyai-key", httpClient);
+
+        var token = await transcriber.FetchTokenAsync(CancellationToken.None);
+
+        Assert.Equal("temp-session-token-123", token);
+        Assert.NotNull(handler.CapturedRequest);
+        Assert.Equal(HttpMethod.Get, handler.CapturedRequest!.Method);
+        Assert.Equal(
+            "https://streaming.assemblyai.com/v3/token?expires_in_seconds=60",
+            handler.CapturedRequest.RequestUri!.ToString());
+        // AssemblyAI uses raw key in Authorization header, NOT Bearer
+        Assert.True(handler.CapturedRequest.Headers.TryGetValues("Authorization", out var authValues));
+        Assert.Equal("my-assemblyai-key", authValues!.First());
+    }
+
+    [Fact]
+    public async Task FetchTokenAsync_ThrowsOnBadResponse()
+    {
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.Unauthorized)
+        {
+            Content = new StringContent("Unauthorized")
+        });
+        var httpClient = new HttpClient(handler);
+        var transcriber = new AssemblyAiStreamingTranscriber("bad-key", httpClient);
+
+        await Assert.ThrowsAsync<HttpRequestException>(
+            () => transcriber.FetchTokenAsync(CancellationToken.None));
+    }
+
     [Fact]
     public void BuildWebSocketUri_IncludesRequiredQueryParams()
     {
@@ -159,5 +197,17 @@ public class AssemblyAiTranscriberTests
         // Give the receive loop a moment to fail (it will hit an exception and exit)
         Thread.Sleep(50);
         return session;
+    }
+
+    private sealed class CapturingHttpMessageHandler(HttpResponseMessage response) : HttpMessageHandler
+    {
+        public HttpRequestMessage? CapturedRequest { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            CapturedRequest = request;
+            return Task.FromResult(response);
+        }
     }
 }

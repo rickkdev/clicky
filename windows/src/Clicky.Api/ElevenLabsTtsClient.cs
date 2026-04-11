@@ -5,21 +5,23 @@ using NAudio.Wave;
 namespace Clicky.Api;
 
 /// <summary>
-/// Streams TTS audio from ElevenLabs via the Cloudflare Worker proxy,
+/// Streams TTS audio from ElevenLabs directly via the ElevenLabs API,
 /// mirroring ElevenLabsTTSClient.swift.
 /// </summary>
 public sealed class ElevenLabsTtsClient : IDisposable
 {
     private readonly HttpClient _httpClient;
     private readonly string _ttsUrl;
+    private readonly string _apiKey;
     private readonly object _lock = new();
     private WaveOutEvent? _waveOut;
     private Mp3FileReader? _mp3Reader;
 
-    public ElevenLabsTtsClient(string proxyUrl)
+    public ElevenLabsTtsClient(string apiKey, string voiceId, HttpClient? httpClient = null)
     {
-        _ttsUrl = $"{proxyUrl.TrimEnd('/')}/tts";
-        _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+        _apiKey = apiKey;
+        _ttsUrl = $"https://api.elevenlabs.io/v1/text-to-speech/{Uri.EscapeDataString(voiceId)}/stream";
+        _httpClient = httpClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
     }
 
     /// <summary>
@@ -37,7 +39,7 @@ public sealed class ElevenLabsTtsClient : IDisposable
     }
 
     /// <summary>
-    /// Sends text to ElevenLabs TTS via the worker proxy, downloads the full MP3 response,
+    /// Sends text to ElevenLabs TTS directly, downloads the full MP3 response,
     /// and plays it through the default output device. Returns when playback finishes or is cancelled.
     /// </summary>
     public async Task SpeakAsync(string text, CancellationToken ct = default)
@@ -55,6 +57,7 @@ public sealed class ElevenLabsTtsClient : IDisposable
         {
             Content = JsonContent.Create(body)
         };
+        request.Headers.TryAddWithoutValidation("xi-api-key", _apiKey);
         request.Headers.Accept.ParseAdd("audio/mpeg");
 
         using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);

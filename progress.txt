@@ -107,3 +107,43 @@ Branch: ralph/windows-port (continues from the completed Windows port — see ar
   - `OnboardingService` is still in the codebase for backward-compat registry reads during migration — it can be removed once all users have migrated (or in US-025 polish).
   - The `workerBaseUrl` read from `appsettings.json` still exists in `App.xaml.cs` for audio clients — US-021 will replace it.
 ---
+
+## 2026-04-11 - US-020
+- Created `Clicky.Api.ZaiDirectClient : ILlmClient` that POSTs to `https://api.z.ai/api/paas/v4/chat/completions` with `Authorization: Bearer <key>` and `Accept: text/event-stream`
+- Constructor: `ZaiDirectClient(string apiKey, string model = "glm-4.6v", HttpClient? httpClient = null)`
+- Translates Anthropic-shape inputs into OpenAI chat-completions format: system prompt as `messages[0]`, history as alternating user/assistant, images as `image_url` with `data:` URI, labels as text blocks
+- Reuses `AnthropicDirectClient.DetectImageMediaType` for PNG/JPEG magic-byte sniffing (internal static, same assembly)
+- SSE parsing: reads `data: {...}` lines, extracts `choices[0].delta.content`, yields through `IAsyncEnumerable<string>`. `[DONE]` sentinel ends stream cleanly
+- Incremental UTF-8 decoder (`Encoding.UTF8.GetDecoder()`) prevents corruption when multi-byte chars split across HTTP chunk boundaries
+- Malformed JSON lines are logged via `Debug.WriteLine` and skipped — one bad line does not kill the stream
+- TLS warmup HEAD request to api.z.ai mirrors the AnthropicDirectClient pattern
+- Build: 0 warnings. Tests: 155 passed, 0 failed (19 new ZaiDirectClient tests)
+- Files changed:
+  - NEW: `windows/src/Clicky.Api/ZaiDirectClient.cs`
+  - NEW: `windows/tests/Clicky.Tests/ZaiDirectClientTests.cs`
+- **Learnings for future iterations:**
+  - `AnthropicDirectClient.DetectImageMediaType` is `internal static` — accessible from within `Clicky.Api` and from `Clicky.Tests` (via InternalsVisibleTo). No need to duplicate or refactor to a shared utility.
+  - OpenAI SSE format sends an initial chunk with `{"role":"assistant","content":""}` (empty content string) — this is a valid delta that gets yielded. Callers concatenating deltas get correct output since empty string concat is a no-op.
+  - The incremental UTF-8 decoder approach (`Encoding.UTF8.GetDecoder()` + `GetChars` with `flush: false`) handles chunk-boundary splits cleanly. This is the correct .NET pattern — avoid `Encoding.UTF8.GetString` on partial byte arrays.
+  - `ZaiDirectClient` has its own static TLS warmup flag separate from `AnthropicDirectClient`'s, so both can warm up independently when constructed.
+---
+
+## 2026-04-11 - US-021
+- Updated `AssemblyAiStreamingTranscriber` to call AssemblyAI's token endpoint directly (`GET https://streaming.assemblyai.com/v3/token?expires_in_seconds=60`) with raw API key in `Authorization` header (not Bearer). Removed the worker proxy `proxyUrl` constructor parameter, replaced with `(string apiKey, HttpClient? httpClient = null)`.
+- Updated `ElevenLabsTtsClient` to POST directly to `https://api.elevenlabs.io/v1/text-to-speech/{voiceId}/stream` with `xi-api-key` header. Constructor changed from `(string proxyUrl)` to `(string apiKey, string voiceId, HttpClient? httpClient = null)`. Voice ID is now a constructor parameter read from `SettingsStore.ElevenLabsVoiceId`.
+- Updated `App.xaml.cs`: removed `ReadWorkerBaseUrl()` method entirely (no more `appsettings.json` dependency for audio). Both audio clients now constructed with keys from `SecretsStore` and voice ID from `SettingsStore`, matching the pattern established in US-018/US-019.
+- All existing US-008 and US-009 tests pass unchanged after the refactor (WebSocket URI builder, keyterm serialization, partial/final turn dispatch, IsPlaying, StopPlayback, Dispose safety, cancellation, TtsRequest serialization).
+- New tests: `FetchTokenAsync_UsesDirectEndpointWithRawApiKey` (verifies GET method, URL, and raw Authorization header), `FetchTokenAsync_ThrowsOnBadResponse`, `SpeakAsync_SendsDirectPostWithCorrectUrlAndHeaders` (verifies POST method, URL, xi-api-key header, Accept header), `SpeakAsync_DifferentVoiceId_UsesCorrectUrl` (verifies voice ID parameter threading into URL).
+- Build: 0 warnings. Tests: 159 passed, 0 failed (4 new tests).
+- Files changed:
+  - MODIFIED: `windows/src/Clicky.Api/AssemblyAiStreamingTranscriber.cs` (direct API, new constructor)
+  - MODIFIED: `windows/src/Clicky.Api/ElevenLabsTtsClient.cs` (direct API, new constructor)
+  - MODIFIED: `windows/src/Clicky.App/App.xaml.cs` (removed ReadWorkerBaseUrl, construct audio clients from SecretsStore/SettingsStore)
+  - MODIFIED: `windows/tests/Clicky.Tests/AssemblyAiTranscriberTests.cs` (2 new tests + CapturingHttpMessageHandler)
+  - MODIFIED: `windows/tests/Clicky.Tests/ElevenLabsTtsClientTests.cs` (2 new tests + CapturingHttpMessageHandler, updated constructor calls)
+- **Learnings for future iterations:**
+  - The worker is now completely unused by the Windows client. `appsettings.json` with `WorkerBaseUrl` is no longer read by any code path — it can be removed from the installer in US-025.
+  - AssemblyAI's token endpoint uses `GET` (not `POST` like the worker proxy did) and uses the raw API key in `Authorization` (not `Bearer`). This is a common gotcha.
+  - Both `AssemblyAiStreamingTranscriber` and `ElevenLabsTtsClient` now accept an optional `HttpClient` for testability, matching the pattern from `AnthropicDirectClient` and `ZaiDirectClient`.
+  - The `CapturingHttpMessageHandler` test helper is defined privately in each test class (not shared). If more test files need it, consider extracting to a shared test utility.
+---
