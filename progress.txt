@@ -276,3 +276,31 @@ Reset: Fri Apr 10 21:20 CEST 2026 (full Windows-port restart)
   - Wiring stories may be completed organically as individual components are built — always verify before writing new code
   - The startup order matters: overlays must be created before CompanionManager so their HWNDs can be excluded from screen captures
 ---
+
+## 2026-04-11 - US-016
+- Implemented ClickyAnalytics in Clicky.Companion wrapping PostHog .NET SDK 2.4.1
+  - Configure() initializes PostHogClient with same API key + host as Mac app
+  - TrackAppOpened() captures 'app_opened' event with app_version and platform properties
+  - Respects HKCU\Software\Clicky\analyticsOptOut registry flag (IsOptedOut check before Configure)
+  - Generates stable anonymous distinct ID stored in registry (HKCU\Software\Clicky\analyticsDistinctId)
+  - Shutdown() flushes pending events and disposes client
+- Implemented AutoUpdateService in Clicky.App wrapping WinSparkle 0.9.2 native DLL via P/Invoke
+  - Configures app details, sets appcast URL (placeholder: Mac's GitHub-hosted feed)
+  - Disables automatic periodic checks; runs one explicit check per launch (matches Mac where Sparkle is commented out)
+  - DllNotFoundException caught gracefully for dev builds without WinSparkle.dll
+  - Cleanup on dispose
+- App.xaml.cs: ClickyAnalytics.Configure() + TrackAppOpened() called after AutoStartRegistration; AutoUpdateService initialized after CompanionManager.Start(); both cleaned up in OnExit
+- Added InternalsVisibleTo for Clicky.App → Clicky.Tests
+- Files changed:
+  - `windows/src/Clicky.Companion/ClickyAnalytics.cs` (new)
+  - `windows/src/Clicky.Companion/Clicky.Companion.csproj` (added PostHog 2.4.1 package)
+  - `windows/src/Clicky.App/AutoUpdateService.cs` (new)
+  - `windows/src/Clicky.App/Clicky.App.csproj` (added WinSparkle 0.9.2 package, InternalsVisibleTo)
+  - `windows/src/Clicky.App/App.xaml.cs` (wired analytics + auto-update into startup/shutdown)
+  - `windows/tests/Clicky.Tests/ClickyAnalyticsTests.cs` (new, 5 tests)
+  - `windows/tests/Clicky.Tests/AutoUpdateServiceTests.cs` (new, 3 tests)
+- **Learnings for future iterations:**
+  - PostHog .NET SDK 2.4.1 uses `HostUrl` (Uri) not `Host` (string), and `Capture` takes `Dictionary<string, object>` for properties
+  - WinSparkle NuGet package (0.9.2) is a native C DLL — use DllImport with CallingConvention.Cdecl; catch DllNotFoundException for dev environments
+  - WinSparkle's `win_sparkle_set_app_details` takes wchar_t* (Unicode), but `win_sparkle_set_appcast_url` takes char* (ANSI)
+---

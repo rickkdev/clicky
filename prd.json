@@ -267,8 +267,8 @@
         "Commit all changes with message: feat: US-016 - PostHog analytics + WinSparkle auto-update"
       ],
       "priority": 16,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented on 2026-04-11. ClickyAnalytics in Clicky.Companion wraps PostHog .NET SDK 2.4.1 with Configure() and TrackAppOpened() called from App.OnStartup. Respects HKCU\\Software\\Clicky\\analyticsOptOut registry flag. Generates stable anonymous distinct ID stored in registry. AutoUpdateService in Clicky.App wraps WinSparkle 0.9.2 native DLL via P/Invoke (win_sparkle_set_app_details, win_sparkle_set_appcast_url, win_sparkle_init, win_sparkle_check_update_without_ui). Appcast URL defaults to Mac's GitHub-hosted feed (placeholder — maintainer must replace with Windows-specific feed). Update check runs once per launch in background; DllNotFoundException is caught gracefully for dev builds. App.OnExit disposes both services. 8 new tests (analytics lifecycle, opt-out default, WinSparkle graceful failure). Build: 0 warnings. Tests: 111/111 passing."
     },
     {
       "id": "US-017",

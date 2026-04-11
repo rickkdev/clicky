@@ -21,6 +21,7 @@ public partial class App : Application
     private CompanionManager? _companionManager;
     private OverlayWindowManager? _overlayManager;
     private DispatcherTimer? _permissionPollTimer;
+    private AutoUpdateService? _autoUpdateService;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -44,6 +45,11 @@ public partial class App : Application
 
         // Register for auto-start on first launch (mirrors SMAppService.mainApp.register).
         AutoStartRegistration.EnsureRegistered();
+
+        // Configure PostHog analytics (mirrors ClickyAnalytics.configure() in Mac).
+        // Respects HKCU\Software\Clicky\analyticsOptOut registry flag.
+        ClickyAnalytics.Configure();
+        ClickyAnalytics.TrackAppOpened();
 
         // Probe the Windows 10/11 microphone privacy gate in the background.
         _ = ProbeMicrophonePermissionAsync();
@@ -93,6 +99,14 @@ public partial class App : Application
             Dispatcher,
             _overlayManager);
         _companionManager.Start();
+
+        // Initialize WinSparkle auto-update (mirrors Sparkle integration in Mac).
+        // Runs a single background update check on launch; failures are logged
+        // but never block startup. The appcast URL is a placeholder — the
+        // maintainer must replace it with a real Windows-specific feed URL.
+        _autoUpdateService = new AutoUpdateService();
+        _autoUpdateService.Initialize(
+            "https://raw.githubusercontent.com/julianjear/makesomething-mac-app/main/appcast.xml");
     }
 
     private static string ReadWorkerBaseUrl()
@@ -189,6 +203,11 @@ public partial class App : Application
     {
         _permissionPollTimer?.Stop();
         _permissionPollTimer = null;
+
+        _autoUpdateService?.Dispose();
+        _autoUpdateService = null;
+
+        ClickyAnalytics.Shutdown();
 
         _companionManager?.Dispose();
         _companionManager = null;
