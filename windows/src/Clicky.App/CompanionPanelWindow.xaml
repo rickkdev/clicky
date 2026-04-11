@@ -20,6 +20,7 @@
         <SolidColorBrush x:Key="Success" Color="#34C759" />
         <SolidColorBrush x:Key="Warning" Color="#FF9F0A" />
         <SolidColorBrush x:Key="Accent" Color="#3B82F6" />
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
     </Window.Resources>
 
     <Border CornerRadius="12"
@@ -82,8 +83,128 @@
                 </Grid>
             </StackPanel>
 
-            <!-- Permissions -->
+            <!-- Onboarding / Permissions section (visible when not onboarded or permissions missing) -->
+            <StackPanel Margin="16,14,16,0"
+                        Visibility="{Binding IsOnboardingVisible, Converter={StaticResource BoolToVis}}">
+                <TextBlock Text="SETUP"
+                           FontSize="10"
+                           FontWeight="SemiBold"
+                           Foreground="{StaticResource TextTertiary}"
+                           Margin="0,0,0,6" />
+
+                <TextBlock Text="Grant the permissions below so Clicky can hear you and see your screen."
+                           FontSize="12"
+                           Foreground="{StaticResource TextSecondary}"
+                           TextWrapping="Wrap"
+                           Margin="0,0,0,10" />
+
+                <!-- Microphone step card -->
+                <Border Background="#262628"
+                        CornerRadius="8"
+                        BorderBrush="{StaticResource BorderSubtle}"
+                        BorderThickness="0.5"
+                        Padding="12,10"
+                        Margin="0,0,0,8">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                            <TextBlock Text="Microphone"
+                                       FontSize="13"
+                                       FontWeight="Medium"
+                                       Foreground="{StaticResource TextPrimary}" />
+                            <TextBlock Text="{Binding MicrophonePermissionDisplay}"
+                                       FontSize="11"
+                                       Foreground="{StaticResource TextTertiary}"
+                                       Margin="0,2,0,0" />
+                        </StackPanel>
+                        <Button x:Name="GrantMicButton"
+                                Grid.Column="1"
+                                Content="Grant"
+                                FontSize="12"
+                                FontWeight="Medium"
+                                Foreground="{StaticResource TextPrimary}"
+                                Background="{StaticResource Accent}"
+                                BorderThickness="0"
+                                Padding="14,5"
+                                Cursor="Hand"
+                                Click="GrantMicButton_Click">
+                            <Button.Template>
+                                <ControlTemplate TargetType="Button">
+                                    <Border Background="{TemplateBinding Background}"
+                                            CornerRadius="6"
+                                            Padding="{TemplateBinding Padding}">
+                                        <ContentPresenter HorizontalAlignment="Center"
+                                                          VerticalAlignment="Center" />
+                                    </Border>
+                                </ControlTemplate>
+                            </Button.Template>
+                        </Button>
+                    </Grid>
+                </Border>
+
+                <!-- Screen Capture step card -->
+                <Border Background="#262628"
+                        CornerRadius="8"
+                        BorderBrush="{StaticResource BorderSubtle}"
+                        BorderThickness="0.5"
+                        Padding="12,10"
+                        Margin="0,0,0,4">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                            <TextBlock Text="Screen Capture"
+                                       FontSize="13"
+                                       FontWeight="Medium"
+                                       Foreground="{StaticResource TextPrimary}" />
+                            <TextBlock Text="{Binding ScreenCapturePermissionDisplay}"
+                                       FontSize="11"
+                                       Foreground="{StaticResource TextTertiary}"
+                                       Margin="0,2,0,0" />
+                        </StackPanel>
+                        <Button x:Name="GrantCaptureButton"
+                                Grid.Column="1"
+                                Content="Grant"
+                                FontSize="12"
+                                FontWeight="Medium"
+                                Foreground="{StaticResource TextPrimary}"
+                                Background="{StaticResource Accent}"
+                                BorderThickness="0"
+                                Padding="14,5"
+                                Cursor="Hand"
+                                Click="GrantCaptureButton_Click">
+                            <Button.Template>
+                                <ControlTemplate TargetType="Button">
+                                    <Border Background="{TemplateBinding Background}"
+                                            CornerRadius="6"
+                                            Padding="{TemplateBinding Padding}">
+                                        <ContentPresenter HorizontalAlignment="Center"
+                                                          VerticalAlignment="Center" />
+                                    </Border>
+                                </ControlTemplate>
+                            </Button.Template>
+                        </Button>
+                    </Grid>
+                </Border>
+            </StackPanel>
+
+            <!-- Normal permissions display (shown after onboarding + all permissions granted) -->
             <StackPanel Margin="16,14,16,0">
+                <StackPanel.Style>
+                    <Style TargetType="StackPanel">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsOnboardingVisible}" Value="True">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </StackPanel.Style>
                 <TextBlock Text="PERMISSIONS"
                            FontSize="10"
                            FontWeight="SemiBold"

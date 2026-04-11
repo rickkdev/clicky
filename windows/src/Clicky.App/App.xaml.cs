@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Threading;
 using Clicky.Audio;
 using Clicky.Capture;
 using Clicky.Companion;
@@ -19,6 +20,7 @@ public partial class App : Application
     private GlobalPushToTalkHook? _pushToTalkHook;
     private CompanionManager? _companionManager;
     private OverlayWindowManager? _overlayManager;
+    private DispatcherTimer? _permissionPollTimer;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -30,6 +32,10 @@ public partial class App : Application
 
         // ViewModel that the panel binds to.
         _companionViewModel = new CompanionViewModel();
+
+        // Load onboarding state from registry.
+        _companionViewModel.HasCompletedOnboarding = OnboardingService.HasCompletedOnboarding();
+
         _companionPanel = new CompanionPanelWindow(_companionViewModel);
 
         // Set up system tray icon with menu and left-click event.
@@ -44,6 +50,26 @@ public partial class App : Application
 
         // Probe screen capture availability.
         _ = ProbeScreenCapturePermissionAsync();
+
+        // Start a permission polling timer (mirrors Mac's 1.5s timer) so the
+        // panel updates in real time as the user grants permissions in Settings.
+        _permissionPollTimer = new DispatcherTimer
+        {
+            Interval = System.TimeSpan.FromSeconds(1.5),
+        };
+        _permissionPollTimer.Tick += OnPermissionPollTick;
+        _permissionPollTimer.Start();
+
+        // On first launch (no onboarded registry value) or if any permission
+        // is missing on subsequent launches, auto-open the panel.
+        // We defer this so the tray icon and window are fully initialized first.
+        Dispatcher.InvokeAsync(() =>
+        {
+            if (_companionViewModel.IsOnboardingVisible)
+            {
+                _companionPanel.ShowForOnboarding();
+            }
+        }, DispatcherPriority.Loaded);
 
         // Install the global push-to-talk hook on the dispatcher thread.
         _pushToTalkHook = new GlobalPushToTalkHook(_companionViewModel.PushToTalkShortcut);
@@ -121,8 +147,49 @@ public partial class App : Application
         _companionPanel?.Toggle();
     }
 
+    /// <summary>
+    /// Polls permissions every 1.5 s so the onboarding panel reflects real-time
+    /// state as the user grants access in Windows Settings. Mirrors Mac's
+    /// accessibilityCheckTimer in CompanionManager.swift.
+    /// When all permissions are granted and onboarding hasn't been marked complete,
+    /// sets HKCU\Software\Clicky\onboarded=1 and dismisses the onboarding view.
+    /// </summary>
+    private void OnPermissionPollTick(object? sender, System.EventArgs e)
+    {
+        _ = RefreshPermissionsAsync();
+    }
+
+    private async Task RefreshPermissionsAsync()
+    {
+        var micTask = MicrophonePermissions.ProbeAsync();
+        var captureTask = ScreenCapturePermissions.ProbeAsync();
+
+        var micGranted = await micTask.ConfigureAwait(false);
+        var captureGranted = await captureTask.ConfigureAwait(false);
+
+        await Dispatcher.InvokeAsync(() =>
+        {
+            if (_companionViewModel is null) return;
+
+            _companionViewModel.HasMicrophonePermission = micGranted;
+            _companionViewModel.HasScreenCapturePermission = captureGranted;
+
+            // When all permissions are granted and onboarding hasn't been
+            // completed yet, mark it done and hide the panel.
+            if (_companionViewModel.AllPermissionsGranted &&
+                !_companionViewModel.HasCompletedOnboarding)
+            {
+                OnboardingService.MarkOnboardingComplete();
+                _companionViewModel.HasCompletedOnboarding = true;
+            }
+        });
+    }
+
     protected override void OnExit(ExitEventArgs e)
     {
+        _permissionPollTimer?.Stop();
+        _permissionPollTimer = null;
+
         _companionManager?.Dispose();
         _companionManager = null;
 

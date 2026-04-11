@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
@@ -77,6 +78,68 @@ public partial class CompanionPanelWindow : Window
         var helper = new WindowInteropHelper(this);
         var style = GetWindowLong(helper.Handle, GWL_EXSTYLE);
         SetWindowLong(helper.Handle, GWL_EXSTYLE, style | WS_EX_TOOLWINDOW);
+    }
+
+    /// <summary>
+    /// Show the panel for onboarding (auto-open on first launch or missing permissions).
+    /// Unlike Toggle(), this only opens — it never hides.
+    /// </summary>
+    public void ShowForOnboarding()
+    {
+        if (Visibility == Visibility.Visible) return;
+
+        AnchorNearTray();
+        Show();
+        Activate();
+        Focus();
+    }
+
+    /// <summary>
+    /// Grant microphone permission: triggers a WASAPI capture probe which
+    /// causes Windows to show the microphone privacy prompt if not yet granted.
+    /// On Windows, once the user grants access in Settings → Privacy → Microphone,
+    /// the next probe will succeed. We open the Settings page for the user.
+    /// </summary>
+    private void GrantMicButton_Click(object sender, RoutedEventArgs e)
+    {
+        // Open the Windows Settings microphone privacy page so the user can
+        // enable microphone access for desktop apps.
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "ms-settings:privacy-microphone",
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Failed to open microphone settings: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Grant screen capture: on Windows desktop apps don't need explicit permission
+    /// for screen capture (unlike macOS). Open the Graphics Capture settings
+    /// page so the user can verify it is enabled.
+    /// </summary>
+    private void GrantCaptureButton_Click(object sender, RoutedEventArgs e)
+    {
+        // Open the Windows Settings display/graphics page. Windows desktop apps
+        // generally have screen capture access by default, but we let the user
+        // verify the setting.
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "ms-settings:display",
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Failed to open display settings: {ex.Message}");
+        }
     }
 
     private void QuitButton_Click(object sender, RoutedEventArgs e)

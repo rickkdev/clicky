@@ -23,6 +23,7 @@ public sealed class CompanionViewModel : INotifyPropertyChanged
     private bool _hasScreenCapturePermission;
     private PushToTalkShortcut _pushToTalkShortcut = PushToTalkShortcut.ControlAlt;
     private bool _isShortcutPressed;
+    private bool _hasCompletedOnboarding;
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -58,6 +59,7 @@ public sealed class CompanionViewModel : INotifyPropertyChanged
             OnPropertyChanged();
             OnPropertyChanged(nameof(MicrophonePermissionDisplay));
             OnPropertyChanged(nameof(AllPermissionsGranted));
+            OnPropertyChanged(nameof(IsOnboardingVisible));
         }
     }
 
@@ -73,6 +75,7 @@ public sealed class CompanionViewModel : INotifyPropertyChanged
             OnPropertyChanged();
             OnPropertyChanged(nameof(ScreenCapturePermissionDisplay));
             OnPropertyChanged(nameof(AllPermissionsGranted));
+            OnPropertyChanged(nameof(IsOnboardingVisible));
         }
     }
 
@@ -105,6 +108,28 @@ public sealed class CompanionViewModel : INotifyPropertyChanged
             OnPropertyChanged();
         }
     }
+
+    /// <summary>
+    /// Whether the user has completed the onboarding flow. Backed by
+    /// HKCU\Software\Clicky\onboarded registry value.
+    /// </summary>
+    public bool HasCompletedOnboarding
+    {
+        get => _hasCompletedOnboarding;
+        set
+        {
+            if (_hasCompletedOnboarding == value) return;
+            _hasCompletedOnboarding = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(IsOnboardingVisible));
+        }
+    }
+
+    /// <summary>
+    /// True when the onboarding / permissions section should be shown:
+    /// either not onboarded yet, or permissions have been revoked.
+    /// </summary>
+    public bool IsOnboardingVisible => !_hasCompletedOnboarding || !AllPermissionsGranted;
 
     /// <summary>App version read from the entry assembly, shown in the panel header.</summary>
     public string AppVersion { get; } = ReadAppVersion();
