@@ -16,6 +16,8 @@ Reset: Fri Apr 10 21:20 CEST 2026 (full Windows-port restart)
 - `ReadOnlySpan<T>` cannot be used inside `async` iterator methods (`IAsyncEnumerable`) in C# 12 — use `string`/`Substring` instead.
 - `internal` members need `<InternalsVisibleTo Include="Clicky.Tests" />` in the library .csproj for test access.
 - Git user config is not set on this Windows host — use `git -c user.name="rickkdev" -c user.email="mail@riccardolamanna.de"` for commits.
+- `CompanionManager` owns the hotkey consumer loop and all state transitions. `App.xaml.cs` constructs it and calls `Start()` / `Dispose()` — it does not consume hotkey transitions directly.
+- Screenshot labels must include dimension info `(image dimensions: WxH pixels)` when sent to Claude — this is appended in CompanionManager, not in ScreenCapture.
 - Branch: all Windows-port work happens on `ralph/windows-port`, branched from main.
 - TFM: all projects target `net8.0-windows10.0.19041.0` (not plain `net8.0-windows`). Changing one project's TFM cascades to ALL projects that reference it — update them all together.
 - `LibraryImport` source generators don't handle delegate params with `ref` — use `DllImport` for callbacks like `MonitorEnumProc`.
@@ -128,4 +130,32 @@ Reset: Fri Apr 10 21:20 CEST 2026 (full Windows-port restart)
   - NAudio `WaveOutEvent` fires `PlaybackStopped` both on natural completion and on `Stop()` — use a `TaskCompletionSource` to bridge the event-based API to async/await
   - `Mp3FileReader` takes ownership of the stream but needs the stream to stay alive for the duration of playback — keep both the `MemoryStream` and `Mp3FileReader` alive until `WaveOutEvent` is done
   - The Mac implementation downloads the full MP3 before playing (not streaming) — this is sufficient for TTS utterances which are typically small
+---
+
+## 2026-04-11 - US-010
+- Implemented `CompanionManager` in `Clicky.Companion` — orchestrates push-to-talk → capture → transcribe → Claude → TTS pipeline, mirroring `CompanionManager.swift`
+- State machine subscribes to `GlobalPushToTalkHook` transitions via `ChannelReader<ShortcutTransition>`:
+  - **Pressed**: cancels any in-flight response/TTS, starts `MicrophoneCapture` + `AssemblyAiStreamingTranscriber` session, sets `VoiceState=Listening`
+  - **Released**: stops mic capture, awaits final transcript from `TranscriptionSession.RequestFinalTranscriptAsync`, captures all screens via `ScreenCapture.CaptureAllScreensAsJpegAsync`, sends to `ClaudeClient.SendAsync` with system prompt + conversation history, streams response tokens into buffer, hands full text to `ElevenLabsTtsClient.SpeakAsync` (`VoiceState=Responding`), returns to `Idle` when playback ends
+- `ConversationHistory` stores `(UserText, AssistantText)` pairs, trimmed to last 10 exchanges (FIFO), with `[POINT:...]` tags stripped from assistant text before storage (matches Mac behavior)
+- `StripPointTags` regex removes `[POINT:none]`, `[POINT:x,y:label]`, `[POINT:x,y:label:screenN]` from Claude's response for clean TTS speech
+- `CancelCurrentResponse()` cancels `CancellationTokenSource` + `StopPlayback()` — called on re-press so new utterance interrupts old one (mirrors `currentResponseTask?.cancel()` + `elevenLabsTTSClient.stopPlayback()`)
+- System prompt matches Mac's `companionVoiceResponseSystemPrompt` (adapted "menu bar" → "system tray" for Windows)
+- Screenshot labels include dimension info `(image dimensions: WxH pixels)` so Claude knows the coordinate space
+- App.xaml.cs: constructs `CompanionManager` with worker URL from `appsettings.json`, manages lifecycle (Start on startup, Dispose on exit)
+- `appsettings.json` added with configurable `WorkerBaseUrl` (default placeholder)
+- `InternalsVisibleTo` added to `Clicky.Companion.csproj` for test access
+- Internal test constructor accepts pre-built service instances for future integration testing
+- Files changed:
+  - `windows/src/Clicky.Companion/CompanionManager.cs` (new)
+  - `windows/src/Clicky.Companion/Clicky.Companion.csproj` (added InternalsVisibleTo)
+  - `windows/src/Clicky.App/App.xaml.cs` (rewired to construct + start CompanionManager)
+  - `windows/src/Clicky.App/Clicky.App.csproj` (added appsettings.json copy-to-output)
+  - `windows/src/Clicky.App/appsettings.json` (new)
+  - `windows/tests/Clicky.Tests/CompanionManagerTests.cs` (new, 10 tests)
+- **Learnings for future iterations:**
+  - CompanionManager owns the hotkey consumer loop now — App.xaml.cs no longer needs its own `ConsumeHotkeyTransitionsAsync`. The `IsShortcutPressed` property on the VM is still set by the manager.
+  - The Mac `sendTranscriptToClaudeWithScreenshot` sets `voiceState = .idle` BEFORE setting pointing coordinates so the triangle cursor becomes visible before the fly animation — the Windows port will need to replicate this in US-013 when PointTagParser + OverlayWindowManager are wired in.
+  - Mac appends dimension info to screenshot labels (e.g., `(image dimensions: 1280x831 pixels)`) so Claude can return coordinates in the correct pixel space — this is done in CompanionManager, not in ScreenCapture itself.
+  - `Dispatcher.InvokeAsync` is needed for all ViewModel property updates from background tasks — WPF bindings are thread-affine.
 ---

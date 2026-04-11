@@ -168,8 +168,8 @@
         "Commit all changes with message: feat: US-010 - CompanionManager state machine"
       ],
       "priority": 10,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented on 2026-04-11. CompanionManager in Clicky.Companion orchestrates push-to-talk → capture → transcribe → Claude → TTS pipeline, mirroring CompanionManager.swift. Subscribes to GlobalPushToTalkHook transitions: Pressed starts MicrophoneCapture + AssemblyAI session (VoiceState=Listening), Released stops capture, awaits final transcript, captures screens, sends to ClaudeClient with system prompt + conversation history, streams response, hands to ElevenLabsTtsClient (VoiceState=Responding), returns to Idle when playback ends. Holds ConversationHistory (max 10 exchanges, trimmed FIFO). Cancels in-flight Claude/TTS on re-press. StripPointTags removes [POINT:...] tags from spoken text. App.xaml.cs constructs CompanionManager with worker URL from appsettings.json, wires to CompanionViewModel. 10 new tests (StripPointTags variants, system prompt content, history trimming). Build: 0 warnings. Tests: 54/54 passing."
     },
     {
       "id": "US-011",
