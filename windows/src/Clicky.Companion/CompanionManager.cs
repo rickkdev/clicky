@@ -27,6 +27,7 @@ public sealed class CompanionManager : IDisposable
     private readonly ElevenLabsTtsClient _ttsClient;
     private readonly Dispatcher _dispatcher;
     private readonly OverlayWindowManager? _overlayManager;
+    private readonly string? _microphoneDeviceId;
 
     private readonly List<Message> _conversationHistory = new();
     private CancellationTokenSource? _hookConsumerCts;
@@ -87,7 +88,8 @@ public sealed class CompanionManager : IDisposable
         AssemblyAiStreamingTranscriber transcriber,
         ElevenLabsTtsClient ttsClient,
         Dispatcher dispatcher,
-        OverlayWindowManager? overlayManager = null)
+        OverlayWindowManager? overlayManager = null,
+        string? microphoneDeviceId = null)
     {
         _viewModel = viewModel;
         _hook = hook;
@@ -96,6 +98,7 @@ public sealed class CompanionManager : IDisposable
         _ttsClient = ttsClient;
         _dispatcher = dispatcher;
         _overlayManager = overlayManager;
+        _microphoneDeviceId = microphoneDeviceId;
     }
 
     /// <summary>
@@ -177,8 +180,10 @@ public sealed class CompanionManager : IDisposable
             // Start transcription session
             _activeTranscriptionSession = await _transcriber.StartSessionAsync(ct: ct).ConfigureAwait(false);
 
-            // Start mic capture and pipe frames to the transcription session
-            _activeMicCapture = new MicrophoneCapture();
+            // Start mic capture and pipe frames to the transcription session.
+            // Honor the user's saved device selection — MicrophoneCapture falls
+            // back to the system default if the device can't be resolved.
+            _activeMicCapture = new MicrophoneCapture(_microphoneDeviceId);
             await foreach (var frame in _activeMicCapture.CaptureFramesAsync(ct).ConfigureAwait(false))
             {
                 if (_activeTranscriptionSession is not null)

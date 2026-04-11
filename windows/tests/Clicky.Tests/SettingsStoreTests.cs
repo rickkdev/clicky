@@ -93,6 +93,27 @@ public class SettingsStoreTests : IDisposable
     }
 
     [Fact]
+    public void MicrophoneAndSpeakerDeviceId_RoundTrip()
+    {
+        var store = new SettingsStore(_tempFile);
+
+        store.MicrophoneDeviceId = "{0.0.1.00000000}.{mic-guid}";
+        store.SpeakerDeviceId = "{0.0.0.00000000}.{speaker-guid}";
+
+        var store2 = new SettingsStore(_tempFile);
+        Assert.Equal("{0.0.1.00000000}.{mic-guid}", store2.MicrophoneDeviceId);
+        Assert.Equal("{0.0.0.00000000}.{speaker-guid}", store2.SpeakerDeviceId);
+    }
+
+    [Fact]
+    public void DeviceId_DefaultsToEmptyString()
+    {
+        var store = new SettingsStore(Path.Combine(_tempDir, "never-written", "settings.json"));
+        Assert.Equal("", store.MicrophoneDeviceId);
+        Assert.Equal("", store.SpeakerDeviceId);
+    }
+
+    [Fact]
     public void Persistence_NewInstanceReadsWrittenValues()
     {
         var store1 = new SettingsStore(_tempFile);

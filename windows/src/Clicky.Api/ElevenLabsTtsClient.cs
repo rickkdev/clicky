@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using System.Text.Json.Serialization;
+using NAudio.CoreAudioApi;
 using NAudio.Wave;
 
 namespace Clicky.Api;
@@ -13,14 +14,30 @@ public sealed class ElevenLabsTtsClient : IDisposable
     private readonly HttpClient _httpClient;
     private readonly string _ttsUrl;
     private readonly string _apiKey;
+    private readonly string? _outputDeviceId;
     private readonly object _lock = new();
-    private WaveOutEvent? _waveOut;
+    private IWavePlayer? _wavePlayer;
+    private MMDevice? _wasapiDevice;
     private Mp3FileReader? _mp3Reader;
 
     public ElevenLabsTtsClient(string apiKey, string voiceId, HttpClient? httpClient = null)
+        : this(apiKey, voiceId, outputDeviceId: null, httpClient)
+    {
+    }
+
+    /// <summary>
+    /// Creates an ElevenLabs TTS client that plays audio on a specific output
+    /// endpoint identified by NAudio MMDevice ID. Pass <c>null</c> or an empty
+    /// string to use the Windows default playback device. If the saved device
+    /// can't be resolved (e.g. headphones unplugged since settings were saved),
+    /// playback silently falls back to the default device — we never want a
+    /// missing speaker to block the TTS reply.
+    /// </summary>
+    public ElevenLabsTtsClient(string apiKey, string voiceId, string? outputDeviceId, HttpClient? httpClient = null)
     {
         _apiKey = apiKey;
         _ttsUrl = $"https://api.elevenlabs.io/v1/text-to-speech/{Uri.EscapeDataString(voiceId)}/stream";
+        _outputDeviceId = outputDeviceId;
         _httpClient = httpClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
     }
 
@@ -33,7 +50,7 @@ public sealed class ElevenLabsTtsClient : IDisposable
         {
             lock (_lock)
             {
-                return _waveOut?.PlaybackState == PlaybackState.Playing;
+                return _wavePlayer?.PlaybackState == PlaybackState.Playing;
             }
         }
     }
@@ -100,11 +117,13 @@ public sealed class ElevenLabsTtsClient : IDisposable
         {
             var stream = new MemoryStream(mp3Data);
             _mp3Reader = new Mp3FileReader(stream);
-            _waveOut = new WaveOutEvent();
-            _waveOut.Init(_mp3Reader);
+            var (player, mmDevice) = CreateWavePlayer(_outputDeviceId);
+            _wavePlayer = player;
+            _wasapiDevice = mmDevice;
+            _wavePlayer.Init(_mp3Reader);
 
-            _waveOut.PlaybackStopped += (_, _) => tcs.TrySetResult(true);
-            _waveOut.Play();
+            _wavePlayer.PlaybackStopped += (_, _) => tcs.TrySetResult(true);
+            _wavePlayer.Play();
         }
 
         // Wait for playback to finish or cancellation
@@ -119,18 +138,85 @@ public sealed class ElevenLabsTtsClient : IDisposable
 
     private void DisposePlaybackResources()
     {
-        if (_waveOut is not null)
+        if (_wavePlayer is not null)
         {
-            if (_waveOut.PlaybackState == PlaybackState.Playing)
-                _waveOut.Stop();
-            _waveOut.Dispose();
-            _waveOut = null;
+            if (_wavePlayer.PlaybackState == PlaybackState.Playing)
+                _wavePlayer.Stop();
+            _wavePlayer.Dispose();
+            _wavePlayer = null;
+        }
+
+        // MMDevice is only held when we took the WasapiOut path. NAudio's
+        // WasapiOut does not dispose the MMDevice it was constructed with,
+        // so we have to release it ourselves after the player is gone.
+        if (_wasapiDevice is not null)
+        {
+            try { _wasapiDevice.Dispose(); } catch { /* best effort */ }
+            _wasapiDevice = null;
         }
 
         if (_mp3Reader is not null)
         {
             _mp3Reader.Dispose();
             _mp3Reader = null;
+        }
+    }
+
+    /// <summary>
+    /// Builds an <see cref="IWavePlayer"/> for the requested output endpoint.
+    /// When no device is specified we keep the old <see cref="WaveOutEvent"/>
+    /// path (stable across many machines). When a specific MMDevice is
+    /// requested we use <see cref="WasapiOut"/>, which is the only NAudio
+    /// player that can target an endpoint by ID. Any failure to resolve the
+    /// saved device falls back to the default WaveOutEvent rather than
+    /// silently breaking TTS playback. Returns the player plus the MMDevice
+    /// it holds (or <c>null</c>) so the caller can release the device when
+    /// playback finishes — NAudio's WasapiOut does not own its MMDevice.
+    /// </summary>
+    private static (IWavePlayer player, MMDevice? device) CreateWavePlayer(string? outputDeviceId)
+    {
+        if (string.IsNullOrWhiteSpace(outputDeviceId))
+        {
+            return (new WaveOutEvent(), null);
+        }
+
+        MMDevice? mmDevice = null;
+        try
+        {
+            using var enumerator = new MMDeviceEnumerator();
+            try
+            {
+                mmDevice = enumerator.GetDevice(outputDeviceId);
+                if (mmDevice.DataFlow != DataFlow.Render || mmDevice.State != DeviceState.Active)
+                {
+                    mmDevice.Dispose();
+                    mmDevice = null;
+                }
+            }
+            catch
+            {
+                mmDevice = null;
+            }
+        }
+        catch
+        {
+            mmDevice = null;
+        }
+
+        if (mmDevice is null)
+        {
+            return (new WaveOutEvent(), null);
+        }
+
+        try
+        {
+            var player = new WasapiOut(mmDevice, AudioClientShareMode.Shared, useEventSync: true, latency: 100);
+            return (player, mmDevice);
+        }
+        catch
+        {
+            mmDevice.Dispose();
+            return (new WaveOutEvent(), null);
         }
     }
 

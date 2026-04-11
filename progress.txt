@@ -229,3 +229,63 @@ Branch: ralph/windows-port (continues from the completed Windows port — see ar
   - `OnModelSelected` is `async void` (event handler pattern) — it awaits `SwapLlmClientAsync` to ensure the swap completes before refreshing the menu.
   - Manual browser verification still needed — no browser testing tools configured.
 ---
+
+## 2026-04-11 - US-025
+- Rewrote `windows/README.md` for end-users: what Clicky does, what keys you need with cost estimates and sign-up links, how to install, how to switch models at runtime, system requirements, building from source. Explicitly notes `worker/` is legacy and unused by Windows.
+- Updated root `README.md` to present Windows as a first-class product alongside Mac: added a Platforms table, Windows quick-start section, updated architecture description to cover both platforms, updated project structure to include `windows/`.
+- Added three new analytics events to `ClickyAnalytics.cs`: `onboarding_completed` (fired on first successful SettingsSaved), `settings_opened` (tray menu click), `provider_test_run` (properties: service, success, error_category). All respect analyticsOptOut.
+- Wired analytics in `App.xaml.cs` (onboarding_completed on first-run save, settings_opened on tray click) and `SettingsViewModel.cs` (provider_test_run on each Test button result).
+- Added `ErrorCategory(int statusCode)` and `ErrorCategory(Exception ex)` helpers to `SettingsViewModel` for analytics error categorization (auth_failed, network_error, timeout, etc.).
+- Fixed user-facing error copy: replaced `ex.Message` leak in `SettingsViewModel.FriendlyError` default case with generic friendly text. Added friendly error surfacing in `CompanionManager` for recording errors ("check that your microphone is connected"), transcription errors ("check your internet connection or your AssemblyAI key"), non-key HTTP errors ("check your internet connection"), and general pipeline errors ("try again, and if it keeps happening, check Settings").
+- Updated installer script (`clicky-installer.iss`): `[Files]` section now excludes `appsettings.json` (no longer needed — keys come from SecretsStore/SettingsStore). Added `CurUninstallStepChanged` Pascal Script procedure that offers to delete `%APPDATA%\Clicky\` on uninstall with an explicit opt-in confirmation dialog (default: No).
+- Build: 0 warnings. Tests: 217 passed, 0 failed.
+- Files changed:
+  - MODIFIED: `README.md` (Windows as first-class platform)
+  - MODIFIED: `windows/README.md` (rewritten for end-users)
+  - MODIFIED: `windows/scripts/clicky-installer.iss` (exclude appsettings.json, APPDATA cleanup)
+  - MODIFIED: `windows/src/Clicky.App/App.xaml.cs` (onboarding_completed + settings_opened analytics)
+  - MODIFIED: `windows/src/Clicky.Companion/ClickyAnalytics.cs` (3 new events)
+  - MODIFIED: `windows/src/Clicky.Companion/CompanionManager.cs` (friendly error surfacing for all pipeline errors)
+  - MODIFIED: `windows/src/Clicky.Companion/SettingsViewModel.cs` (provider_test_run analytics, ErrorCategory helpers, fixed ex.Message leak)
+- **Learnings for future iterations:**
+  - The `FriendlyError` default case previously leaked raw `ex.Message` to the user — always use generic friendly text for unknown exceptions. Exception details should only go to `Debug.WriteLine`.
+  - Inno Setup's `CurUninstallStepChanged` procedure with `usPostUninstall` step runs after files are removed — the right place for optional cleanup of user data directories.
+  - Inno Setup `Excludes` flag on `[Files]` entries uses semicolons for multiple patterns (e.g., `Excludes: "appsettings.json;*.pdb"`).
+  - Analytics `ErrorCategory` helpers map HTTP status codes and exception types to short stable strings for PostHog aggregation — avoid sending raw status codes or exception type names as event properties.
+  - Manual browser verification and full end-to-end testing on a clean Windows 11 VM still needed — no browser testing tools configured.
+---
+
+## 2026-04-11 - Microphone + audio output device selectors (user-requested feature)
+- User reported wanting to pick a specific mic / audio output instead of always using the Windows default. All PRD stories (US-018 through US-025) had already passed — this is a new shippable feature outside the Ralph loop.
+- Implemented:
+  - `Clicky.Audio/AudioDevices.cs` — static helper that wraps NAudio's `MMDeviceEnumerator` to enumerate active input (Capture) and output (Render) endpoints and resolve a saved MMDevice ID. Always prepends a "System default" sentinel (empty string ID) so the UI has a safe first entry even on machines where enumeration fails.
+  - `Clicky.Audio/MicrophoneCapture.cs` — new `MicrophoneCapture(string? deviceId)` ctor overload. If the ID is empty/missing/invalid we silently fall back to `new WasapiCapture()` rather than throwing — the user's saved preference must never crash push-to-talk.
+  - `Clicky.Api/ElevenLabsTtsClient.cs` — new overload `ElevenLabsTtsClient(apiKey, voiceId, string? outputDeviceId, HttpClient?)`. Refactored `_waveOut` field from `WaveOutEvent?` to `IWavePlayer?`. When `outputDeviceId` is set we build a `WasapiOut` bound to that MMDevice; otherwise we keep the existing `WaveOutEvent` path (battle-tested, unchanged for the default case). Tracking field `_wasapiDevice` is needed because NAudio's `WasapiOut` does NOT take ownership of the MMDevice it was constructed with — we have to dispose it ourselves after playback stops.
+  - `Clicky.Companion/CompanionManager.cs` — new optional `microphoneDeviceId` ctor parameter; passes it into `new MicrophoneCapture(...)` when a recording session starts. Existing test seams unchanged (default value).
+  - `Clicky.Companion/SettingsStore.cs` — new `MicrophoneDeviceId` and `SpeakerDeviceId` string fields (default ""). Persisted as `microphoneDeviceId`/`speakerDeviceId` in `%APPDATA%\Clicky\settings.json`.
+  - `Clicky.Companion/SettingsViewModel.cs` — new `MicrophoneDevices`, `SpeakerDevices`, `SelectedMicrophoneDeviceId`, `SelectedSpeakerDeviceId` properties. `LoadFromStores()` falls back to "System default" if the saved device ID no longer matches any enumerated device (handles unplugged USB devices). `Save()` persists both new fields to SettingsStore.
+  - `Clicky.App/SettingsWindow.xaml` — new `AUDIO DEVICES` section between ElevenLabs Voice ID and the Save/Quit buttons. Two dark-styled ComboBoxes bound to `MicrophoneDevices`/`SpeakerDevices` with `DisplayMemberPath="FriendlyName"` and `SelectedValuePath="Id"`.
+  - `Clicky.App/App.xaml.cs` — `BuildTtsClient()` now passes `_settingsStore.SpeakerDeviceId` into the ElevenLabs ctor; `BuildAndStartCompanionManager()` passes `_settingsStore.MicrophoneDeviceId` into `CompanionManager`. On `SettingsSaved` the manager is rebuilt (existing flow), so a device change from Settings takes effect on the next push-to-talk without a restart.
+- New tests:
+  - `SettingsStoreTests.MicrophoneAndSpeakerDeviceId_RoundTrip` and `DeviceId_DefaultsToEmptyString`.
+  - `SettingsViewModelTests.AudioDeviceLists_AlwaysIncludeSystemDefaultFirst`, `DeviceSelection_DefaultsToSystemDefault`, `Save_PersistsDeviceSelectionsToSettingsStore`, `LoadFromStores_FallsBackToDefaultWhenSavedDeviceIsMissing`.
+- Build: 0 warnings. Tests: 223 passed (up from 218).
+- Files changed:
+  - NEW: `windows/src/Clicky.Audio/AudioDevices.cs`
+  - MODIFIED: `windows/src/Clicky.Audio/MicrophoneCapture.cs`
+  - MODIFIED: `windows/src/Clicky.Api/ElevenLabsTtsClient.cs`
+  - MODIFIED: `windows/src/Clicky.Companion/SettingsStore.cs`
+  - MODIFIED: `windows/src/Clicky.Companion/SettingsViewModel.cs`
+  - MODIFIED: `windows/src/Clicky.Companion/CompanionManager.cs`
+  - MODIFIED: `windows/src/Clicky.App/App.xaml.cs`
+  - MODIFIED: `windows/src/Clicky.App/SettingsWindow.xaml`
+  - MODIFIED: `windows/tests/Clicky.Tests/SettingsStoreTests.cs`
+  - MODIFIED: `windows/tests/Clicky.Tests/SettingsViewModelTests.cs`
+- **Learnings for future iterations:**
+  - NAudio's `WasapiOut(MMDevice, ...)` does NOT take ownership of the MMDevice — the caller must dispose it after the player is disposed, or you leak COM handles. `WasapiCapture(MMDevice)` behaves the same way. Track the device alongside the player.
+  - `MMDeviceEnumerator.GetDevice(id)` throws for unknown IDs rather than returning null. Wrap in try/catch and treat any exception as "device missing" so stale saved preferences don't crash capture/playback.
+  - Both `WaveOutEvent` and `WasapiOut` implement `IWavePlayer`, which exposes `Init`, `Play`, `Stop`, `Dispose`, `PlaybackState`, and `PlaybackStopped`. Use `IWavePlayer?` fields when you want to switch between engines without forking the playback code path.
+  - The "System default" sentinel uses empty string (`""`) as the ID, not null, because WPF's `SelectedValue` binding does not round-trip null cleanly through a ComboBox's `SelectedValuePath`. Empty string is visible to both the store and the UI.
+  - SettingsWindow binds ComboBox items by `Id` via `SelectedValuePath="Id"` + `DisplayMemberPath="FriendlyName"` — this avoids needing custom equality on the `DeviceInfo` record struct.
+  - Device IDs are stable MMDevice GUIDs of the form `{0.0.1.00000000}.{guid}`, so they survive app restarts as long as the hardware is still plugged in. A missing device is silently ignored on load (falls back to System default) — do NOT error out.
+---

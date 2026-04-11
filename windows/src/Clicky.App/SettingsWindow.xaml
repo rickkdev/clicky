@@ -409,6 +409,41 @@
             <!-- Separator -->
             <Border Height="0.5" Background="{StaticResource BorderSubtle}" Margin="0,0,0,16" />
 
+            <!-- AUDIO DEVICES header -->
+            <TextBlock Text="AUDIO DEVICES"
+                       FontSize="10" FontWeight="SemiBold"
+                       Foreground="{StaticResource TextTertiary}"
+                       Margin="0,0,0,12" />
+
+            <!-- Microphone selector -->
+            <TextBlock Text="Microphone"
+                       FontSize="13" FontWeight="Medium"
+                       Foreground="{StaticResource TextSecondary}"
+                       Margin="0,0,0,6" />
+            <ComboBox x:Name="MicrophoneCombo"
+                      Style="{StaticResource DarkComboBox}"
+                      ItemsSource="{Binding MicrophoneDevices}"
+                      DisplayMemberPath="FriendlyName"
+                      SelectedValuePath="Id"
+                      SelectedValue="{Binding SelectedMicrophoneDeviceId, Mode=TwoWay}"
+                      Margin="0,0,0,12" />
+
+            <!-- Speaker / output selector -->
+            <TextBlock Text="Speakers / headphones"
+                       FontSize="13" FontWeight="Medium"
+                       Foreground="{StaticResource TextSecondary}"
+                       Margin="0,0,0,6" />
+            <ComboBox x:Name="SpeakerCombo"
+                      Style="{StaticResource DarkComboBox}"
+                      ItemsSource="{Binding SpeakerDevices}"
+                      DisplayMemberPath="FriendlyName"
+                      SelectedValuePath="Id"
+                      SelectedValue="{Binding SelectedSpeakerDeviceId, Mode=TwoWay}"
+                      Margin="0,0,0,20" />
+
+            <!-- Separator -->
+            <Border Height="0.5" Background="{StaticResource BorderSubtle}" Margin="0,0,0,16" />
+
             <!-- Buttons -->
             <Grid Margin="0,0,0,12">
                 <Grid.ColumnDefinitions>

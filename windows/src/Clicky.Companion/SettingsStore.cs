@@ -58,6 +58,26 @@ public class SettingsStore
         set { lock (_lock) { _data.AnalyticsOptOut = value; Save(); } }
     }
 
+    /// <summary>
+    /// NAudio MMDevice ID of the user-selected input (microphone) device.
+    /// Empty string means "use whatever Windows currently considers the default".
+    /// </summary>
+    public string MicrophoneDeviceId
+    {
+        get { lock (_lock) return _data.MicrophoneDeviceId; }
+        set { lock (_lock) { _data.MicrophoneDeviceId = value ?? ""; Save(); } }
+    }
+
+    /// <summary>
+    /// NAudio MMDevice ID of the user-selected output (speaker/headphone) device.
+    /// Empty string means "use whatever Windows currently considers the default".
+    /// </summary>
+    public string SpeakerDeviceId
+    {
+        get { lock (_lock) return _data.SpeakerDeviceId; }
+        set { lock (_lock) { _data.SpeakerDeviceId = value ?? ""; Save(); } }
+    }
+
     private SettingsData Load()
     {
         try
@@ -109,5 +129,11 @@ public class SettingsStore
 
         [JsonPropertyName("analyticsOptOut")]
         public bool AnalyticsOptOut { get; set; }
+
+        [JsonPropertyName("microphoneDeviceId")]
+        public string MicrophoneDeviceId { get; set; } = "";
+
+        [JsonPropertyName("speakerDeviceId")]
+        public string SpeakerDeviceId { get; set; } = "";
     }
 }

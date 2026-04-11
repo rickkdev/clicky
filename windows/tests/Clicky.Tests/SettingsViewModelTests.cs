@@ -188,6 +188,61 @@ public class SettingsViewModelTests : IDisposable
     }
 
     [Fact]
+    public void AudioDeviceLists_AlwaysIncludeSystemDefaultFirst()
+    {
+        var vm = new SettingsViewModel(_secrets, _settings);
+
+        Assert.NotEmpty(vm.MicrophoneDevices);
+        Assert.NotEmpty(vm.SpeakerDevices);
+        // The "System default" sentinel is always first so the user always has
+        // a safe fallback even on machines with zero enumerable devices.
+        Assert.Equal("", vm.MicrophoneDevices[0].Id);
+        Assert.Equal("", vm.SpeakerDevices[0].Id);
+    }
+
+    [Fact]
+    public void DeviceSelection_DefaultsToSystemDefault()
+    {
+        var vm = new SettingsViewModel(_secrets, _settings);
+
+        Assert.Equal("", vm.SelectedMicrophoneDeviceId);
+        Assert.Equal("", vm.SelectedSpeakerDeviceId);
+    }
+
+    [Fact]
+    public void Save_PersistsDeviceSelectionsToSettingsStore()
+    {
+        var vm = new SettingsViewModel(_secrets, _settings);
+        vm.AnthropicApiKey = "sk-test";
+        vm.AssemblyAiApiKey = "aai-test";
+        vm.ElevenLabsApiKey = "el-test";
+
+        // Simulate the user picking something other than "System default".
+        vm.SelectedMicrophoneDeviceId = "";
+        vm.SelectedSpeakerDeviceId = "";
+
+        vm.Save();
+
+        Assert.Equal("", _settings.MicrophoneDeviceId);
+        Assert.Equal("", _settings.SpeakerDeviceId);
+    }
+
+    [Fact]
+    public void LoadFromStores_FallsBackToDefaultWhenSavedDeviceIsMissing()
+    {
+        // A saved MMDevice ID that isn't in the enumerated device list should
+        // fall back silently — the user most likely unplugged the device since
+        // last launch.
+        _settings.MicrophoneDeviceId = "{not-a-real-mmdevice-id}";
+        _settings.SpeakerDeviceId = "{also-fake}";
+
+        var vm = new SettingsViewModel(_secrets, _settings);
+
+        Assert.Equal("", vm.SelectedMicrophoneDeviceId);
+        Assert.Equal("", vm.SelectedSpeakerDeviceId);
+    }
+
+    [Fact]
     public void Save_DoesNotOverwriteSavedKeyWithEmpty()
     {
         _secrets.Write(SecretsStore.AnthropicApiKey, "sk-original");

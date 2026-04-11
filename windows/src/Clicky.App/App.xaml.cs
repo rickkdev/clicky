@@ -173,7 +173,8 @@ public partial class App : Application
             transcriber,
             ttsClient,
             Dispatcher,
-            _overlayManager);
+            _overlayManager,
+            microphoneDeviceId: _settingsStore!.MicrophoneDeviceId);
         _companionManager.OpenSettingsRequested += OnPipelineKeyError;
         _companionManager.Start();
     }
@@ -205,7 +206,8 @@ public partial class App : Application
     {
         var key = _secretsStore!.Read(SecretsStore.ElevenLabsApiKey) ?? "";
         var voiceId = _settingsStore!.ElevenLabsVoiceId;
-        return new ElevenLabsTtsClient(key, voiceId);
+        var outputDeviceId = _settingsStore.SpeakerDeviceId;
+        return new ElevenLabsTtsClient(key, voiceId, outputDeviceId);
     }
 
     /// <summary>

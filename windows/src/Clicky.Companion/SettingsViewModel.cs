@@ -8,6 +8,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Clicky.Audio;
 
 namespace Clicky.Companion;
 
@@ -29,6 +30,9 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
     private string _assemblyAiApiKey = "";
     private string _elevenLabsApiKey = "";
     private string _elevenLabsVoiceId = "kPzsL2i3teMYv0FxEYQ6";
+
+    private string _selectedMicrophoneDeviceId = AudioDevices.DefaultDeviceId;
+    private string _selectedSpeakerDeviceId = AudioDevices.DefaultDeviceId;
 
     // True when the field shows the saved placeholder instead of the real key.
     private bool _anthropicKeyIsSaved;
@@ -63,7 +67,55 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         _settingsStore = settingsStore;
         _httpClient = httpClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
 
+        // Enumerate devices once on construction so the dropdowns have something
+        // to show. If the user plugs in a new device while the window is open
+        // they'll see it next time — mirroring Windows Sound Settings behavior.
+        MicrophoneDevices = AudioDevices.EnumerateInputDevices();
+        SpeakerDevices = AudioDevices.EnumerateOutputDevices();
+
         LoadFromStores();
+    }
+
+    // -- Audio device selection --
+
+    /// <summary>
+    /// Available input (microphone) devices, with "System default" pinned first.
+    /// </summary>
+    public IReadOnlyList<AudioDevices.DeviceInfo> MicrophoneDevices { get; }
+
+    /// <summary>
+    /// Available output (speaker/headphone) devices, with "System default" pinned first.
+    /// </summary>
+    public IReadOnlyList<AudioDevices.DeviceInfo> SpeakerDevices { get; }
+
+    /// <summary>
+    /// NAudio MMDevice ID of the user-selected microphone, or empty string for "System default".
+    /// </summary>
+    public string SelectedMicrophoneDeviceId
+    {
+        get => _selectedMicrophoneDeviceId;
+        set
+        {
+            var normalized = value ?? AudioDevices.DefaultDeviceId;
+            if (_selectedMicrophoneDeviceId == normalized) return;
+            _selectedMicrophoneDeviceId = normalized;
+            OnPropertyChanged();
+        }
+    }
+
+    /// <summary>
+    /// NAudio MMDevice ID of the user-selected speaker/headphone output, or empty string for "System default".
+    /// </summary>
+    public string SelectedSpeakerDeviceId
+    {
+        get => _selectedSpeakerDeviceId;
+        set
+        {
+            var normalized = value ?? AudioDevices.DefaultDeviceId;
+            if (_selectedSpeakerDeviceId == normalized) return;
+            _selectedSpeakerDeviceId = normalized;
+            OnPropertyChanged();
+        }
     }
 
     // -- Provider / Model --
@@ -375,6 +427,8 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         _settingsStore.LlmProvider = _selectedProvider;
         _settingsStore.LlmModel = _selectedModel;
         _settingsStore.ElevenLabsVoiceId = _elevenLabsVoiceId;
+        _settingsStore.MicrophoneDeviceId = _selectedMicrophoneDeviceId;
+        _settingsStore.SpeakerDeviceId = _selectedSpeakerDeviceId;
 
         SettingsSaved?.Invoke(this, EventArgs.Empty);
     }
@@ -543,6 +597,13 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         _selectedModel = _settingsStore.LlmModel;
         _elevenLabsVoiceId = _settingsStore.ElevenLabsVoiceId;
 
+        // Seed device selection from the store. If the saved device ID is no
+        // longer in the enumerated list (e.g. USB headset unplugged), silently
+        // reset to "System default" so the ComboBox isn't empty and the user
+        // still gets working audio.
+        _selectedMicrophoneDeviceId = ResolveSavedDeviceId(_settingsStore.MicrophoneDeviceId, MicrophoneDevices);
+        _selectedSpeakerDeviceId = ResolveSavedDeviceId(_settingsStore.SpeakerDeviceId, SpeakerDevices);
+
         // Pre-populate saved-key placeholders.
         if (_secretsStore.Exists(SecretsStore.AnthropicApiKey))
             _anthropicKeyIsSaved = true;
@@ -555,6 +616,16 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
 
         if (_secretsStore.Exists(SecretsStore.ElevenLabsApiKey))
             _elevenLabsKeyIsSaved = true;
+    }
+
+    private static string ResolveSavedDeviceId(string saved, IReadOnlyList<AudioDevices.DeviceInfo> available)
+    {
+        if (string.IsNullOrEmpty(saved)) return AudioDevices.DefaultDeviceId;
+        foreach (var d in available)
+        {
+            if (d.Id == saved) return saved;
+        }
+        return AudioDevices.DefaultDeviceId;
     }
 
     internal static string FriendlyError(string service, int statusCode) => statusCode switch

@@ -32,11 +32,31 @@ public sealed class MicrophoneCapture : IDisposable
     public const int BytesPerFrame = SamplesPerFrame * 2;
 
     private readonly object _lock = new();
+    private readonly string? _deviceId;
     private WasapiCapture? _activeCapture;
     private bool _disposed;
 
     /// <summary>
-    /// Starts the default WASAPI capture device and yields 50 ms PCM16 frames
+    /// Creates a MicrophoneCapture that records from the Windows default input
+    /// device (same behavior as before device selection shipped).
+    /// </summary>
+    public MicrophoneCapture() : this(null) { }
+
+    /// <summary>
+    /// Creates a MicrophoneCapture bound to a specific NAudio MMDevice ID.
+    /// Pass <c>null</c> or an empty string to use the system default. If the
+    /// resolved device is missing or no longer active (e.g. USB mic unplugged
+    /// since settings were saved), capture falls back to the system default
+    /// instead of throwing — the user's saved choice should never crash the
+    /// push-to-talk pipeline.
+    /// </summary>
+    public MicrophoneCapture(string? deviceId)
+    {
+        _deviceId = deviceId;
+    }
+
+    /// <summary>
+    /// Starts the configured WASAPI capture device and yields 50 ms PCM16 frames
     /// until <paramref name="cancellationToken"/> fires or the device stops.
     /// Only one session may be active at a time per instance.
     /// </summary>
@@ -52,7 +72,7 @@ public sealed class MicrophoneCapture : IDisposable
             {
                 throw new InvalidOperationException("A capture session is already running.");
             }
-            capture = new WasapiCapture();
+            capture = CreateCapture(_deviceId);
             _activeCapture = capture;
         }
 
@@ -149,6 +169,31 @@ public sealed class MicrophoneCapture : IDisposable
                 _activeCapture.Dispose();
                 _activeCapture = null;
             }
+        }
+    }
+
+    /// <summary>
+    /// Constructs a <see cref="WasapiCapture"/> bound to the requested device,
+    /// silently falling back to the default endpoint if the ID can't be
+    /// resolved. Returning a working capture object is more important than
+    /// honoring a stale preference.
+    /// </summary>
+    private static WasapiCapture CreateCapture(string? deviceId)
+    {
+        var device = AudioDevices.TryResolveDevice(deviceId, NAudio.CoreAudioApi.DataFlow.Capture);
+        if (device is null)
+        {
+            return new WasapiCapture();
+        }
+
+        try
+        {
+            return new WasapiCapture(device);
+        }
+        catch
+        {
+            device.Dispose();
+            return new WasapiCapture();
         }
     }
 }
