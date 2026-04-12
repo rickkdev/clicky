@@ -443,3 +443,14 @@ Branch: ralph/windows-port (continues from the completed Windows port — see ar
   - The TLS warmup pattern is now used by both `AnthropicDirectClient` and `ElevenLabsTtsClient` — if a third provider is added, copy the same static lock + bool + HEAD pattern
   - Static bool flags in tests need a reset method (`ResetTlsWarmupForTesting`) because xUnit runs tests in the same process — without it, only the first test to construct the client triggers warmup
 ---
+
+## 2026-04-12 - US-034
+- Bumped `<Version>` from `1.0.0` to `1.1.0` in `windows/src/Clicky.App/Clicky.App.csproj`
+- Updated Inno Setup installer `#define AppVersion` from `"0.1.0"` to `"1.1.0"` in `windows/scripts/clicky-installer.iss`
+- Build: 0 warnings, 0 errors. Tests: 8 passed.
+- Files changed: `windows/src/Clicky.App/Clicky.App.csproj`, `windows/scripts/clicky-installer.iss`
+- **Learnings for future iterations:**
+  - `VersionInfo.Current` reads from `AssemblyInformationalVersionAttribute` which is set by the `<Version>` property in the csproj — no separate constant to update
+  - The Inno Setup installer script had a stale `0.1.0` version that was out of sync with the csproj `1.0.0` — always check both when bumping versions
+  - The Overlay DLL test abort is an Application Control policy issue on this machine, not a test failure — ignore it
+---

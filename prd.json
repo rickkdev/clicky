@@ -352,7 +352,7 @@
         "Commit all changes with message: chore: US-034 - Bump version to 1.1.0"
       ],
       "priority": 17,
-      "passes": false,
+      "passes": true,
       "notes": "Tiny story — a single line change in the csproj plus verification. The version bump signals to users (especially those using auto-update from US-017) that the accuracy and latency improvements from US-030 through US-033 have landed. Do not bump to 2.0.0 — these are enhancements, not breaking changes."
     }
   ]
