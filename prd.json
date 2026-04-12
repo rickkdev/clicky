@@ -316,7 +316,7 @@
         "Commit all changes with message: feat: US-032 - True streaming MP3 playback for TTS"
       ],
       "priority": 15,
-      "passes": false,
+      "passes": true,
       "notes": "The current `PlayStreamingMp3Async` already has the scaffolding for streaming (the `playbackStarted` flag, the `startPlaybackThreshold` constant) but the comment at line 126-128 says 'For simplicity we'll wait for the full download since NAudio's Mp3FileReader needs seekable streams.' The fix is to bypass `Mp3FileReader` entirely and decode frame-by-frame with `Mp3Frame` + `AcmMp3FrameDecompressor` into a `BufferedWaveProvider`. This is a well-documented NAudio pattern. Do NOT pull in MediaFoundation or any external codec — the built-in ACM MP3 decoder is universally available and sufficient."
     },
     {

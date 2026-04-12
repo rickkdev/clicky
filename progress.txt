@@ -410,3 +410,22 @@ Branch: ralph/windows-port (continues from the completed Windows port — see ar
   - The 60-char threshold check must be done at the candidate split position, not just on total buffer length, to avoid splitting before enough visible text has accumulated
   - `_firstChunkEmitted` is set when ANY chunk (eager or normal) is emitted — the normal `.!?` path also sets it, preventing eager splits after a short first sentence
 ---
+
+## 2026-04-12 - US-032
+- Rewrote `PlayStreamingMp3Async` in `ElevenLabsTtsClient.cs` to use true frame-by-frame MP3 decoding with `Mp3Frame.LoadFromStream` + `AcmMp3FrameDecompressor` feeding a `BufferedWaveProvider`, instead of downloading the full MP3 into a `MemoryStream` before playback
+- Playback starts after the first MP3 frame is decoded (~50-100ms), while the HTTP download continues in parallel — saving 300-800ms per TTS sentence
+- `BufferedWaveProvider.ReadFully = true` returns silence when HTTP is slower than playback, preventing audio glitches
+- Format detection deferred to first decoded frame (sample rate, channel count)
+- Added `_streamingCts` field for cancelling the HTTP download loop from `StopPlayback()`, and `_decompressor` field for proper ACM codec disposal
+- `StopPlayback()` cancels the streaming CTS before disposing playback resources; `DisposePlaybackResources` also cleans up the decompressor
+- Existing `IsPlaying`, `StopPlayback()`, WasapiOut device-selection path, and `PlayMp3Async` all preserved
+- Files changed:
+  - MODIFIED: `windows/src/Clicky.Api/ElevenLabsTtsClient.cs` — true streaming MP3 playback via Mp3Frame + AcmMp3FrameDecompressor + BufferedWaveProvider
+  - MODIFIED: `windows/tests/Clicky.Tests/ElevenLabsTtsClientTests.cs` — 2 new tests (streaming playback starts before full download, cancellation disposes within 1s), `DripFeedStream` helper, `GenerateTestMp3` helper
+- Build: 0 warnings. Tests: all TTS tests pass (14 total, 2 new)
+- **Learnings for future iterations:**
+  - `Mp3Frame.LoadFromStream` works with a seekable `MemoryStream` accumulator — append HTTP chunks to the end, parse frames from the read position, no compaction needed for typical TTS payloads (<1MB)
+  - `AcmMp3FrameDecompressor` tolerates zero-filled frame bodies (produces silence) — useful for generating test MP3 fixtures without MediaFoundation
+  - `MediaFoundationEncoder` is NOT available as a transitive NAudio dependency — it's not in the NAudio 2.x core packages. Manual frame construction works for tests.
+  - When using a linked `CancellationTokenSource`, the streaming method should own disposal of its own CTS; `StopPlayback()` only cancels (never disposes) to avoid races with the `using` block in the streaming method
+---

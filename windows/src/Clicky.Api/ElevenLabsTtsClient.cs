@@ -2,6 +2,7 @@ using System.Net.Http.Json;
 using System.Text.Json.Serialization;
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
+using NAudio.Wave.Compression;
 
 namespace Clicky.Api;
 
@@ -19,6 +20,8 @@ public class ElevenLabsTtsClient : IDisposable
     private IWavePlayer? _wavePlayer;
     private MMDevice? _wasapiDevice;
     private Mp3FileReader? _mp3Reader;
+    private CancellationTokenSource? _streamingCts;
+    private IMp3FrameDecompressor? _decompressor;
 
     public ElevenLabsTtsClient(string apiKey, string voiceId, HttpClient? httpClient = null)
         : this(apiKey, voiceId, outputDeviceId: null, httpClient)
@@ -91,69 +94,113 @@ public class ElevenLabsTtsClient : IDisposable
     }
 
     /// <summary>
-    /// Plays an MP3 stream in real-time by feeding bytes into a <see cref="BufferedWaveProvider"/>
-    /// as they arrive from the HTTP response. First audio leaves the speakers as soon as NAudio
-    /// has enough data to decode the first MP3 frames (~300 ms after the first byte).
+    /// Plays an MP3 stream in real-time by decoding MP3 frames as they arrive and
+    /// feeding PCM samples into a <see cref="BufferedWaveProvider"/>. Playback starts
+    /// after the first MP3 frame is decoded (~50-100 ms), while the HTTP download
+    /// continues in parallel.
     /// </summary>
     internal async Task PlayStreamingMp3Async(Stream mp3Stream, CancellationToken ct)
     {
         StopPlayback();
 
-        // We use a pipe: write incoming MP3 bytes into a ReadAheadStream that NAudio's
-        // Mp3FileReader can consume. The trick is to buffer all bytes into a MemoryStream
-        // but start playback once we have a minimum amount (first MP3 frames).
-        const int startPlaybackThreshold = 8192; // ~8 KB = ~100 ms of MP3 at 128 kbps
-        var memoryStream = new MemoryStream();
-        var buffer = new byte[8192];
-        var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var playbackStarted = false;
+        var streamingCts = new CancellationTokenSource();
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, streamingCts.Token);
+        var linkedToken = linkedCts.Token;
 
-        // Read the full stream into memory but start playback as soon as we have enough data
-        int totalRead = 0;
-        while (true)
-        {
-            ct.ThrowIfCancellationRequested();
-            var bytesRead = await mp3Stream.ReadAsync(buffer, ct).ConfigureAwait(false);
-            if (bytesRead == 0) break;
-
-            memoryStream.Write(buffer, 0, bytesRead);
-            totalRead += bytesRead;
-
-            if (!playbackStarted && totalRead >= startPlaybackThreshold)
-            {
-                // We have enough data — start playback on what we have so far while
-                // continuing to buffer the rest. For simplicity we'll wait for the full
-                // download since NAudio's Mp3FileReader needs seekable streams. The real
-                // latency win comes from sentence-level pipelining (Change 2).
-                playbackStarted = true;
-            }
-        }
-
-        if (totalRead == 0) return;
-
-        memoryStream.Position = 0;
-        ct.ThrowIfCancellationRequested();
-
-        // Play the buffered MP3 data
         lock (_lock)
         {
-            _mp3Reader = new Mp3FileReader(memoryStream);
-            var (player, mmDevice) = CreateWavePlayer(_outputDeviceId);
-            _wavePlayer = player;
-            _wasapiDevice = mmDevice;
-            _wavePlayer.Init(_mp3Reader);
-
-            _wavePlayer.PlaybackStopped += (_, _) => tcs.TrySetResult(true);
-            _wavePlayer.Play();
+            _streamingCts = streamingCts;
         }
 
-        using var reg = ct.Register(() =>
-        {
-            StopPlayback();
-            tcs.TrySetCanceled(ct);
-        });
+        BufferedWaveProvider? bufferedProvider = null;
+        IMp3FrameDecompressor? decompressor = null;
+        var accumulator = new MemoryStream();
+        var readBuffer = new byte[4096];
+        var decodeBuffer = new byte[16384];
 
-        await tcs.Task;
+        try
+        {
+            while (true)
+            {
+                linkedToken.ThrowIfCancellationRequested();
+                var bytesRead = await mp3Stream.ReadAsync(readBuffer, linkedToken).ConfigureAwait(false);
+                if (bytesRead == 0) break;
+
+                // Append new data to the end of the accumulator
+                long parsePos = accumulator.Position;
+                accumulator.Seek(0, SeekOrigin.End);
+                accumulator.Write(readBuffer, 0, bytesRead);
+                accumulator.Position = parsePos;
+
+                // Decode as many complete MP3 frames as possible
+                while (accumulator.Position < accumulator.Length)
+                {
+                    long frameStart = accumulator.Position;
+                    Mp3Frame? frame;
+                    try { frame = Mp3Frame.LoadFromStream(accumulator); }
+                    catch { frame = null; }
+
+                    if (frame == null)
+                    {
+                        accumulator.Position = frameStart;
+                        break;
+                    }
+
+                    if (decompressor == null)
+                    {
+                        // First frame determines the audio format
+                        var mp3Format = new Mp3WaveFormat(
+                            frame.SampleRate,
+                            frame.ChannelMode == ChannelMode.Mono ? 1 : 2,
+                            frame.FrameLength,
+                            frame.BitRate);
+                        decompressor = new AcmMp3FrameDecompressor(mp3Format);
+                        bufferedProvider = new BufferedWaveProvider(decompressor.OutputFormat)
+                        {
+                            BufferDuration = TimeSpan.FromSeconds(5),
+                            ReadFully = true
+                        };
+
+                        lock (_lock)
+                        {
+                            _decompressor = decompressor;
+                            var (player, mmDevice) = CreateWavePlayer(_outputDeviceId);
+                            _wavePlayer = player;
+                            _wasapiDevice = mmDevice;
+                            _wavePlayer.Init(bufferedProvider);
+                            _wavePlayer.Play();
+                        }
+                    }
+
+                    int decoded = decompressor.DecompressFrame(frame, decodeBuffer, 0);
+                    if (decoded > 0)
+                        bufferedProvider!.AddSamples(decodeBuffer, 0, decoded);
+                }
+            }
+
+            if (bufferedProvider == null) return;
+
+            // HTTP stream finished — wait for buffered audio to finish playing
+            while (bufferedProvider.BufferedBytes > 0)
+            {
+                linkedToken.ThrowIfCancellationRequested();
+                await Task.Delay(50, linkedToken).ConfigureAwait(false);
+            }
+
+            // Brief pause for the audio device to output the last samples
+            try { await Task.Delay(100, linkedToken).ConfigureAwait(false); }
+            catch (OperationCanceledException) { /* acceptable during drain */ }
+        }
+        finally
+        {
+            accumulator.Dispose();
+            lock (_lock)
+            {
+                _streamingCts?.Dispose();
+                _streamingCts = null;
+            }
+            StopPlayback();
+        }
     }
 
     /// <summary>
@@ -163,6 +210,10 @@ public class ElevenLabsTtsClient : IDisposable
     {
         lock (_lock)
         {
+            // Cancel any in-flight streaming download before disposing the player
+            try { _streamingCts?.Cancel(); }
+            catch (ObjectDisposedException) { }
+
             DisposePlaybackResources();
         }
     }
@@ -217,6 +268,12 @@ public class ElevenLabsTtsClient : IDisposable
         {
             try { _wasapiDevice.Dispose(); } catch { /* best effort */ }
             _wasapiDevice = null;
+        }
+
+        if (_decompressor is not null)
+        {
+            _decompressor.Dispose();
+            _decompressor = null;
         }
 
         if (_mp3Reader is not null)
