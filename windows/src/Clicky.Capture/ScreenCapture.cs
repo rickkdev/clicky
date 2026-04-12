@@ -29,9 +29,14 @@ public static class ScreenCapture
     /// Window handles to exclude from capture (overlay/tray windows).
     /// Used only when the WGC exclusion API is available.
     /// </param>
-    public static async Task<List<CapturedScreen>> CaptureAllScreensAsJpegAsync(
+    public static Task<List<CapturedScreen>> CaptureAllScreensAsJpegAsync(
         IReadOnlyList<IntPtr>? excludeHwnds = null)
+        => CaptureAllScreensAsJpegAsync(excludeHwnds, CancellationToken.None);
+
+    public static async Task<List<CapturedScreen>> CaptureAllScreensAsJpegAsync(
+        IReadOnlyList<IntPtr>? excludeHwnds, CancellationToken ct)
     {
+        ct.ThrowIfCancellationRequested();
         // 1. Enumerate monitors via EnumDisplayMonitors
         var monitors = EnumerateMonitors();
         if (monitors.Count == 0)
@@ -167,8 +172,9 @@ public static class ScreenCapture
 
         session.StartCapture();
 
-        // Wait up to 2 seconds for the first frame
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        // Wait up to 800 ms for the first frame (WGC is normally <300 ms on Win11;
+        // a longer ceiling just delays the GDI+ fallback).
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(800));
         cts.Token.Register(() => tcs.TrySetResult(null));
 
         var frame = await tcs.Task;

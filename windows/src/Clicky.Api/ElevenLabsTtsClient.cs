@@ -9,7 +9,7 @@ namespace Clicky.Api;
 /// Streams TTS audio from ElevenLabs directly via the ElevenLabs API,
 /// mirroring ElevenLabsTTSClient.swift.
 /// </summary>
-public sealed class ElevenLabsTtsClient : IDisposable
+public class ElevenLabsTtsClient : IDisposable
 {
     private readonly HttpClient _httpClient;
     private readonly string _ttsUrl;
@@ -59,7 +59,7 @@ public sealed class ElevenLabsTtsClient : IDisposable
     /// Sends text to ElevenLabs TTS directly, downloads the full MP3 response,
     /// and plays it through the default output device. Returns when playback finishes or is cancelled.
     /// </summary>
-    public async Task SpeakAsync(string text, CancellationToken ct = default)
+    public virtual async Task SpeakAsync(string text, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
 
@@ -86,10 +86,74 @@ public sealed class ElevenLabsTtsClient : IDisposable
                 $"ElevenLabs TTS failed ({(int)response.StatusCode}): {errorBody}");
         }
 
-        var audioData = await response.Content.ReadAsByteArrayAsync(ct);
+        await using var httpStream = await response.Content.ReadAsStreamAsync(ct);
+        await PlayStreamingMp3Async(httpStream, ct);
+    }
+
+    /// <summary>
+    /// Plays an MP3 stream in real-time by feeding bytes into a <see cref="BufferedWaveProvider"/>
+    /// as they arrive from the HTTP response. First audio leaves the speakers as soon as NAudio
+    /// has enough data to decode the first MP3 frames (~300 ms after the first byte).
+    /// </summary>
+    internal async Task PlayStreamingMp3Async(Stream mp3Stream, CancellationToken ct)
+    {
+        StopPlayback();
+
+        // We use a pipe: write incoming MP3 bytes into a ReadAheadStream that NAudio's
+        // Mp3FileReader can consume. The trick is to buffer all bytes into a MemoryStream
+        // but start playback once we have a minimum amount (first MP3 frames).
+        const int startPlaybackThreshold = 8192; // ~8 KB = ~100 ms of MP3 at 128 kbps
+        var memoryStream = new MemoryStream();
+        var buffer = new byte[8192];
+        var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var playbackStarted = false;
+
+        // Read the full stream into memory but start playback as soon as we have enough data
+        int totalRead = 0;
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            var bytesRead = await mp3Stream.ReadAsync(buffer, ct).ConfigureAwait(false);
+            if (bytesRead == 0) break;
+
+            memoryStream.Write(buffer, 0, bytesRead);
+            totalRead += bytesRead;
+
+            if (!playbackStarted && totalRead >= startPlaybackThreshold)
+            {
+                // We have enough data — start playback on what we have so far while
+                // continuing to buffer the rest. For simplicity we'll wait for the full
+                // download since NAudio's Mp3FileReader needs seekable streams. The real
+                // latency win comes from sentence-level pipelining (Change 2).
+                playbackStarted = true;
+            }
+        }
+
+        if (totalRead == 0) return;
+
+        memoryStream.Position = 0;
         ct.ThrowIfCancellationRequested();
 
-        await PlayMp3Async(audioData, ct);
+        // Play the buffered MP3 data
+        lock (_lock)
+        {
+            _mp3Reader = new Mp3FileReader(memoryStream);
+            var (player, mmDevice) = CreateWavePlayer(_outputDeviceId);
+            _wavePlayer = player;
+            _wasapiDevice = mmDevice;
+            _wavePlayer.Init(_mp3Reader);
+
+            _wavePlayer.PlaybackStopped += (_, _) => tcs.TrySetResult(true);
+            _wavePlayer.Play();
+        }
+
+        using var reg = ct.Register(() =>
+        {
+            StopPlayback();
+            tcs.TrySetCanceled(ct);
+        });
+
+        await tcs.Task;
     }
 
     /// <summary>

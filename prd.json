@@ -254,7 +254,7 @@
         "Commit all changes with message: feat: US-029 - Stream TTS and overlap capture for perceived latency"
       ],
       "priority": 12,
-      "passes": false,
+      "passes": true,
       "notes": "Ship changes 1+2+3 as the core of this story — they compound. Change 4 is a trivial one-line win. Change 5 is optional. Sentence-boundary detection is a known tar pit; accept a simple `.!?` + newline heuristic, do not pull in a sentence-tokenizer library, and do not attempt to handle edge cases like `Dr. Smith` perfectly — if a false split causes a short extra TTS call, that is acceptable. Measure, don't guess: the baseline and post-fix numbers in progress.txt are the acceptance gate, not code review aesthetics."
     }
   ]

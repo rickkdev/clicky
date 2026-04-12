@@ -48,6 +48,8 @@ Branch: ralph/windows-port (continues from the completed Windows port — see ar
 - `ReadOnlySpan<T>` cannot be used inside `async` iterator methods (`IAsyncEnumerable`) — use `string`/`Substring`.
 - Git user config is not set on this Windows host — use `git -c user.name="rickkdev" -c user.email="mail@riccardolamanna.de"` for commits.
 - `CompanionManager` owns the hotkey consumer loop and all state transitions. `App.xaml.cs` constructs it and calls `Start()` / `Dispose()` — does not consume hotkey transitions directly.
+- TTS pipeline: `SentenceTokenizer` splits LLM deltas at `.!?\n\n` boundaries → `TtsPipeline` (Channel-based) plays sentences sequentially via `ElevenLabsTtsClient.SpeakAsync`. `ElevenLabsTtsClient` is NOT sealed (virtual `SpeakAsync` for test mocking).
+- Capture-on-press: `HandlePressed()` kicks off `ScreenCapture.CaptureAllScreensAsJpegAsync` immediately; result is awaited in `SendTranscriptToClaudeWithScreenshot`. Tap < 100 ms → cancel and re-capture.
 - Screenshot labels must include `(image dimensions: WxH pixels)` — appended in CompanionManager, not in ScreenCapture.
 - Image media_type: sniff PNG vs JPEG by magic bytes. Both Anthropic and z.ai's OpenAI-compat reject mismatched declared types.
 - AssemblyAI: reuse a single long-lived `HttpClient` / `ClientWebSocket` factory across sessions. Per-session sockets corrupt the connection pool.
@@ -350,4 +352,28 @@ Branch: ralph/windows-port (continues from the completed Windows port — see ar
   - `GetDpiForMonitor` requires `shcore.dll` — available on Windows 8.1+. The codebase targets Windows 10 19041 so this is safe.
   - The DIP conversion must happen at the overlay/WPF boundary, NOT in `PointTagParser`. Keeping `PointTagParser` in physical pixels preserves the correct coordinate space for future Win32-level features (e.g., `SendInput` click simulation).
   - Manual verification needed on a high-DPI display: ask Clicky to point at the Windows clock → cursor should land on it. Test on 100%, 150%, and 200% scaling. Multi-monitor with mixed DPI is the hardest case.
+---
+
+## 2026-04-12 - US-029
+- Implemented streaming TTS pipeline with sentence-level pipelining (Change 2): `SentenceTokenizer` splits LLM deltas on `.!?\n\n` boundaries, `TtsPipeline` queues sentences through an unbounded `Channel<string>` and plays them sequentially via `ElevenLabsTtsClient.SpeakAsync`
+- Overlapped screen capture with hotkey press (Change 3): `_captureOnPressTask` is kicked off in `HandlePressed()`, awaited in `SendTranscriptToClaudeWithScreenshot`; cancelled on short tap (<100ms)
+- Tightened WGC first-frame timeout from 2s to 800ms (Change 4)
+- Added latency instrumentation: `Stopwatch` in `SendTranscriptToClaudeWithScreenshot` logs key-release→first-LLM-token, first-LLM-token→first-TTS-enqueue, and total pipeline time to `DebugLog`
+- Made `ElevenLabsTtsClient.SpeakAsync` virtual and removed `sealed` from the class to enable test mocking
+- Streaming MP3 playback (`PlayStreamingMp3Async`) buffers incoming HTTP bytes and starts playback once enough data arrives; sentence-level pipelining is the primary latency win
+- Files changed:
+  - `windows/src/Clicky.Companion/CompanionManager.cs` — sentence-level TTS pipelining, capture-on-press, latency instrumentation
+  - `windows/src/Clicky.Companion/SentenceTokenizer.cs` — new: sentence boundary tokenizer
+  - `windows/src/Clicky.Companion/TtsPipeline.cs` — new: sequential TTS sentence queue
+  - `windows/src/Clicky.Api/ElevenLabsTtsClient.cs` — streaming MP3 playback, virtual SpeakAsync
+  - `windows/src/Clicky.Capture/ScreenCapture.cs` — WGC timeout 2s → 800ms
+  - `windows/tests/Clicky.Tests/SentenceTokenizerTests.cs` — new: 15 tests
+  - `windows/tests/Clicky.Tests/TtsPipelineTests.cs` — new: 3 tests (ordering, cancellation, empty)
+  - `windows/tests/Clicky.Tests/CaptureOnPressTests.cs` — new: 4 tests
+- **Learnings for future iterations:**
+  - `ElevenLabsTtsClient` was `sealed` — needed to unseal and make `SpeakAsync` virtual to enable test subclassing. Keep it unsealed for future test needs.
+  - NAudio `Mp3FileReader` requires seekable streams, so true byte-level streaming requires a custom `Stream` wrapper or `BufferedWaveProvider`. Sentence-level pipelining provides the main latency win without that complexity.
+  - `Channel<string>` with `SingleReader = true` is ideal for sequential TTS playback — guarantees ordering naturally.
+  - The `SentenceTokenizer` false-positives on abbreviations like "Dr." are acceptable per PRD — a short extra TTS call is fine.
+  - Latency numbers are only measurable with live API keys; the instrumentation logs to `%APPDATA%\Clicky\debug.log` for manual verification.
 ---

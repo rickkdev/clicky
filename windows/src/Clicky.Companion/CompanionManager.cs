@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Http;
 using System.Text;
 using System.Windows.Threading;
@@ -41,6 +42,14 @@ public sealed class CompanionManager : IAsyncDisposable, IDisposable
     private MicrophoneCapture? _activeMicCapture;
     private TranscriptionSession? _activeTranscriptionSession;
     private CancellationTokenSource? _micCaptureCts;
+
+    // Capture-on-press: kick off screen capture when the key is first pressed so
+    // the capture completes in parallel with the user speaking. The task is awaited
+    // when the LLM request is built (after key release). Cancelled if the press
+    // is shorter than ~100 ms (accidental tap).
+    private Task<List<CapturedScreen>>? _captureOnPressTask;
+    private CancellationTokenSource? _captureOnPressCts;
+    private DateTime _pressTimestamp;
 
     /// <summary>The system prompt sent to Claude, mirroring Mac's companionVoiceResponseSystemPrompt.</summary>
     internal static readonly string CompanionSystemPrompt = """
@@ -157,6 +166,13 @@ public sealed class CompanionManager : IAsyncDisposable, IDisposable
 
         _viewModel.IsShortcutPressed = true;
         _viewModel.VoiceState = VoiceState.Listening;
+        _pressTimestamp = DateTime.UtcNow;
+
+        // Kick off screen capture immediately on key press so it runs in parallel
+        // with the user speaking. The result is awaited when the LLM request is built.
+        _captureOnPressCts = new CancellationTokenSource();
+        var excludeHwnds = _overlayManager?.OverlayHwnds;
+        _captureOnPressTask = ScreenCapture.CaptureAllScreensAsJpegAsync(excludeHwnds, _captureOnPressCts.Token);
 
         // Start mic capture + transcription session on a background task
         _micCaptureCts = new CancellationTokenSource();
@@ -325,16 +341,40 @@ public sealed class CompanionManager : IAsyncDisposable, IDisposable
         _responseCts = new CancellationTokenSource();
         var ct = _responseCts.Token;
 
+        // Grab the capture-on-press task (started in HandlePressed) so we can
+        // await its result instead of re-capturing after key release.
+        var captureTask = _captureOnPressTask;
+        var capturePressCts = _captureOnPressCts;
+        var pressDuration = DateTime.UtcNow - _pressTimestamp;
+        _captureOnPressTask = null;
+        _captureOnPressCts = null;
+
         _currentResponseTask = Task.Run(async () =>
         {
             await _dispatcher.InvokeAsync(() => _viewModel.VoiceState = VoiceState.Processing);
 
+            // ── Latency instrumentation (US-029) ──
+            var pipelineSw = Stopwatch.StartNew();
+            long firstLlmTokenMs = -1;
+            long firstTtsEnqueueMs = -1;
+
             try
             {
-                // Capture all connected screens (exclude overlay HWNDs so they
-                // don't appear in the screenshots sent to Claude)
-                var excludeHwnds = _overlayManager?.OverlayHwnds;
-                var screens = await ScreenCapture.CaptureAllScreensAsJpegAsync(excludeHwnds).ConfigureAwait(false);
+                List<CapturedScreen> screens;
+
+                // If the press was shorter than 100 ms (accidental tap), cancel the
+                // capture-on-press and re-capture fresh.
+                if (pressDuration.TotalMilliseconds < 100 || captureTask is null)
+                {
+                    capturePressCts?.Cancel();
+                    var excludeHwnds = _overlayManager?.OverlayHwnds;
+                    screens = await ScreenCapture.CaptureAllScreensAsJpegAsync(excludeHwnds).ConfigureAwait(false);
+                }
+                else
+                {
+                    // Await the capture that was started on key press
+                    screens = await captureTask.ConfigureAwait(false);
+                }
 
                 if (ct.IsCancellationRequested) return;
 
@@ -352,8 +392,12 @@ public sealed class CompanionManager : IAsyncDisposable, IDisposable
                 // Build history snapshot for the API call
                 var historySnapshot = _conversationHistory.ToList();
 
-                // Stream Claude's response and accumulate the full text
+                // Stream Claude's response, split into sentences, and pipeline TTS
                 var responseBuilder = new StringBuilder();
+                var tokenizer = new SentenceTokenizer();
+                var pipeline = new TtsPipeline(_ttsClient, ct);
+                var ttsStarted = false;
+
                 await foreach (var delta in _llmClient.SendAsync(
                     historySnapshot,
                     labeledScreens,
@@ -361,15 +405,52 @@ public sealed class CompanionManager : IAsyncDisposable, IDisposable
                     transcript,
                     ct).ConfigureAwait(false))
                 {
+                    if (firstLlmTokenMs < 0)
+                        firstLlmTokenMs = pipelineSw.ElapsedMilliseconds;
+
                     responseBuilder.Append(delta);
+
+                    // Feed delta to sentence tokenizer; enqueue complete sentences for TTS
+                    var sentences = tokenizer.Feed(delta);
+                    foreach (var sentence in sentences)
+                    {
+                        // Strip [POINT:...] tags from each sentence before speaking
+                        var cleaned = PointTagParser.Parse(sentence).SpokenText.Trim();
+                        if (string.IsNullOrWhiteSpace(cleaned)) continue;
+
+                        if (!ttsStarted)
+                        {
+                            ttsStarted = true;
+                            firstTtsEnqueueMs = pipelineSw.ElapsedMilliseconds;
+                            await _dispatcher.InvokeAsync(() => _viewModel.VoiceState = VoiceState.Responding);
+                        }
+                        pipeline.Enqueue(cleaned);
+                    }
                 }
+
+                // Flush any remaining text from the tokenizer
+                var remainder = tokenizer.Flush();
+                if (remainder is not null)
+                {
+                    var cleaned = PointTagParser.Parse(remainder).SpokenText.Trim();
+                    if (!string.IsNullOrWhiteSpace(cleaned))
+                    {
+                        if (!ttsStarted)
+                        {
+                            ttsStarted = true;
+                            await _dispatcher.InvokeAsync(() => _viewModel.VoiceState = VoiceState.Responding);
+                        }
+                        pipeline.Enqueue(cleaned);
+                    }
+                }
+
+                pipeline.Complete();
 
                 if (ct.IsCancellationRequested) return;
 
                 var fullResponse = responseBuilder.ToString();
 
-                // Parse [POINT:...] tags — extracts spoken text (tags stripped)
-                // and an optional PointDirective with screenshot-space coordinates.
+                // Parse [POINT:...] tags from the full response for the overlay cursor
                 var parseResult = PointTagParser.Parse(fullResponse);
                 var spokenText = parseResult.SpokenText;
 
@@ -401,12 +482,14 @@ public sealed class CompanionManager : IAsyncDisposable, IDisposable
                     }
                 }
 
-                // Play TTS if there's text to speak
-                if (!string.IsNullOrWhiteSpace(spokenText))
-                {
-                    await _dispatcher.InvokeAsync(() => _viewModel.VoiceState = VoiceState.Responding);
-                    await _ttsClient.SpeakAsync(spokenText, ct).ConfigureAwait(false);
-                }
+                // Wait for all queued TTS sentences to finish playing
+                await pipeline.WaitForCompletionAsync().ConfigureAwait(false);
+
+                // ── Latency report (US-029) ──
+                var totalMs = pipelineSw.ElapsedMilliseconds;
+                DebugLog.Write($"[LATENCY] key-release→first-LLM-token: {firstLlmTokenMs} ms | " +
+                    $"first-LLM-token→first-TTS-enqueue: {(firstTtsEnqueueMs >= 0 ? firstTtsEnqueueMs - firstLlmTokenMs : -1)} ms | " +
+                    $"total pipeline: {totalMs} ms");
             }
             catch (OperationCanceledException)
             {
@@ -453,6 +536,10 @@ public sealed class CompanionManager : IAsyncDisposable, IDisposable
         _responseCts?.Cancel();
         _responseCts?.Dispose();
         _responseCts = null;
+        _captureOnPressCts?.Cancel();
+        _captureOnPressCts?.Dispose();
+        _captureOnPressCts = null;
+        _captureOnPressTask = null;
         _ttsClient.StopPlayback();
     }
 
