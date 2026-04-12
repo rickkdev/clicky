@@ -429,3 +429,17 @@ Branch: ralph/windows-port (continues from the completed Windows port — see ar
   - `MediaFoundationEncoder` is NOT available as a transitive NAudio dependency — it's not in the NAudio 2.x core packages. Manual frame construction works for tests.
   - When using a linked `CancellationTokenSource`, the streaming method should own disposal of its own CTS; `StopPlayback()` only cancels (never disposes) to avoid races with the `using` block in the streaming method
 ---
+
+## 2026-04-12 - US-033
+- Added TLS warmup to `ElevenLabsTtsClient` — fires a background HEAD request to `https://api.elevenlabs.io` on first construction to pre-establish the TLS connection pool
+- Uses static lock + static bool flag (`_hasStartedTlsWarmup`) to ensure the warmup fires exactly once across all instances, matching the `AnthropicDirectClient` pattern exactly
+- Failures are silently swallowed — purely an optimization (100-300ms saving on first TTS request)
+- Added `ResetTlsWarmupForTesting()` internal static method for test isolation
+- Files changed:
+  - MODIFIED: `windows/src/Clicky.Api/ElevenLabsTtsClient.cs` — added static fields, `WarmUpTlsConnectionIfNeeded()`, `ResetTlsWarmupForTesting()`, constructor call
+  - MODIFIED: `windows/tests/Clicky.Tests/ElevenLabsTtsClientTests.cs` — added `Constructor_FiresHeadRequestToElevenLabsForTlsWarmup` test + `RecordingHttpMessageHandler`
+- Build: 0 warnings. Tests: 280 passed, 0 failed
+- **Learnings for future iterations:**
+  - The TLS warmup pattern is now used by both `AnthropicDirectClient` and `ElevenLabsTtsClient` — if a third provider is added, copy the same static lock + bool + HEAD pattern
+  - Static bool flags in tests need a reset method (`ResetTlsWarmupForTesting`) because xUnit runs tests in the same process — without it, only the first test to construct the client triggers warmup
+---

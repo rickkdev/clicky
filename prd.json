@@ -335,7 +335,7 @@
         "Commit all changes with message: feat: US-033 - TLS warmup for ElevenLabs TTS"
       ],
       "priority": 16,
-      "passes": false,
+      "passes": true,
       "notes": "Smallest story in this batch — should be under 30 lines of code. The Anthropic client already does this (US-018 preserved it from the original ClaudeClient). Copy the pattern exactly. Do NOT add warmup for AssemblyAI — the transcriber's WebSocket connection is established per-session and the token-fetch HTTP call is lightweight enough that the TLS handshake doesn't dominate."
     },
     {
