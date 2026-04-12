@@ -166,4 +166,83 @@ public class SentenceTokenizerTests
         var remainder = tokenizer.Flush();
         Assert.Equal("Line one\nline two", remainder);
     }
+
+    // --- Eager first-chunk tests (US-031) ---
+
+    [Fact]
+    public void Feed_EagerSplit_CommaAfter60Chars()
+    {
+        var tokenizer = new SentenceTokenizer();
+        // 65 chars before comma: "you'll want to open the color inspector in the top toolbar area"
+        var text = "you'll want to open the color inspector in the top toolbar area, then click the eyedropper";
+        var result = tokenizer.Feed(text);
+        Assert.Single(result);
+        Assert.Equal("you'll want to open the color inspector in the top toolbar area,", result[0]);
+
+        var remainder = tokenizer.Flush();
+        Assert.Equal("then click the eyedropper", remainder);
+    }
+
+    [Fact]
+    public void Feed_EagerSplit_EmDash()
+    {
+        var tokenizer = new SentenceTokenizer();
+        // em-dash after 60+ chars
+        var text = "you'll want to open the color inspector in the top right area \u2014 it's right up in the toolbar.";
+        var result = tokenizer.Feed(text);
+        // Should split at em-dash eagerly (first chunk) then at period
+        Assert.True(result.Count >= 1);
+        Assert.Contains("\u2014", result[0]);
+    }
+
+    [Fact]
+    public void Feed_EagerSplit_NoSplitUnder60Chars()
+    {
+        var tokenizer = new SentenceTokenizer();
+        // Short text with comma — should NOT eager-split
+        var result = tokenizer.Feed("yeah, sure thing");
+        Assert.Empty(result);
+
+        var remainder = tokenizer.Flush();
+        Assert.Equal("yeah, sure thing", remainder);
+    }
+
+    [Fact]
+    public void Feed_NormalBoundaryBeforeEagerThreshold()
+    {
+        var tokenizer = new SentenceTokenizer();
+        // Normal period boundary at < 60 chars fires first, sets _firstChunkEmitted
+        var result = tokenizer.Feed("Short sentence. Then a longer continuation with commas, and more text after that.");
+        Assert.True(result.Count >= 1);
+        Assert.Equal("Short sentence.", result[0]);
+    }
+
+    [Fact]
+    public void Feed_SecondSentence_UsesNormalBoundariesOnly()
+    {
+        var tokenizer = new SentenceTokenizer();
+        // First: emit via normal boundary
+        var r1 = tokenizer.Feed("First sentence is complete. ");
+        Assert.Single(r1);
+        Assert.Equal("First sentence is complete.", r1[0]);
+
+        // Second: long text with comma — should NOT eager-split (first chunk already emitted)
+        var r2 = tokenizer.Feed("Now the second sentence has a comma after sixty characters of accumulated text, but it should not split here");
+        Assert.Empty(r2);
+
+        var remainder = tokenizer.Flush();
+        Assert.NotNull(remainder);
+        Assert.Contains("comma", remainder);
+    }
+
+    [Fact]
+    public void Feed_PointTagNotCountedInEagerThreshold()
+    {
+        var tokenizer = new SentenceTokenizer();
+        // Text is ~40 visible chars + a long POINT tag. Without stripping the tag,
+        // total length > 60. With stripping, visible < 60 — should NOT eager-split.
+        var text = "click [POINT:1234,5678:save button:1] the save button there, and then proceed";
+        var result = tokenizer.Feed(text);
+        Assert.Empty(result);
+    }
 }
