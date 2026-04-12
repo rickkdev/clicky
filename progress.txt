@@ -377,3 +377,21 @@ Branch: ralph/windows-port (continues from the completed Windows port — see ar
   - The `SentenceTokenizer` false-positives on abbreviations like "Dr." are acceptable per PRD — a short extra TTS call is fine.
   - Latency numbers are only measurable with live API keys; the instrumentation logs to `%APPDATA%\Clicky\debug.log` for manual verification.
 ---
+
+## 2026-04-12 - US-030
+- Increased `MaxDimension` from 1280 to 2048 and lowered `JpegQuality` from 80 to 75 in `ScreenCapture.cs` for higher-resolution screenshots with partially offset payload size
+- Replaced `(int)` truncation with `(int)Math.Round(...)` in `CalculateScaledSize` to fix fractional-pixel dimension mismatches on ultrawide displays
+- Fixed off-by-one clamping in `PointTagParser.ConvertToScreenCoordinates` — coordinates are 0-indexed so max valid is `dimension - 1`
+- Updated test assertions in `ScreenCaptureTests` (1280→2048) and `PointTagParserTests` (clamping expected values)
+- Added new `CaptureAllScreensAsJpegAsync_MetadataMatchesActualJpegDimensions` test verifying `ScreenshotPixelWidth/Height` matches actual JPEG bitmap dimensions
+- Build: 0 warnings. Tests: 271 passed, 0 failed
+- Files changed:
+  - MODIFIED: `windows/src/Clicky.Capture/ScreenCapture.cs` — MaxDimension, JpegQuality, CalculateScaledSize rounding
+  - MODIFIED: `windows/src/Clicky.Pointing/PointTagParser.cs` — off-by-one clamping fix, comment update
+  - MODIFIED: `windows/tests/Clicky.Tests/ScreenCaptureTests.cs` — updated MaxDimension assertion, new metadata test
+  - MODIFIED: `windows/tests/Clicky.Tests/PointTagParserTests.cs` — updated clamping test expected values
+- **Learnings for future iterations:**
+  - `CalculateScaledSize` rounding matters for ultrawide aspect ratios — always use `Math.Round` not `(int)` cast for dimension calculations
+  - Coordinate clamping must use `dimension - 1` since coordinates are 0-indexed — this is easy to miss and causes edge-pixel offset
+  - The metadata-matches-JPEG test uses `System.Drawing.Bitmap` to decode and verify dimensions — this works on Windows targets but would need a different approach on cross-platform
+---

@@ -256,6 +256,104 @@
       "priority": 12,
       "passes": true,
       "notes": "Ship changes 1+2+3 as the core of this story — they compound. Change 4 is a trivial one-line win. Change 5 is optional. Sentence-boundary detection is a known tar pit; accept a simple `.!?` + newline heuristic, do not pull in a sentence-tokenizer library, and do not attempt to handle edge cases like `Dr. Smith` perfectly — if a false split causes a short extra TTS call, that is acceptable. Measure, don't guess: the baseline and post-fix numbers in progress.txt are the acceptance gate, not code review aesthetics."
+    },
+    {
+      "id": "US-030",
+      "title": "Higher-resolution screenshots for better pointer accuracy on all displays",
+      "description": "As a user on any display resolution, I want Clicky to send higher-resolution screenshots to the LLM so that the [POINT:x,y] coordinates it returns are more precise, and the blue cursor lands closer to the intended UI element.",
+      "acceptanceCriteria": [
+        "Increase `MaxDimension` from 1280 to 2048 in `windows/src/Clicky.Capture/ScreenCapture.cs:20`. This halves the coordinate error on 2560px displays and reduces it by 3× on 4K (3840px) displays — every pixel of LLM imprecision now maps to fewer physical pixels",
+        "Lower `JpegQuality` from 80 to 75 in `windows/src/Clicky.Capture/ScreenCapture.cs:21` to partially offset the larger image payload. At 2048px the JPEG is about 40-60% larger at quality 75 vs 1280px at quality 80, which is acceptable for broadband connections and stays well within Claude and GLM-4.6V's image size limits",
+        "Replace `(int)` truncation with `(int)Math.Round(...)` in `CalculateScaledSize` at `windows/src/Clicky.Capture/ScreenCapture.cs:377-378`. Current code `(int)(MaxDimension / aspect)` truncates fractional pixels — on ultrawide displays (e.g. 3440x1440, aspect 2.388) this causes a 1-pixel dimension mismatch between the reported `ScreenshotPixelWidth/Height` and the actual JPEG, which accumulates into a pointing offset at screen edges",
+        "Fix off-by-one clamping in `PointTagParser.ConvertToScreenCoordinates` at `windows/src/Clicky.Pointing/PointTagParser.cs:89-90`. Change `Math.Min(directive.X, target.ScreenshotPixelWidth)` to `Math.Min(directive.X, target.ScreenshotPixelWidth - 1)` and same for Y — coordinates are 0-indexed so the max valid coordinate is `dimension - 1`, not `dimension`",
+        "Update any test fixtures that assert `MaxDimension == 1280` to expect 2048. Grep for `1280` in `windows/tests/` to find them",
+        "These changes must improve accuracy on ALL display configurations, not just high-DPI: (a) standard 1920×1080 at 100% — screenshot is 1920×1080 (no resize needed, within 2048), improving precision from 1.5:1 to 1:1 compared to the old 1280px cap; (b) 2560×1440 at 100% — screenshot is 2048×1152 (1.25:1 instead of 2:1); (c) 3840×2160 at 150% — physical capture is 3840×2160, resized to 2048×1152 (1.875:1 instead of 3:1); (d) 3440×1440 ultrawide — resized to 2048×857 (1.68:1 instead of 2.69:1)",
+        "Regression: existing US-028 DPI tests and US-029 capture-on-press tests must still pass. The `ScreenshotPixelWidth/Height` metadata stored in `CapturedScreen` must still match the actual JPEG dimensions exactly — verify with a unit test that captures a known-size bitmap and checks the metadata",
+        "Build: 0 warnings. Tests: all pass",
+        "Commit all changes with message: feat: US-030 - Higher-resolution screenshots for pointer accuracy"
+      ],
+      "priority": 13,
+      "passes": true,
+      "notes": "This is the single highest-impact change for pointing accuracy. At 1280px, Claude is routinely off by 10-20 screenshot pixels, which maps to 20-60 physical pixels depending on the display. At 2048px the same 10-20 pixel error maps to 12-37 physical pixels — a 40-50% improvement with zero changes to the LLM prompting. The trade-off is slightly larger API payloads (~150KB vs ~100KB per screenshot), which adds 50-100ms on broadband but is negligible compared to the 500-2000ms LLM TTFT. Do NOT go above 2048 — larger images don't measurably improve vision model coordinate accuracy but do increase cost and latency."
+    },
+    {
+      "id": "US-031",
+      "title": "Eager first-chunk TTS to cut time-to-first-audio",
+      "description": "As a user, I want to hear the beginning of Clicky's response as fast as possible after I release the push-to-talk key, instead of waiting for the LLM to produce a complete sentence ending with a period before TTS starts.",
+      "acceptanceCriteria": [
+        "Add an eager first-chunk mode to `SentenceTokenizer` at `windows/src/Clicky.Companion/SentenceTokenizer.cs`. Add a private `bool _firstChunkEmitted = false` field. When `_firstChunkEmitted` is false and the buffer has accumulated at least 60 characters, `FindSentenceBoundary` additionally considers `,` (comma), `—` (em-dash, U+2014), `–` (en-dash, U+2013), `;` (semicolon), and `:` (colon) followed by a space as valid split points, in addition to the existing `.!?\\n\\n` boundaries",
+        "After the first chunk is emitted via the eager path, set `_firstChunkEmitted = true` and revert to the standard `.!?\\n\\n` sentence-boundary logic for all subsequent chunks — this prevents choppy playback after the initial response",
+        "The 60-character minimum prevents pathological splits on very short opening phrases like `yeah,` or `sure,` — these should buffer until a normal sentence boundary or the eager threshold is hit",
+        "Example: Claude streams `you'll want to open the color inspector — it's right up in the top right area of the toolbar.` The old tokenizer waits for the final `.` (entire sentence). The new tokenizer emits `you'll want to open the color inspector` at the em-dash after ~45 tokens, then `it's right up in the top right area of the toolbar.` at the period. Estimated savings: 500-1500ms off first-audio latency depending on LLM token rate",
+        "Edge case: if the first `.!?` arrives before the buffer hits 60 chars, the normal sentence boundary fires first and `_firstChunkEmitted` is set — no double-split risk",
+        "Edge case: [POINT:...] tags must not be counted toward the 60-char threshold. Strip point tags from the length check (not from the actual text — stripping happens downstream in CompanionManager)",
+        "Unit tests: (a) eager split on comma after 60+ chars, (b) eager split on em-dash, (c) no eager split when buffer < 60 chars (waits for normal boundary), (d) normal `.!?` boundary still fires if it comes before 60 chars, (e) second sentence uses normal boundaries only (no mid-comma splits), (f) `[POINT:...]` tag not counted in threshold",
+        "This improvement works identically on all hardware — it is pure text-processing logic with no OS, DPI, or device dependencies",
+        "Build: 0 warnings. Tests: all pass",
+        "Commit all changes with message: feat: US-031 - Eager first-chunk TTS splitting"
+      ],
+      "priority": 14,
+      "passes": false,
+      "notes": "This pairs with US-032 (streaming MP3 playback). Together they cut 800-2300ms from first-audio latency. Alone, this saves 500-1500ms because the TTS request fires earlier. Do NOT reduce the 60-char threshold below 50 — very short TTS chunks sound robotic and are wasteful (ElevenLabs has per-request overhead). Do NOT add clause-level splitting for sentences after the first — it makes the voice choppy. The first sentence is the only one where latency matters more than naturalness."
+    },
+    {
+      "id": "US-032",
+      "title": "True streaming MP3 playback for TTS",
+      "description": "As a user, I want Clicky to start playing the TTS audio as soon as the first MP3 frames arrive from ElevenLabs, instead of waiting for the entire MP3 file to download before playback begins.",
+      "acceptanceCriteria": [
+        "Rewrite `PlayStreamingMp3Async` in `windows/src/Clicky.Api/ElevenLabsTtsClient.cs:98-157`. Currently the method downloads the entire MP3 into a `MemoryStream`, then creates an `Mp3FileReader` and plays. The new implementation must start playback after the first few MP3 frames are decoded, while the HTTP download continues in parallel",
+        "Implementation approach: (a) create a `BufferedWaveProvider` at 44100 Hz stereo (or whatever format the first `Mp3Frame` reports) with a buffer of ~5 seconds; (b) start `WaveOutEvent`/`WasapiOut` playing from the `BufferedWaveProvider` immediately; (c) in a loop, read chunks from the HTTP response stream, decode MP3 frames using `Mp3Frame.LoadFromStream` + `IMp3FrameDecompressor` (NAudio's `AcmMp3FrameDecompressor`), and add decoded PCM to the `BufferedWaveProvider`; (d) when the HTTP stream ends, wait for the `BufferedWaveProvider` to drain (playback completes)",
+        "The `BufferedWaveProvider.ReadFully` property must be set to `true` so it returns silence instead of stalling when the HTTP stream is temporarily slower than playback — this prevents audio glitches on slow connections",
+        "Handle format detection: the first `Mp3Frame` determines the sample rate and channel count. Create the `BufferedWaveProvider` and `IMp3FrameDecompressor` after the first frame is decoded, not before",
+        "Preserve the existing `StopPlayback()` semantics: calling `StopPlayback()` mid-stream must (a) stop the `WaveOutEvent`/`WasapiOut`, (b) cancel the HTTP download loop, and (c) dispose all resources. Use the existing `_lock` for thread safety",
+        "Preserve the existing `IsPlaying` property: return true while the `WaveOutEvent` is in `PlaybackState.Playing`",
+        "Preserve the WasapiOut path for specific output devices (`_outputDeviceId`): the `CreateWavePlayer` helper is unchanged, the only difference is what `IWaveProvider` is passed to `Init()` — `BufferedWaveProvider` instead of `Mp3FileReader`",
+        "Estimated latency savings: 300-800ms per TTS sentence. The old path waited for the full MP3 download (typically 300-800ms for a 1-2 sentence chunk at ElevenLabs' output rate). The new path starts playback after ~2-3 MP3 frames (~50-100ms of audio data)",
+        "This works on all Windows machines — NAudio's `Mp3Frame` and `AcmMp3FrameDecompressor` use the ACM codec that ships with every Windows installation since Vista. No additional codec or library is required",
+        "Unit test: mock HTTP stream that feeds MP3 data in 1KB chunks with 50ms delays. Verify `IsPlaying` becomes true before all chunks are delivered (proving playback started during download). Use a real short MP3 fixture (generate one with NAudio or include a ~1s test file)",
+        "Cancellation test: start streaming playback, cancel after 200ms — verify no resource leaks (all disposed within 1s)",
+        "Build: 0 warnings. Tests: all pass",
+        "Commit all changes with message: feat: US-032 - True streaming MP3 playback for TTS"
+      ],
+      "priority": 15,
+      "passes": false,
+      "notes": "The current `PlayStreamingMp3Async` already has the scaffolding for streaming (the `playbackStarted` flag, the `startPlaybackThreshold` constant) but the comment at line 126-128 says 'For simplicity we'll wait for the full download since NAudio's Mp3FileReader needs seekable streams.' The fix is to bypass `Mp3FileReader` entirely and decode frame-by-frame with `Mp3Frame` + `AcmMp3FrameDecompressor` into a `BufferedWaveProvider`. This is a well-documented NAudio pattern. Do NOT pull in MediaFoundation or any external codec — the built-in ACM MP3 decoder is universally available and sufficient."
+    },
+    {
+      "id": "US-033",
+      "title": "TLS warmup for ElevenLabs to eliminate first-request handshake delay",
+      "description": "As a user, I want the first TTS request to ElevenLabs to be as fast as subsequent ones, by pre-establishing the TLS connection at app startup instead of paying the handshake cost on the first push-to-talk turn.",
+      "acceptanceCriteria": [
+        "Add a `WarmUpTlsConnectionIfNeeded` method to `ElevenLabsTtsClient` at `windows/src/Clicky.Api/ElevenLabsTtsClient.cs`, following the exact same pattern as `AnthropicDirectClient.WarmUpTlsConnectionIfNeeded` at `windows/src/Clicky.Api/AnthropicDirectClient.cs:182-204`",
+        "Use a static lock + static bool flag (`_hasStartedTlsWarmup`) to ensure the warmup HEAD request fires exactly once across all `ElevenLabsTtsClient` instances, same as the Anthropic pattern",
+        "The warmup fires `Task.Run(async () => { HEAD https://api.elevenlabs.io })` on construction. The HEAD request uses the existing `_httpClient` instance so the connection pool is shared with subsequent TTS requests. Set `ConnectionClose = false` to keep the connection alive",
+        "Failures are silently swallowed (try/catch around the whole warmup) — this is purely an optimization, not a requirement. A failed warmup just means the first TTS call pays the full TLS handshake",
+        "Estimated savings: 100-300ms on the first TTS request. Subsequent requests reuse the pooled connection regardless",
+        "This works on all networks and all Windows configurations — it's a standard HTTP optimization with no OS-specific dependencies",
+        "Unit test: construct `ElevenLabsTtsClient` with a `FakeHttpMessageHandler`, verify that a HEAD request to `https://api.elevenlabs.io` is made within 1 second of construction",
+        "Build: 0 warnings. Tests: all pass",
+        "Commit all changes with message: feat: US-033 - TLS warmup for ElevenLabs TTS"
+      ],
+      "priority": 16,
+      "passes": false,
+      "notes": "Smallest story in this batch — should be under 30 lines of code. The Anthropic client already does this (US-018 preserved it from the original ClaudeClient). Copy the pattern exactly. Do NOT add warmup for AssemblyAI — the transcriber's WebSocket connection is established per-session and the token-fetch HTTP call is lightweight enough that the TLS handshake doesn't dominate."
+    },
+    {
+      "id": "US-034",
+      "title": "Version bump to 1.1.0 for accuracy + latency improvements",
+      "description": "As a user, I want the version number to reflect that meaningful improvements to pointer accuracy and response latency have shipped, so I can confirm I'm running the updated build.",
+      "acceptanceCriteria": [
+        "Bump `<Version>` from `1.0.0` to `1.1.0` in `windows/src/Clicky.App/Clicky.App.csproj`",
+        "Verify that `VersionInfo.Current` (from US-027) returns `1.1.0` — run the existing unit test or add a quick assertion if one doesn't exist",
+        "Verify tray tooltip shows `Clicky 1.1.0` (hover the tray icon), tray context menu shows `Version 1.1.0` (right-click), and Settings window footer shows `Clicky 1.1.0`",
+        "If the Inno Setup installer script at `windows/scripts/clicky-installer.iss` has a hardcoded version string, update it to `1.1.0` as well",
+        "This story must only be committed AFTER US-030, US-031, US-032, and US-033 have all passed — it is the final seal on the accuracy + latency improvement batch",
+        "Build: 0 warnings. Tests: all pass",
+        "Commit all changes with message: chore: US-034 - Bump version to 1.1.0"
+      ],
+      "priority": 17,
+      "passes": false,
+      "notes": "Tiny story — a single line change in the csproj plus verification. The version bump signals to users (especially those using auto-update from US-017) that the accuracy and latency improvements from US-030 through US-033 have landed. Do not bump to 2.0.0 — these are enhancements, not breaking changes."
     }
   ]
 }

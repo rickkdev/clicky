@@ -17,8 +17,8 @@ namespace Clicky.Capture;
 /// </summary>
 public static class ScreenCapture
 {
-    private const int MaxDimension = 1280;
-    private const long JpegQuality = 80;
+    private const int MaxDimension = 2048;
+    private const long JpegQuality = 75;
 
     /// <summary>
     /// Captures every connected display as a JPEG image.
@@ -373,9 +373,9 @@ public static class ScreenCapture
         double aspect = (double)nativeW / nativeH;
 
         if (nativeW >= nativeH)
-            return (MaxDimension, (int)(MaxDimension / aspect));
+            return (MaxDimension, (int)Math.Round(MaxDimension / aspect));
         else
-            return ((int)(MaxDimension * aspect), MaxDimension);
+            return ((int)Math.Round(MaxDimension * aspect), MaxDimension);
     }
 
     /// <summary>

@@ -1,3 +1,5 @@
+using System.Drawing;
+using System.IO;
 using Clicky.Capture;
 using Xunit;
 
@@ -45,7 +47,7 @@ public class ScreenCaptureTests
             Assert.NotEmpty(s.Label);
             Assert.True(s.ScreenshotPixelWidth > 0);
             Assert.True(s.ScreenshotPixelHeight > 0);
-            Assert.True(s.ScreenshotPixelWidth <= 1280 || s.ScreenshotPixelHeight <= 1280);
+            Assert.True(s.ScreenshotPixelWidth <= 2048 || s.ScreenshotPixelHeight <= 2048);
             Assert.True(s.DisplayBounds.Width > 0);
         });
     }
@@ -70,6 +72,21 @@ public class ScreenCaptureTests
             Assert.Equal(0xFF, screen.ImageBytes[0]);
             Assert.Equal(0xD8, screen.ImageBytes[1]);
             Assert.Equal(0xFF, screen.ImageBytes[2]);
+        }
+    }
+
+    [Fact]
+    public async Task CaptureAllScreensAsJpegAsync_MetadataMatchesActualJpegDimensions()
+    {
+        var screens = await ScreenCapture.CaptureAllScreensAsJpegAsync();
+
+        foreach (var screen in screens)
+        {
+            using var ms = new MemoryStream(screen.ImageBytes);
+            using var bitmap = new Bitmap(ms);
+
+            Assert.Equal(bitmap.Width, screen.ScreenshotPixelWidth);
+            Assert.Equal(bitmap.Height, screen.ScreenshotPixelHeight);
         }
     }
 }

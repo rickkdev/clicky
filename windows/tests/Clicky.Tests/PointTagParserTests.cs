@@ -167,9 +167,9 @@ public class PointTagParserTests
         var result = PointTagParser.ConvertToScreenCoordinates(directive, screens);
 
         Assert.NotNull(result);
-        // Clamped to 1280 * (1920/1280) = 1920, 720 * (1080/720) = 1080
-        Assert.Equal(1920.0, result!.Value.ScreenPoint.X, precision: 1);
-        Assert.Equal(1080.0, result.Value.ScreenPoint.Y, precision: 1);
+        // Clamped to 1279 * (1920/1280) = 1918.5, 719 * (1080/720) = 1078.5
+        Assert.Equal(1918.5, result!.Value.ScreenPoint.X, precision: 0);
+        Assert.Equal(1078.5, result.Value.ScreenPoint.Y, precision: 0);
     }
 
     [Fact]

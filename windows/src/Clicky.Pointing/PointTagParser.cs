@@ -86,11 +86,11 @@ public static partial class PointTagParser
         target ??= screens.FirstOrDefault(s => s.IsCursorScreen) ?? screens[0];
 
         // Clamp coordinates to screenshot bounds
-        var clampedX = Math.Max(0, Math.Min(directive.X, target.ScreenshotPixelWidth));
-        var clampedY = Math.Max(0, Math.Min(directive.Y, target.ScreenshotPixelHeight));
+        var clampedX = Math.Max(0, Math.Min(directive.X, target.ScreenshotPixelWidth - 1));
+        var clampedY = Math.Max(0, Math.Min(directive.Y, target.ScreenshotPixelHeight - 1));
 
         // Scale from screenshot pixels to display pixels
-        // (screenshot may have been resized to 1280px max edge)
+        // (screenshot may have been resized to 2048px max edge)
         var scaleX = (double)target.DisplayBounds.Width / target.ScreenshotPixelWidth;
         var scaleY = (double)target.DisplayBounds.Height / target.ScreenshotPixelHeight;
 
