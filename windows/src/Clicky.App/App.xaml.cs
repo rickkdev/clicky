@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -14,6 +15,7 @@ namespace Clicky.App;
 
 public partial class App : Application
 {
+    private static Mutex? _singleInstanceMutex;
     private TrayIconManager? _trayIconManager;
     private CompanionPanelWindow? _companionPanel;
     private CompanionViewModel? _companionViewModel;
@@ -28,6 +30,14 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+
+        // Single-instance guard: if another Clicky is already running, exit immediately.
+        _singleInstanceMutex = new Mutex(true, "Global\\ClickyAppSingleInstance", out bool createdNew);
+        if (!createdNew)
+        {
+            Shutdown();
+            return;
+        }
 
         // Create the hidden host window (no taskbar entry, invisible).
         var mainWindow = new MainWindow();
@@ -426,6 +436,14 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        // Hard deadline: force-kill the process after 3s no matter what.
+        // This runs on a thread-pool thread so a blocked UI thread can't prevent it.
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(3000);
+            Environment.Exit(0);
+        });
+
         // 1. Stop timers and analytics first (no async work).
         _permissionPollTimer?.Stop();
         _permissionPollTimer = null;
@@ -439,7 +457,7 @@ public partial class App : Application
         if (_companionManager is not null)
         {
             _companionManager.OpenSettingsRequested -= OnPipelineKeyError;
-            _companionManager.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(2));
+            try { _companionManager.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(2)); } catch { }
             _companionManager = null;
         }
 
@@ -451,21 +469,25 @@ public partial class App : Application
         _pushToTalkHook?.Dispose();
         _pushToTalkHook = null;
 
-        // 5. Dispose tray icon.
+        // 5. Dispose tray icon (must happen on UI thread to avoid ghost icons).
         if (_trayIconManager is not null)
         {
             _trayIconManager.TrayIconClicked -= OnTrayIconClicked;
             _trayIconManager.SettingsClicked -= OnSettingsClicked;
             _trayIconManager.ModelSelected -= OnModelSelected;
             _trayIconManager.Dispose();
+            _trayIconManager = null;
         }
         _companionPanel?.Close();
+
+        // Release single-instance mutex so a new launch can acquire it.
+        _singleInstanceMutex?.ReleaseMutex();
+        _singleInstanceMutex?.Dispose();
+
         base.OnExit(e);
 
-        // Safety net: if any foreground thread is still alive after disposal,
-        // force-exit to prevent the process from lingering in Task Manager.
-        // This should not be needed — the dispose chain above should handle
-        // everything — but it prevents edge cases from keeping the process alive.
-        Task.Delay(500).ContinueWith(_ => Environment.Exit(0));
+        // Explicit exit — don't rely on WPF's natural shutdown which can stall
+        // if any foreground thread is still alive.
+        Environment.Exit(0);
     }
 }
