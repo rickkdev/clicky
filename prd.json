@@ -293,7 +293,7 @@
         "Commit all changes with message: feat: US-031 - Eager first-chunk TTS splitting"
       ],
       "priority": 14,
-      "passes": false,
+      "passes": true,
       "notes": "This pairs with US-032 (streaming MP3 playback). Together they cut 800-2300ms from first-audio latency. Alone, this saves 500-1500ms because the TTS request fires earlier. Do NOT reduce the 60-char threshold below 50 — very short TTS chunks sound robotic and are wasteful (ElevenLabs has per-request overhead). Do NOT add clause-level splitting for sentences after the first — it makes the voice choppy. The first sentence is the only one where latency matters more than naturalness."
     },
     {

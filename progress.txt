@@ -395,3 +395,18 @@ Branch: ralph/windows-port (continues from the completed Windows port — see ar
   - Coordinate clamping must use `dimension - 1` since coordinates are 0-indexed — this is easy to miss and causes edge-pixel offset
   - The metadata-matches-JPEG test uses `System.Drawing.Bitmap` to decode and verify dimensions — this works on Windows targets but would need a different approach on cross-platform
 ---
+
+## 2026-04-12 - US-031
+- Implemented eager first-chunk TTS splitting in `SentenceTokenizer`
+- Added `_firstChunkEmitted` flag and `FindEagerClauseBoundary` method that considers clause-level punctuation (comma, em-dash, en-dash, semicolon, colon) as split points when buffer >= 60 visible characters
+- After first chunk emits, reverts to standard `.!?\n\n` boundaries only
+- `[POINT:...]` tags stripped from character count via regex (not from actual text)
+- Files changed:
+  - MODIFIED: `windows/src/Clicky.Companion/SentenceTokenizer.cs` — added eager first-chunk mode with clause-level splitting
+  - MODIFIED: `windows/tests/Clicky.Tests/SentenceTokenizerTests.cs` — 6 new tests for eager behavior
+- Build: 0 warnings. Tests: 277 passed, 0 failed (6 new)
+- **Learnings for future iterations:**
+  - `FindSentenceBoundary` is called in a loop by `Feed()` — eager logic must be in a separate method to keep the normal path clean and avoid re-checking the eager flag on every iteration
+  - The 60-char threshold check must be done at the candidate split position, not just on total buffer length, to avoid splitting before enough visible text has accumulated
+  - `_firstChunkEmitted` is set when ANY chunk (eager or normal) is emitted — the normal `.!?` path also sets it, preventing eager splits after a short first sentence
+---
