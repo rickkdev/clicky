@@ -12,6 +12,11 @@ namespace Clicky.Api;
 /// </summary>
 public class ElevenLabsTtsClient : IDisposable
 {
+    private static readonly Uri ApiBaseUri = new("https://api.elevenlabs.io");
+
+    private static readonly object TlsWarmupLock = new();
+    private static bool _hasStartedTlsWarmup;
+
     private readonly HttpClient _httpClient;
     private readonly string _ttsUrl;
     private readonly string _apiKey;
@@ -42,6 +47,47 @@ public class ElevenLabsTtsClient : IDisposable
         _ttsUrl = $"https://api.elevenlabs.io/v1/text-to-speech/{Uri.EscapeDataString(voiceId)}/stream";
         _outputDeviceId = outputDeviceId;
         _httpClient = httpClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+
+        WarmUpTlsConnectionIfNeeded();
+    }
+
+    /// <summary>
+    /// Fires a HEAD request to pre-establish TLS, mirroring
+    /// <see cref="AnthropicDirectClient.WarmUpTlsConnectionIfNeeded"/>.
+    /// </summary>
+    private void WarmUpTlsConnectionIfNeeded()
+    {
+        lock (TlsWarmupLock)
+        {
+            if (_hasStartedTlsWarmup) return;
+            _hasStartedTlsWarmup = true;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                using var req = new HttpRequestMessage(HttpMethod.Head, ApiBaseUri);
+                req.Headers.ConnectionClose = false;
+                await _httpClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead)
+                    .ConfigureAwait(false);
+            }
+            catch
+            {
+                // Failure is fine — this is purely an optimization
+            }
+        });
+    }
+
+    /// <summary>
+    /// Resets the warmup flag so it can fire again. Only used by tests.
+    /// </summary>
+    internal static void ResetTlsWarmupForTesting()
+    {
+        lock (TlsWarmupLock)
+        {
+            _hasStartedTlsWarmup = false;
+        }
     }
 
     /// <summary>

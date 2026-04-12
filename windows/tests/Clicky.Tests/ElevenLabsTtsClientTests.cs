@@ -9,6 +9,25 @@ namespace Clicky.Tests;
 public class ElevenLabsTtsClientTests
 {
     [Fact]
+    public async Task Constructor_FiresHeadRequestToElevenLabsForTlsWarmup()
+    {
+        ElevenLabsTtsClient.ResetTlsWarmupForTesting();
+
+        var handler = new RecordingHttpMessageHandler();
+        var httpClient = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
+        using var client = new ElevenLabsTtsClient("test-key", "test-voice-id", httpClient);
+
+        // Wait up to 1 second for the background warmup HEAD request
+        for (int i = 0; i < 20 && handler.Requests.Count == 0; i++)
+            await Task.Delay(50);
+
+        Assert.Single(handler.Requests);
+        var req = handler.Requests[0];
+        Assert.Equal(HttpMethod.Head, req.Method);
+        Assert.Equal("https://api.elevenlabs.io/", req.RequestUri!.ToString());
+    }
+
+    [Fact]
     public void IsPlaying_WhenNoPlayback_ReturnsFalse()
     {
         using var client = new ElevenLabsTtsClient("test-key", "test-voice-id");
@@ -275,6 +294,18 @@ public class ElevenLabsTtsClientTests
         {
             CapturedRequest = request;
             return Task.FromResult(response);
+        }
+    }
+
+    private sealed class RecordingHttpMessageHandler : HttpMessageHandler
+    {
+        public List<HttpRequestMessage> Requests { get; } = new();
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Requests.Add(request);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
         }
     }
 }
