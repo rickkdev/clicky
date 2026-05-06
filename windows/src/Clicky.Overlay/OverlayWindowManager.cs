@@ -20,7 +20,9 @@ public sealed class OverlayWindowManager : IDisposable
     private DispatcherTimer? _pointingReturnTimer;
     private OverlayPointTarget? _lastSequenceTarget;
     private bool _disposed;
-    private const double PointingReturnSeconds = 3.8;
+    // Must exceed BlueCursorControl's max flight + linger + fade path so
+    // PointingCompleted can advance multi-target sequences before fallback cleanup.
+    private const double PointingReturnSeconds = 6.5;
 
     private static readonly PointerDebugOptions CalibrationOptions = new()
     {
