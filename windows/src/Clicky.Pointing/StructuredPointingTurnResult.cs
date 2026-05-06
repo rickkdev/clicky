@@ -8,6 +8,8 @@ public enum PointIntentKind
 {
     None,
     Point,
+    Circle,
+    Arrow,
 }
 
 public sealed record PointIntent
@@ -15,6 +17,11 @@ public sealed record PointIntent
     public required PointIntentKind Kind { get; init; }
     public int? X { get; init; }
     public int? Y { get; init; }
+    public int? X1 { get; init; }
+    public int? Y1 { get; init; }
+    public int? X2 { get; init; }
+    public int? Y2 { get; init; }
+    public int? Radius { get; init; }
     public int? ScreenNumber { get; init; }
     public string? Label { get; init; }
     public string? NoPointReason { get; init; }
@@ -31,6 +38,26 @@ public sealed record PointingTurnResult
     public required string SpokenText { get; init; }
     public required PointIntent PointIntent { get; init; }
     public IReadOnlyList<PointIntent> PointIntents { get; init; } = [];
+}
+
+public enum DrawingDirectiveKind
+{
+    Circle,
+    Arrow,
+}
+
+public sealed record DrawingDirective
+{
+    public required DrawingDirectiveKind Kind { get; init; }
+    public required int ScreenNumber { get; init; }
+    public required string Label { get; init; }
+    public int X { get; init; }
+    public int Y { get; init; }
+    public int Radius { get; init; }
+    public int X1 { get; init; }
+    public int Y1 { get; init; }
+    public int X2 { get; init; }
+    public int Y2 { get; init; }
 }
 
 public static class StructuredPointingTurnParser
@@ -108,6 +135,77 @@ public static class StructuredPointingTurnParser
         return directives;
     }
 
+    public static IReadOnlyList<DrawingDirective> ToDrawingDirectives(
+        IReadOnlyList<PointIntent> intents,
+        IReadOnlyList<CapturedScreen> screens,
+        int maxDirectives = 5)
+    {
+        var directives = new List<DrawingDirective>();
+        foreach (var intent in intents)
+        {
+            if (directives.Count >= maxDirectives)
+                break;
+
+            var directive = ToDrawingDirective(intent, screens);
+            if (directive is not null)
+                directives.Add(directive);
+        }
+
+        return directives;
+    }
+
+    public static DrawingDirective? ToDrawingDirective(PointIntent intent, IReadOnlyList<CapturedScreen> screens)
+    {
+        if (intent.Kind is not (PointIntentKind.Circle or PointIntentKind.Arrow))
+            return null;
+
+        var targetScreen = SelectScreen(intent.ScreenNumber, screens);
+        if (targetScreen is null)
+            return null;
+
+        var screenNumber = intent.ScreenNumber ?? (IndexOfScreen(targetScreen, screens) + 1);
+        var label = string.IsNullOrWhiteSpace(intent.Label) ? "target" : intent.Label.Trim();
+
+        if (intent.Kind == PointIntentKind.Circle)
+        {
+            if (intent.X is not { } x || intent.Y is not { } y)
+                return null;
+
+            if (!IsInside(x, y, targetScreen) || intent.Radius is not { } radius || radius <= 0)
+                return null;
+
+            return new DrawingDirective
+            {
+                Kind = DrawingDirectiveKind.Circle,
+                ScreenNumber = screenNumber,
+                Label = label,
+                X = x,
+                Y = y,
+                Radius = radius,
+            };
+        }
+
+        if (intent.X1 is not { } x1 || intent.Y1 is not { } y1 ||
+            intent.X2 is not { } x2 || intent.Y2 is not { } y2)
+        {
+            return null;
+        }
+
+        if (!IsInside(x1, y1, targetScreen) || !IsInside(x2, y2, targetScreen))
+            return null;
+
+        return new DrawingDirective
+        {
+            Kind = DrawingDirectiveKind.Arrow,
+            ScreenNumber = screenNumber,
+            Label = label,
+            X1 = x1,
+            Y1 = y1,
+            X2 = x2,
+            Y2 = y2,
+        };
+    }
+
     public static SemanticPointingEvaluationResult EvaluateFixture(
         SemanticPointingFixture fixture,
         PointingTurnResult result)
@@ -181,7 +279,9 @@ public static class StructuredPointingTurnParser
     private static PointIntent ParsePointIntentObject(JsonElement intentElement)
     {
         var kind = ReadString(intentElement, "kind");
-        if (!string.Equals(kind, "point", StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(kind, "point", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(kind, "circle", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(kind, "arrow", StringComparison.OrdinalIgnoreCase))
         {
             return PointIntent.None(ReadString(intentElement, "reason")
                 ?? ReadString(intentElement, "noPointReason")
@@ -195,16 +295,43 @@ public static class StructuredPointingTurnParser
             return PointIntent.None("unsafe_low_confidence");
         }
 
-        var x = ReadInt(intentElement, "x");
-        var y = ReadInt(intentElement, "y");
-        if (x is null || y is null)
-            return PointIntent.None("missing_coordinates");
+        if (string.Equals(kind, "point", StringComparison.OrdinalIgnoreCase))
+        {
+            var x = ReadInt(intentElement, "x");
+            var y = ReadInt(intentElement, "y");
+            if (x is null || y is null)
+                return PointIntent.None("missing_coordinates");
+
+            return new PointIntent
+            {
+                Kind = PointIntentKind.Point,
+                X = x,
+                Y = y,
+                ScreenNumber = ReadInt(intentElement, "screen") ?? ReadInt(intentElement, "screenNumber"),
+                Label = ReadString(intentElement, "label"),
+            };
+        }
+
+        if (string.Equals(kind, "circle", StringComparison.OrdinalIgnoreCase))
+        {
+            return new PointIntent
+            {
+                Kind = PointIntentKind.Circle,
+                X = ReadInt(intentElement, "x"),
+                Y = ReadInt(intentElement, "y"),
+                Radius = ReadInt(intentElement, "radius"),
+                ScreenNumber = ReadInt(intentElement, "screen") ?? ReadInt(intentElement, "screenNumber"),
+                Label = ReadString(intentElement, "label"),
+            };
+        }
 
         return new PointIntent
         {
-            Kind = PointIntentKind.Point,
-            X = x,
-            Y = y,
+            Kind = PointIntentKind.Arrow,
+            X1 = ReadInt(intentElement, "x1") ?? ReadInt(intentElement, "fromX"),
+            Y1 = ReadInt(intentElement, "y1") ?? ReadInt(intentElement, "fromY"),
+            X2 = ReadInt(intentElement, "x2") ?? ReadInt(intentElement, "toX"),
+            Y2 = ReadInt(intentElement, "y2") ?? ReadInt(intentElement, "toY"),
             ScreenNumber = ReadInt(intentElement, "screen") ?? ReadInt(intentElement, "screenNumber"),
             Label = ReadString(intentElement, "label"),
         };
@@ -244,6 +371,23 @@ public static class StructuredPointingTurnParser
         {
             return false;
         }
+    }
+
+    private static bool IsInside(int x, int y, CapturedScreen screen) =>
+        x >= 0 &&
+        y >= 0 &&
+        x < screen.ScreenshotPixelWidth &&
+        y < screen.ScreenshotPixelHeight;
+
+    private static int IndexOfScreen(CapturedScreen target, IReadOnlyList<CapturedScreen> screens)
+    {
+        for (var i = 0; i < screens.Count; i++)
+        {
+            if (ReferenceEquals(screens[i], target))
+                return i;
+        }
+
+        return 0;
     }
 
     private static string StripCodeFence(string text)

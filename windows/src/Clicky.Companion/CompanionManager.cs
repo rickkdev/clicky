@@ -135,6 +135,28 @@ public sealed class CompanionManager : IAsyncDisposable, IDisposable
         - keep each label short and specific, because it appears next to the pointer.
         """;
 
+    public static readonly string GamerModeStructuredPointingSystemPrompt = """
+        you're clicky, a gamer-mode voice companion that can see the user's screen. return only one json object. do not use markdown.
+
+        schema:
+        {"spokenText":"short natural sentence for text-to-speech","pointIntents":[{"kind":"circle","x":0,"y":0,"radius":48,"screen":1,"label":"target","confidence":"high"},{"kind":"arrow","x1":0,"y1":0,"x2":120,"y2":80,"screen":1,"label":"direction","confidence":"high"}]}
+        or:
+        {"spokenText":"short natural sentence for text-to-speech","pointIntents":[{"kind":"none","reason":"not_visible"}]}
+
+        rules:
+        - gamer mode can draw temporary annotations over the game. prefer circles and arrows over the pointer.
+        - use a circle to highlight a unit, item, enemy, minimap area, lane spot, button, or other visible region.
+        - use an arrow to show direction, pathing, rotation, camera movement, or where pressure should move.
+        - use one to three annotations unless the user asks for more.
+        - only draw what is visible and unambiguous in the screenshot.
+        - coordinates are screenshot pixels with origin at the top-left of the selected image. x increases rightward, y increases downward.
+        - for circles, x and y are the center and radius is in screenshot pixels.
+        - for arrows, x1,y1 is the tail and x2,y2 is the arrow tip.
+        - if unsure, return kind "none". a skipped drawing is better than a wrong drawing.
+        - confidence must be "high" for every circle or arrow. use "none" for low confidence.
+        - spokenText should explain the annotation briefly, without mentioning json or coordinates.
+        """;
+
     /// <summary>
     /// Raised when the pipeline encounters a key-related error (401, empty key)
     /// that requires the user to open Settings and fix their configuration.
@@ -680,11 +702,16 @@ public sealed class CompanionManager : IAsyncDisposable, IDisposable
         bool firstTtsEnqueueSeen,
         bool firstTtsPlaybackSeen)
     {
-        timing.Mark("llm-request-start", $"history={historySnapshot.Count} screens={labeledScreens.Count} protocol=structured-pointing");
+        var gamerModeEnabled = _viewModel.GamerModeEnabled;
+        var systemPrompt = gamerModeEnabled
+            ? GamerModeStructuredPointingSystemPrompt
+            : StructuredPointingSystemPrompt;
+
+        timing.Mark("llm-request-start", $"history={historySnapshot.Count} screens={labeledScreens.Count} protocol={(gamerModeEnabled ? "gamer-drawing" : "structured-pointing")}");
         await foreach (var delta in _llmClient.SendAsync(
             historySnapshot,
             labeledScreens,
-            KnowledgeContextProvider.BuildPrompt(StructuredPointingSystemPrompt),
+            KnowledgeContextProvider.BuildPrompt(systemPrompt),
             transcript,
             ct).ConfigureAwait(false))
         {
@@ -702,9 +729,12 @@ public sealed class CompanionManager : IAsyncDisposable, IDisposable
 
         var result = StructuredPointingTurnParser.Parse(responseBuilder.ToString());
         var directives = StructuredPointingTurnParser.ToDirectives(result.PointIntents, screens);
+        var drawingDirectives = gamerModeEnabled
+            ? StructuredPointingTurnParser.ToDrawingDirectives(result.PointIntents, screens)
+            : [];
         var directive = directives.FirstOrDefault();
         timing.Mark("point-parse", directives.Count == 0
-            ? $"kind={result.PointIntent.Kind} reason={result.PointIntent.NoPointReason ?? "none"}"
+            ? $"kind={result.PointIntent.Kind} drawings={drawingDirectives.Count} reason={result.PointIntent.NoPointReason ?? "none"}"
             : $"points={directives.Count} first={TurnTimingRecord.FormatPointDirective(directive)}");
 
         if (directive is { } dir)
@@ -722,7 +752,14 @@ public sealed class CompanionManager : IAsyncDisposable, IDisposable
             _conversationHistory.RemoveRange(0, _conversationHistory.Count - MaxConversationHistory);
         }
 
-        if (directives.Count > 0 && (_overlayManager is not null || _overlayFlyTo is not null))
+        if (gamerModeEnabled && drawingDirectives.Count > 0 && _overlayManager is not null)
+        {
+            if (await DispatchDrawingDirectivesAsync(drawingDirectives, screens, ct).ConfigureAwait(false))
+            {
+                timing.Mark("overlay-drawing-dispatch");
+            }
+        }
+        else if (directives.Count > 0 && (_overlayManager is not null || _overlayFlyTo is not null))
         {
             var adjustedDirectives = directives
                 .Select(d => ApplyGeoMapOverrideIfAvailable(transcript, d, screens))
@@ -948,6 +985,77 @@ public sealed class CompanionManager : IAsyncDisposable, IDisposable
         }, DispatcherPriority.Normal, ct);
         DebugLog.Write($"[POINT] flyto: dispatched sequence count={targets.Count}");
         return true;
+    }
+
+    private async Task<bool> DispatchDrawingDirectivesAsync(
+        IReadOnlyList<DrawingDirective> directives,
+        IReadOnlyList<CapturedScreen> screens,
+        CancellationToken ct)
+    {
+        if (_overlayManager is null)
+            return false;
+
+        var targets = new List<OverlayAnnotationTarget>();
+        foreach (var directive in directives)
+        {
+            var target = ConvertDrawingDirectiveToOverlayTarget(directive, screens);
+            if (target is null)
+            {
+                DebugLog.Write($"[DRAW] convert: returned null - kind={directive.Kind} screen={directive.ScreenNumber}");
+                continue;
+            }
+
+            targets.Add(target);
+        }
+
+        if (targets.Count == 0)
+            return false;
+
+        await _dispatcher.InvokeAsync(() =>
+        {
+            _viewModel.VoiceState = VoiceState.Idle;
+            _overlayManager.DrawAnnotations(targets);
+        }, DispatcherPriority.Normal, ct);
+        DebugLog.Write($"[DRAW] overlay: dispatched annotations count={targets.Count}");
+        return true;
+    }
+
+    private static OverlayAnnotationTarget? ConvertDrawingDirectiveToOverlayTarget(
+        DrawingDirective directive,
+        IReadOnlyList<CapturedScreen> screens)
+    {
+        var screenIndex = directive.ScreenNumber - 1;
+        if (screenIndex < 0 || screenIndex >= screens.Count)
+            return null;
+
+        var screen = screens[screenIndex];
+        var scaleX = (double)screen.DisplayBounds.Width / screen.ScreenshotPixelWidth;
+        var scaleY = (double)screen.DisplayBounds.Height / screen.ScreenshotPixelHeight;
+
+        System.Windows.Point ToScreenPoint(int x, int y) => new(
+            screen.DisplayBounds.X + x * scaleX,
+            screen.DisplayBounds.Y + y * scaleY);
+
+        if (directive.Kind == DrawingDirectiveKind.Circle)
+        {
+            return new OverlayAnnotationTarget
+            {
+                Kind = OverlayAnnotationKind.Circle,
+                DisplayBounds = screen.DisplayBounds,
+                Label = directive.Label,
+                Point = ToScreenPoint(directive.X, directive.Y),
+                Radius = directive.Radius * ((scaleX + scaleY) / 2.0),
+            };
+        }
+
+        return new OverlayAnnotationTarget
+        {
+            Kind = OverlayAnnotationKind.Arrow,
+            DisplayBounds = screen.DisplayBounds,
+            Label = directive.Label,
+            StartPoint = ToScreenPoint(directive.X1, directive.Y1),
+            EndPoint = ToScreenPoint(directive.X2, directive.Y2),
+        };
     }
 
 

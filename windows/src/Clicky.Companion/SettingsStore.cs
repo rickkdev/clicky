@@ -59,6 +59,16 @@ public class SettingsStore
     }
 
     /// <summary>
+    /// Hides Clicky's idle cursor-following overlay while still allowing
+    /// explicit AI pointing/drawing after a voice turn.
+    /// </summary>
+    public bool GamerModeEnabled
+    {
+        get { lock (_lock) return _data.GamerModeEnabled; }
+        set { lock (_lock) { _data.GamerModeEnabled = value; Save(); } }
+    }
+
+    /// <summary>
     /// NAudio MMDevice ID of the user-selected input (microphone) device.
     /// Empty string means "use whatever Windows currently considers the default".
     /// </summary>
@@ -132,6 +142,9 @@ public class SettingsStore
 
         [JsonPropertyName("analyticsOptOut")]
         public bool AnalyticsOptOut { get; set; }
+
+        [JsonPropertyName("gamerModeEnabled")]
+        public bool GamerModeEnabled { get; set; }
 
         [JsonPropertyName("microphoneDeviceId")]
         public string MicrophoneDeviceId { get; set; } = "";

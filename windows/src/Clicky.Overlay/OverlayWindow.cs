@@ -31,6 +31,9 @@ public class OverlayWindow : Window
     /// <summary>The exact-point debug crosshair hosted on this overlay.</summary>
     public DebugCrosshairControl DebugCrosshair { get; }
 
+    /// <summary>Temporary gamer-mode annotation renderer.</summary>
+    public DrawingOverlayControl DrawingOverlay { get; }
+
     public OverlayWindow(Rectangle monitorBounds, double dpiScaleX = 1.0, double dpiScaleY = 1.0)
     {
         MonitorBounds = monitorBounds;
@@ -60,11 +63,13 @@ public class OverlayWindow : Window
         // Host the blue cursor control on a Canvas that fills the overlay
         BlueCursor = new BlueCursorControl();
         DebugCrosshair = new DebugCrosshairControl();
+        DrawingOverlay = new DrawingOverlayControl();
         var canvas = new Canvas
         {
             IsHitTestVisible = false
         };
         canvas.Children.Add(DebugCrosshair.Visual);
+        canvas.Children.Add(DrawingOverlay.Visual);
         canvas.Children.Add(BlueCursor.Visual);
         Content = canvas;
     }
@@ -116,6 +121,7 @@ public class OverlayWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         BlueCursor.Dispose();
+        DrawingOverlay.Dispose();
         base.OnClosed(e);
     }
 }

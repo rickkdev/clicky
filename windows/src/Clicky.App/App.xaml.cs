@@ -65,6 +65,7 @@ public partial class App : Application
 
         // Load onboarding state from SettingsStore (migrated from registry above).
         _companionViewModel.HasCompletedOnboarding = _settingsStore.OnboardingComplete;
+        _companionViewModel.GamerModeEnabled = _settingsStore.GamerModeEnabled;
 
         // Check if first-run setup is needed: required keys missing OR not onboarded.
         if (!HasRequiredKeys(_secretsStore, _settingsStore) || !_settingsStore.OnboardingComplete)
@@ -105,6 +106,7 @@ public partial class App : Application
     {
         _mainWindow = new MainWindow(_companionViewModel!);
         _mainWindow.SettingsRequested += OnSettingsClicked;
+        _mainWindow.GamerModeChanged += OnGamerModeChanged;
         MainWindow = _mainWindow;
 
         _companionPanel = new CompanionPanelWindow(_companionViewModel!);
@@ -155,6 +157,7 @@ public partial class App : Application
         _overlayManager = new OverlayWindowManager();
         _overlayManager.Logger = DebugLog.Write;
         _overlayManager.Start();
+        _overlayManager.GamerModeEnabled = _settingsStore!.GamerModeEnabled;
 
         // Build and start the CompanionManager with current keys/config.
         BuildAndStartCompanionManager();
@@ -395,6 +398,18 @@ public partial class App : Application
         OpenSettingsWindow(isFirstRun: false);
     }
 
+    private void OnGamerModeChanged(object? sender, bool enabled)
+    {
+        if (_settingsStore is not null)
+            _settingsStore.GamerModeEnabled = enabled;
+
+        if (_companionViewModel is not null)
+            _companionViewModel.GamerModeEnabled = enabled;
+
+        if (_overlayManager is not null)
+            _overlayManager.GamerModeEnabled = enabled;
+    }
+
     private void OnOverlayTestRequested(object? sender, OverlayTestRequestedEventArgs e)
     {
         _overlayManager?.TestFlyToPreset(e.PresetId);
@@ -437,6 +452,10 @@ public partial class App : Application
     {
         // Settings were saved — rebuild all clients with the new keys/config.
         _companionViewModel?.ClearError();
+        if (_companionViewModel is not null && _settingsStore is not null)
+            _companionViewModel.GamerModeEnabled = _settingsStore.GamerModeEnabled;
+        if (_overlayManager is not null && _settingsStore is not null)
+            _overlayManager.GamerModeEnabled = _settingsStore.GamerModeEnabled;
         BuildAndStartCompanionManager();
 
         // Update model display and refresh menu (keys may have changed).
@@ -601,6 +620,7 @@ public partial class App : Application
         if (_mainWindow is not null)
         {
             _mainWindow.SettingsRequested -= OnSettingsClicked;
+            _mainWindow.GamerModeChanged -= OnGamerModeChanged;
             _mainWindow.Close();
             _mainWindow = null;
         }

@@ -60,6 +60,39 @@
             <Setter Property="BorderBrush" Value="{StaticResource Accent}" />
         </Style>
 
+        <Style x:Key="SlideToggle" TargetType="ToggleButton">
+            <Setter Property="Width" Value="52" />
+            <Setter Property="Height" Value="28" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="Track"
+                                Background="{StaticResource RaisedSurface}"
+                                BorderBrush="{StaticResource BorderStrong}"
+                                BorderThickness="1"
+                                CornerRadius="14">
+                            <Ellipse x:Name="Thumb"
+                                     Width="20"
+                                     Height="20"
+                                     Fill="{StaticResource TextTertiary}"
+                                     HorizontalAlignment="Left"
+                                     Margin="4,0,0,0" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Track" Property="Background" Value="#14532D" />
+                                <Setter TargetName="Track" Property="BorderBrush" Value="#22C55E" />
+                                <Setter TargetName="Thumb" Property="Fill" Value="{StaticResource TextPrimary}" />
+                                <Setter TargetName="Thumb" Property="HorizontalAlignment" Value="Right" />
+                                <Setter TargetName="Thumb" Property="Margin" Value="0,0,4,0" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style x:Key="CardBorder" TargetType="Border">
             <Setter Property="Background" Value="{StaticResource SurfaceBackground}" />
             <Setter Property="BorderBrush" Value="{StaticResource BorderSubtle}" />
@@ -192,6 +225,21 @@
                             <Grid>
                                 <TextBlock Text="Screen capture" Foreground="{StaticResource TextTertiary}" />
                                 <TextBlock Text="{Binding ScreenCapturePermissionDisplay}" Foreground="{StaticResource TextPrimary}" FontWeight="Medium" HorizontalAlignment="Right" />
+                            </Grid>
+
+                            <Border Height="1" Background="{StaticResource BorderSubtle}" Margin="0,14,0,14" />
+
+                            <Grid>
+                                <StackPanel Margin="0,0,74,0">
+                                    <TextBlock Text="Gamer mode" Foreground="{StaticResource TextPrimary}" FontWeight="Medium" />
+                                    <TextBlock Text="Hide Clicky's cursor while moving. AI callouts can still appear after you talk." Foreground="{StaticResource TextTertiary}" TextWrapping="Wrap" Margin="0,4,0,0" />
+                                </StackPanel>
+                                <ToggleButton HorizontalAlignment="Right"
+                                              VerticalAlignment="Center"
+                                              Style="{StaticResource SlideToggle}"
+                                              IsChecked="{Binding GamerModeEnabled, Mode=TwoWay}"
+                                              Checked="GamerModeToggle_Changed"
+                                              Unchecked="GamerModeToggle_Changed" />
                             </Grid>
                         </StackPanel>
                     </Border>

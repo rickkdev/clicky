@@ -493,6 +493,35 @@
             <!-- Separator -->
             <Border Height="0.5" Background="{StaticResource BorderSubtle}" Margin="0,0,0,16" />
 
+            <!-- Gamer mode -->
+            <TextBlock Text="GAMER MODE"
+                       FontSize="10" FontWeight="SemiBold"
+                       Foreground="{StaticResource TextTertiary}"
+                       Margin="0,0,0,12" />
+
+            <Grid Margin="0,0,0,16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                    <TextBlock Text="Hide cursor while moving"
+                               FontSize="13" FontWeight="Medium"
+                               Foreground="{StaticResource TextSecondary}" />
+                    <TextBlock Text="Clicky stays invisible during gameplay until it has something to point at."
+                               FontSize="11"
+                               Foreground="{StaticResource TextTertiary}"
+                               TextWrapping="Wrap"
+                               Margin="0,2,0,0" />
+                </StackPanel>
+                <CheckBox Grid.Column="1"
+                          VerticalAlignment="Center"
+                          IsChecked="{Binding GamerModeEnabled, Mode=TwoWay}" />
+            </Grid>
+
+            <!-- Separator -->
+            <Border Height="0.5" Background="{StaticResource BorderSubtle}" Margin="0,0,0,16" />
+
             <!-- Buttons -->
             <Grid Margin="0,0,0,12">
                 <Grid.ColumnDefinitions>

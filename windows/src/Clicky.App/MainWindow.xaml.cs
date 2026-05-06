@@ -11,12 +11,15 @@ namespace Clicky.App;
 public partial class MainWindow : Window
 {
     private readonly ObservableCollection<KnowledgeFileItem> _knowledgeFiles = new();
+    private readonly CompanionViewModel _viewModel;
 
     public event EventHandler? SettingsRequested;
+    public event EventHandler<bool>? GamerModeChanged;
 
     public MainWindow(CompanionViewModel viewModel)
     {
         InitializeComponent();
+        _viewModel = viewModel;
         DataContext = viewModel;
         KnowledgeFilesList.ItemsSource = _knowledgeFiles;
         KnowledgePathBox.Text = KnowledgeContextProvider.KnowledgeRoot;
@@ -52,6 +55,9 @@ public partial class MainWindow : Window
 
     private void QuitButton_Click(object sender, RoutedEventArgs e)
         => Application.Current.Shutdown();
+
+    private void GamerModeToggle_Changed(object sender, RoutedEventArgs e)
+        => GamerModeChanged?.Invoke(this, _viewModel.GamerModeEnabled);
 
     private void AddKnowledgeFile_Click(object sender, RoutedEventArgs e)
     {

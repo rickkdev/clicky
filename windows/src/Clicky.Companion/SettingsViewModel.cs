@@ -36,6 +36,7 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
 
     private string _selectedMicrophoneDeviceId = AudioDevices.DefaultDeviceId;
     private string _selectedSpeakerDeviceId = AudioDevices.DefaultDeviceId;
+    private bool _gamerModeEnabled;
 
     // True when the field shows the saved placeholder instead of the real key.
     private bool _anthropicKeyIsSaved;
@@ -121,6 +122,21 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
             var normalized = value ?? AudioDevices.DefaultDeviceId;
             if (_selectedSpeakerDeviceId == normalized) return;
             _selectedSpeakerDeviceId = normalized;
+            OnPropertyChanged();
+        }
+    }
+
+    /// <summary>
+    /// When enabled, Clicky does not render the idle cursor next to the mouse.
+    /// AI-triggered pointing and future drawing annotations still appear.
+    /// </summary>
+    public bool GamerModeEnabled
+    {
+        get => _gamerModeEnabled;
+        set
+        {
+            if (_gamerModeEnabled == value) return;
+            _gamerModeEnabled = value;
             OnPropertyChanged();
         }
     }
@@ -512,6 +528,7 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         _settingsStore.ElevenLabsVoiceId = _elevenLabsVoiceId;
         _settingsStore.MicrophoneDeviceId = _selectedMicrophoneDeviceId;
         _settingsStore.SpeakerDeviceId = _selectedSpeakerDeviceId;
+        _settingsStore.GamerModeEnabled = _gamerModeEnabled;
 
         SettingsSaved?.Invoke(this, EventArgs.Empty);
     }
@@ -725,6 +742,7 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         // still gets working audio.
         _selectedMicrophoneDeviceId = ResolveSavedDeviceId(_settingsStore.MicrophoneDeviceId, MicrophoneDevices);
         _selectedSpeakerDeviceId = ResolveSavedDeviceId(_settingsStore.SpeakerDeviceId, SpeakerDevices);
+        _gamerModeEnabled = _settingsStore.GamerModeEnabled;
 
         // Pre-populate saved-key placeholders.
         if (_secretsStore.Exists(SecretsStore.AnthropicApiKey))

@@ -267,6 +267,30 @@ public class SettingsViewModelTests : IDisposable
     }
 
     [Fact]
+    public void Save_PersistsGamerModeToSettingsStore()
+    {
+        var vm = new SettingsViewModel(_secrets, _settings);
+        vm.AnthropicApiKey = "sk-test";
+        vm.AssemblyAiApiKey = "aai-test";
+        vm.ElevenLabsApiKey = "el-test";
+        vm.GamerModeEnabled = true;
+
+        vm.Save();
+
+        Assert.True(_settings.GamerModeEnabled);
+    }
+
+    [Fact]
+    public void LoadsFromStores_GamerMode()
+    {
+        _settings.GamerModeEnabled = true;
+
+        var vm = new SettingsViewModel(_secrets, _settings);
+
+        Assert.True(vm.GamerModeEnabled);
+    }
+
+    [Fact]
     public void LoadFromStores_FallsBackToDefaultWhenSavedDeviceIsMissing()
     {
         // A saved MMDevice ID that isn't in the enumerated device list should

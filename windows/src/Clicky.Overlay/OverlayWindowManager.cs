@@ -19,6 +19,7 @@ public sealed class OverlayWindowManager : IDisposable
     private OverlayWindow? _activePointingOverlay;
     private DispatcherTimer? _pointingReturnTimer;
     private OverlayPointTarget? _lastSequenceTarget;
+    private bool _gamerModeEnabled;
     private bool _disposed;
     // Must exceed BlueCursorControl's max flight + linger + fade path so
     // PointingCompleted can advance multi-target sequences before fallback cleanup.
@@ -82,6 +83,25 @@ public sealed class OverlayWindowManager : IDisposable
     public IReadOnlyList<OverlayWindow> Overlays => _overlays.AsReadOnly();
 
     /// <summary>
+    /// When enabled, the idle cursor follower is hidden. Explicit FlyTo requests
+    /// still render because they are generated after the user asks Clicky something.
+    /// </summary>
+    public bool GamerModeEnabled
+    {
+        get => _gamerModeEnabled;
+        set
+        {
+            if (_gamerModeEnabled == value) return;
+            _gamerModeEnabled = value;
+
+            if (_gamerModeEnabled)
+                SuspendCursorFollowing();
+            else
+                ResumeCursorFollowing();
+        }
+    }
+
+    /// <summary>
     /// Flies the blue cursor to <paramref name="screenPoint"/> on the overlay whose
     /// monitor contains the point, showing <paramref name="bubbleText"/> on arrival.
     /// If <paramref name="displayBounds"/> is provided, it is used to select the overlay;
@@ -112,6 +132,32 @@ public sealed class OverlayWindowManager : IDisposable
     }
 
     /// <summary>
+    /// Draws temporary gamer-mode annotations on their target monitor overlays.
+    /// </summary>
+    public void DrawAnnotations(IReadOnlyList<OverlayAnnotationTarget> annotations)
+    {
+        foreach (var overlay in _overlays)
+        {
+            var overlayAnnotations = annotations
+                .Where(a => a.DisplayBounds == overlay.MonitorBounds)
+                .ToArray();
+
+            if (overlayAnnotations.Length == 0)
+            {
+                overlay.DrawingOverlay.Clear();
+                continue;
+            }
+
+            overlay.ReassertTopmost();
+            overlay.DrawingOverlay.DrawAnnotations(
+                overlayAnnotations,
+                overlay.MonitorBounds,
+                overlay.DpiScaleX,
+                overlay.DpiScaleY);
+        }
+    }
+
+    /// <summary>
     /// Creates overlay windows for all connected monitors and subscribes
     /// to display configuration changes.
     /// Must be called on the WPF dispatcher thread.
@@ -137,6 +183,15 @@ public sealed class OverlayWindowManager : IDisposable
     /// <summary>Shows the blue cursor beside the user's real cursor on the current monitor.</summary>
     public void ResumeCursorFollowing()
     {
+        if (_gamerModeEnabled)
+        {
+            foreach (var overlay in _overlays)
+            {
+                overlay.BlueCursor.SuspendFollowing();
+            }
+            return;
+        }
+
         var cursorOverlay = ResolveCursorOverlay();
         cursorOverlay?.ReassertTopmost();
 

@@ -24,6 +24,7 @@ public sealed class CompanionViewModel : INotifyPropertyChanged
     private PushToTalkShortcut _pushToTalkShortcut = PushToTalkShortcut.ControlAlt;
     private bool _isShortcutPressed;
     private bool _hasCompletedOnboarding;
+    private bool _gamerModeEnabled;
     private string? _lastError;
     private string _llmModelDisplay = "";
 
@@ -132,6 +133,24 @@ public sealed class CompanionViewModel : INotifyPropertyChanged
     /// either not onboarded yet, or permissions have been revoked.
     /// </summary>
     public bool IsOnboardingVisible => !_hasCompletedOnboarding || !AllPermissionsGranted;
+
+    /// <summary>
+    /// True when Clicky should stay visually quiet during mouse movement in games.
+    /// Explicit AI pointing/drawing can still appear after a spoken request.
+    /// </summary>
+    public bool GamerModeEnabled
+    {
+        get => _gamerModeEnabled;
+        set
+        {
+            if (_gamerModeEnabled == value) return;
+            _gamerModeEnabled = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(GamerModeDisplay));
+        }
+    }
+
+    public string GamerModeDisplay => _gamerModeEnabled ? "On" : "Off";
 
     /// <summary>
     /// One-shot error banner text shown in the companion panel.

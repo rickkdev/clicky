@@ -38,6 +38,36 @@ public sealed class StructuredPointingTurnParserTests
     }
 
     [Fact]
+    public void Parse_GamerDrawingJson_ReturnsCircleAndArrowIntents()
+    {
+        var result = StructuredPointingTurnParser.Parse("""
+            {"spokenText":"circle that minion, then push upward.","pointIntents":[{"kind":"circle","x":220,"y":140,"radius":32,"screen":1,"label":"minion","confidence":"high"},{"kind":"arrow","x1":230,"y1":180,"x2":310,"y2":90,"screen":1,"label":"push","confidence":"high"}]}
+            """);
+
+        Assert.Equal(PointIntentKind.Circle, result.PointIntents[0].Kind);
+        Assert.Equal(32, result.PointIntents[0].Radius);
+        Assert.Equal(PointIntentKind.Arrow, result.PointIntents[1].Kind);
+        Assert.Equal(230, result.PointIntents[1].X1);
+        Assert.Equal(90, result.PointIntents[1].Y2);
+    }
+
+    [Fact]
+    public void ToDrawingDirectives_ConvertsCircleAndArrow()
+    {
+        var result = StructuredPointingTurnParser.Parse("""
+            {"spokenText":"draw these.","pointIntents":[{"kind":"circle","x":220,"y":140,"radius":32,"screen":1,"label":"minion","confidence":"high"},{"kind":"arrow","x1":230,"y1":180,"x2":310,"y2":90,"screen":1,"label":"push","confidence":"high"}]}
+            """);
+
+        var directives = StructuredPointingTurnParser.ToDrawingDirectives(result.PointIntents, [Screen(400, 240)]);
+
+        Assert.Equal(2, directives.Count);
+        Assert.Equal(DrawingDirectiveKind.Circle, directives[0].Kind);
+        Assert.Equal(32, directives[0].Radius);
+        Assert.Equal(DrawingDirectiveKind.Arrow, directives[1].Kind);
+        Assert.Equal(310, directives[1].X2);
+    }
+
+    [Fact]
     public void ToDirectives_DropsInvalidSequenceTargets()
     {
         var result = StructuredPointingTurnParser.Parse("""

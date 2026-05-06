@@ -40,6 +40,7 @@ public class SettingsStoreTests : IDisposable
         Assert.Equal("pNInz6obpgDQGcFmaJgB", store.ElevenLabsVoiceId);
         Assert.False(store.OnboardingComplete);
         Assert.False(store.AnalyticsOptOut);
+        Assert.False(store.GamerModeEnabled);
     }
 
     [Fact]
@@ -90,6 +91,17 @@ public class SettingsStoreTests : IDisposable
         store.AnalyticsOptOut = true;
 
         Assert.True(store.AnalyticsOptOut);
+    }
+
+    [Fact]
+    public void GamerModeEnabled_RoundTrip()
+    {
+        var store = new SettingsStore(_tempFile);
+
+        store.GamerModeEnabled = true;
+
+        var store2 = new SettingsStore(_tempFile);
+        Assert.True(store2.GamerModeEnabled);
     }
 
     [Fact]
