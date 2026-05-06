@@ -127,6 +127,7 @@ public sealed class CompanionManager : IAsyncDisposable, IDisposable
         - point only for show, find, click, locate, identify, navigation, or app-control requests where the target is visible and unambiguous.
         - if the user asks for multiple visible things, return them in the order clicky should showcase them.
         - use one point for ordinary single-target requests. use two to five points only when the user's request genuinely needs multiple targets.
+        - for multiple targets, spokenText should mention the targets in the same order, using short clauses or short sentences so the pointer can advance naturally while speaking.
         - coordinates are screenshot pixels with origin at the top-left of the selected image. x increases rightward, y increases downward.
         - for map regions, choose a coordinate inside the visible filled region or border of the requested country or region. never choose nearby labels, neighboring countries, oceans, legends, or text outside the region.
         - if unsure, return kind "none". a skipped pointer is better than a wrong pointer.

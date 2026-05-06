@@ -16,7 +16,7 @@
 #endif
 
 #define AppName "Clicky"
-#define AppVersion "2.0.3"
+#define AppVersion "2.0.4"
 #define AppPublisher "Clicky"
 #define AppExeName "Clicky.App.exe"
 #define AppURL "https://github.com/julianjear/makesomething-mac-app"

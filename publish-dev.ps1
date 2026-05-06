@@ -20,6 +20,7 @@ $publishArgs = @(
 )
 
 $staleFiles = @(
+    "Clicky.App.exe",
     "Clicky.App.dll",
     "Clicky.App.deps.json",
     "Clicky.App.runtimeconfig.json",
@@ -71,6 +72,10 @@ foreach ($file in $staleFiles)
 }
 
 & dotnet @publishArgs
+if ($LASTEXITCODE -ne 0)
+{
+    throw "dotnet publish failed with exit code $LASTEXITCODE"
+}
 
 $publishedExe = Join-Path $publishRoot "Clicky.App.exe"
 $version = (Get-Item $publishedExe).VersionInfo.ProductVersion

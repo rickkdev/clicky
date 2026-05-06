@@ -99,6 +99,8 @@ public sealed class BlueCursorControl : IDisposable
     private bool _followingRequested;
     private bool _followingSuspended;
     private bool _disposed;
+    private double _currentLingerSeconds = LingerSeconds;
+    private double _currentFadeOutSeconds = FadeOutSeconds;
 
     public BlueCursorControl()
     {
@@ -256,12 +258,16 @@ public sealed class BlueCursorControl : IDisposable
         string? bubbleText,
         bool pinpointMode = false,
         Action<string>? logger = null,
-        Point? startPointOverride = null)
+        Point? startPointOverride = null,
+        double? lingerSeconds = null,
+        double? fadeOutSeconds = null)
     {
         // Cancel any in-progress animation
         StopAllAnimations();
         StopFollowTimer();
         _isPointing = true;
+        _currentLingerSeconds = lingerSeconds ?? LingerSeconds;
+        _currentFadeOutSeconds = fadeOutSeconds ?? FadeOutSeconds;
 
         // Determine start point: current OS cursor position (physical pixels)
         var startGlobalPhysical = startPointOverride ?? GetCursorStartPoint();
@@ -435,7 +441,7 @@ public sealed class BlueCursorControl : IDisposable
     {
         _lingerTimer = new DispatcherTimer
         {
-            Interval = TimeSpan.FromSeconds(LingerSeconds)
+            Interval = TimeSpan.FromSeconds(_currentLingerSeconds)
         };
         _lingerTimer.Tick += OnLingerComplete;
         _lingerTimer.Start();
@@ -448,7 +454,7 @@ public sealed class BlueCursorControl : IDisposable
         _lingerTimer = null;
 
         // Fade out the entire canvas
-        var fadeOut = new DoubleAnimation(1.0, 0.0, TimeSpan.FromSeconds(FadeOutSeconds))
+        var fadeOut = new DoubleAnimation(1.0, 0.0, TimeSpan.FromSeconds(_currentFadeOutSeconds))
         {
             EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
         };
@@ -483,7 +489,7 @@ public sealed class BlueCursorControl : IDisposable
         StopPointingCompletionFallbackTimer();
         _pointingCompletionFallbackTimer = new DispatcherTimer
         {
-            Interval = TimeSpan.FromSeconds(FadeOutSeconds + 0.1)
+            Interval = TimeSpan.FromSeconds(_currentFadeOutSeconds + 0.1)
         };
         _pointingCompletionFallbackTimer.Tick += OnPointingCompletionFallback;
         _pointingCompletionFallbackTimer.Start();

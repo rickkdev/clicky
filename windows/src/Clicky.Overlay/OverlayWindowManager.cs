@@ -23,6 +23,8 @@ public sealed class OverlayWindowManager : IDisposable
     // Must exceed BlueCursorControl's max flight + linger + fade path so
     // PointingCompleted can advance multi-target sequences before fallback cleanup.
     private const double PointingReturnSeconds = 6.5;
+    private const double SequenceLingerSeconds = 0.75;
+    private const double SequenceFadeOutSeconds = 0.15;
 
     private static readonly PointerDebugOptions CalibrationOptions = new()
     {
@@ -222,7 +224,8 @@ public sealed class OverlayWindowManager : IDisposable
         Rectangle? displayBounds,
         string? bubbleText,
         PointerDebugOptions options,
-        System.Windows.Point? startPointOverride = null)
+        System.Windows.Point? startPointOverride = null,
+        bool useSequenceTiming = false)
     {
         foreach (var overlay in _overlays)
         {
@@ -279,7 +282,9 @@ public sealed class OverlayWindowManager : IDisposable
             bubbleText,
             options.PinpointMode,
             Logger,
-            startPointOverride);
+            startPointOverride,
+            useSequenceTiming ? SequenceLingerSeconds : null,
+            useSequenceTiming ? SequenceFadeOutSeconds : null);
         StartPointingReturnTimer();
     }
 
@@ -301,7 +306,13 @@ public sealed class OverlayWindowManager : IDisposable
             ? _lastSequenceTarget.ScreenPoint
             : null;
         _lastSequenceTarget = target;
-        FlyToInternal(target.ScreenPoint, target.DisplayBounds, target.Label, DebugOptions, startPoint);
+        FlyToInternal(
+            target.ScreenPoint,
+            target.DisplayBounds,
+            target.Label,
+            DebugOptions,
+            startPoint,
+            useSequenceTiming: true);
         return true;
     }
 
