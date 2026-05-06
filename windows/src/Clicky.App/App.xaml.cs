@@ -191,19 +191,8 @@ public partial class App : Application
 
     private ILlmClient BuildLlmClient()
     {
-        var provider = _settingsStore!.LlmProvider;
-        var model = _settingsStore.LlmModel;
-
-        if (provider == "zai")
-        {
-            var key = _secretsStore!.Read(SecretsStore.ZaiApiKey) ?? "";
-            return new ZaiDirectClient(apiKey: key, model: model);
-        }
-        else
-        {
-            var key = _secretsStore!.Read(SecretsStore.AnthropicApiKey) ?? "";
-            return new AnthropicDirectClient(apiKey: key, model: model);
-        }
+        NormalizeCodexProviderSettings();
+        return new CodexAppServerClient(model: _settingsStore!.LlmModel);
     }
 
     private AssemblyAiStreamingTranscriber BuildTranscriber()
@@ -226,18 +215,13 @@ public partial class App : Application
     /// </summary>
     internal List<ModelMenuEntry> BuildModelMenuEntries()
     {
-        bool hasAnthropicKey = _secretsStore!.Exists(SecretsStore.AnthropicApiKey);
-        bool hasZaiKey = _secretsStore!.Exists(SecretsStore.ZaiApiKey);
-        string disabledAnthropicTip = "Add your Anthropic key in Settings to enable this model";
-        string disabledZaiTip = "Add your z.ai key in Settings to enable this model";
-
         return new List<ModelMenuEntry>
         {
-            new() { Provider = "anthropic", Model = "claude-sonnet-4-6", DisplayName = "Claude Sonnet 4.6", IsEnabled = hasAnthropicKey, DisabledTooltip = hasAnthropicKey ? null : disabledAnthropicTip },
-            new() { Provider = "anthropic", Model = "claude-haiku-4-5", DisplayName = "Claude Haiku 4.5", IsEnabled = hasAnthropicKey, DisabledTooltip = hasAnthropicKey ? null : disabledAnthropicTip },
-            new() { Provider = "anthropic", Model = "claude-opus-4-6", DisplayName = "Claude Opus 4.6", IsEnabled = hasAnthropicKey, DisabledTooltip = hasAnthropicKey ? null : disabledAnthropicTip },
-            new() { Provider = "zai", Model = "glm-4.6v", DisplayName = "GLM-4.6V", IsEnabled = hasZaiKey, DisabledTooltip = hasZaiKey ? null : disabledZaiTip },
-            new() { Provider = "zai", Model = "glm-4.5v", DisplayName = "GLM-4.5V", IsEnabled = hasZaiKey, DisabledTooltip = hasZaiKey ? null : disabledZaiTip },
+            new() { Provider = "codex", Model = "gpt-5.5", DisplayName = "GPT-5.5 (Codex OAuth)", IsEnabled = true },
+            new() { Provider = "codex", Model = "gpt-5.4", DisplayName = "GPT-5.4 (Codex OAuth)", IsEnabled = true },
+            new() { Provider = "codex", Model = "gpt-5.4-mini", DisplayName = "GPT-5.4 Mini (Codex OAuth)", IsEnabled = true },
+            new() { Provider = "codex", Model = "gpt-5.3-codex", DisplayName = "GPT-5.3 Codex", IsEnabled = true },
+            new() { Provider = "codex", Model = "gpt-5.3-codex-spark", DisplayName = "GPT-5.3 Codex Spark", IsEnabled = true },
         };
     }
 
@@ -248,9 +232,15 @@ public partial class App : Application
     {
         return (provider, model) switch
         {
+            ("codex", "gpt-5.5") => "GPT-5.5 (Codex OAuth)",
+            ("codex", "gpt-5.4") => "GPT-5.4 (Codex OAuth)",
+            ("codex", "gpt-5.4-mini") => "GPT-5.4 Mini (Codex OAuth)",
+            ("codex", "gpt-5.3-codex") => "GPT-5.3 Codex",
+            ("codex", "gpt-5.3-codex-spark") => "GPT-5.3 Codex Spark",
             ("anthropic", "claude-sonnet-4-6") => "Claude Sonnet 4.6",
             ("anthropic", "claude-haiku-4-5") => "Claude Haiku 4.5",
             ("anthropic", "claude-opus-4-6") => "Claude Opus 4.6",
+            ("openai", "gpt-5.2") => "GPT-5.2",
             ("zai", "glm-4.6v") => "GLM-4.6V",
             ("zai", "glm-4.5v") => "GLM-4.5V",
             _ => model,
@@ -299,14 +289,21 @@ public partial class App : Application
     /// </summary>
     internal static bool HasRequiredKeys(SecretsStore secrets, SettingsStore settings)
     {
-        var provider = settings.LlmProvider;
-        bool hasLlmKey = provider == "zai"
-            ? secrets.Exists(SecretsStore.ZaiApiKey)
-            : secrets.Exists(SecretsStore.AnthropicApiKey);
-
-        return hasLlmKey
-            && secrets.Exists(SecretsStore.AssemblyAiApiKey)
+        return secrets.Exists(SecretsStore.AssemblyAiApiKey)
             && secrets.Exists(SecretsStore.ElevenLabsApiKey);
+    }
+
+    private void NormalizeCodexProviderSettings()
+    {
+        if (_settingsStore is null) return;
+
+        if (_settingsStore.LlmProvider != "codex")
+            _settingsStore.LlmProvider = "codex";
+
+        var model = _settingsStore.LlmModel;
+        var supported = model is "gpt-5.5" or "gpt-5.4" or "gpt-5.4-mini" or "gpt-5.3-codex" or "gpt-5.3-codex-spark";
+        if (!supported)
+            _settingsStore.LlmModel = "gpt-5.5";
     }
 
     /// <summary>

@@ -22,10 +22,11 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
     private readonly SettingsStore _settingsStore;
     private readonly HttpClient _httpClient;
 
-    private string _selectedProvider = "anthropic";
-    private string _selectedModel = "claude-sonnet-4-6";
+    private string _selectedProvider = "codex";
+    private string _selectedModel = "gpt-5.5";
 
     private string _anthropicApiKey = "";
+    private string _openAiApiKey = "";
     private string _zaiApiKey = "";
     private string _assemblyAiApiKey = "";
     private string _elevenLabsApiKey = "";
@@ -38,22 +39,26 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
 
     // True when the field shows the saved placeholder instead of the real key.
     private bool _anthropicKeyIsSaved;
+    private bool _openAiKeyIsSaved;
     private bool _zaiKeyIsSaved;
     private bool _assemblyAiKeyIsSaved;
     private bool _elevenLabsKeyIsSaved;
 
     private TestState _anthropicTestState = TestState.None;
+    private TestState _openAiTestState = TestState.None;
     private TestState _zaiTestState = TestState.None;
     private TestState _assemblyAiTestState = TestState.None;
     private TestState _elevenLabsTestState = TestState.None;
 
     private string? _anthropicTestError;
+    private string? _openAiTestError;
     private string? _zaiTestError;
     private string? _assemblyAiTestError;
     private string? _elevenLabsTestError;
 
     // Inline validation errors shown when a required key is missing (first-run / partial config).
     private string? _anthropicKeyError;
+    private string? _openAiKeyError;
     private string? _zaiKeyError;
     private string? _assemblyAiKeyError;
     private string? _elevenLabsKeyError;
@@ -124,8 +129,7 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
 
     public static IReadOnlyList<ProviderChoice> Providers { get; } = new[]
     {
-        new ProviderChoice("anthropic", "Anthropic Claude"),
-        new ProviderChoice("zai", "z.ai GLM"),
+        new ProviderChoice("codex", "OpenAI Codex OAuth"),
     };
 
     public string SelectedProvider
@@ -133,8 +137,9 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         get => _selectedProvider;
         set
         {
-            if (_selectedProvider == value) return;
-            _selectedProvider = value;
+            var normalized = NormalizeProvider(value);
+            if (_selectedProvider == normalized) return;
+            _selectedProvider = normalized;
             OnPropertyChanged();
             OnPropertyChanged(nameof(AvailableModels));
             OnPropertyChanged(nameof(CanSave));
@@ -144,9 +149,11 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         }
     }
 
-    public IReadOnlyList<ModelChoice> AvailableModels => _selectedProvider == "zai"
-        ? ZaiModels
-        : AnthropicModels;
+    public IReadOnlyList<ModelChoice> AvailableModels => _selectedProvider switch
+    {
+        "codex" => CodexModels,
+        _ => AnthropicModels,
+    };
 
     public string SelectedModel
     {
@@ -159,11 +166,25 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         }
     }
 
+    public static IReadOnlyList<ModelChoice> CodexModels { get; } = new[]
+    {
+        new ModelChoice("gpt-5.5", "GPT-5.5 (Codex OAuth)"),
+        new ModelChoice("gpt-5.4", "GPT-5.4 (Codex OAuth)"),
+        new ModelChoice("gpt-5.4-mini", "GPT-5.4 Mini (Codex OAuth)"),
+        new ModelChoice("gpt-5.3-codex", "GPT-5.3 Codex"),
+        new ModelChoice("gpt-5.3-codex-spark", "GPT-5.3 Codex Spark"),
+    };
+
     public static IReadOnlyList<ModelChoice> AnthropicModels { get; } = new[]
     {
         new ModelChoice("claude-sonnet-4-6", "Claude Sonnet 4.6"),
         new ModelChoice("claude-haiku-4-5", "Claude Haiku 4.5"),
         new ModelChoice("claude-opus-4-6", "Claude Opus 4.6"),
+    };
+
+    public static IReadOnlyList<ModelChoice> OpenAiModels { get; } = new[]
+    {
+        new ModelChoice("gpt-5.2", "GPT-5.2"),
     };
 
     public static IReadOnlyList<ModelChoice> ZaiModels { get; } = new[]
@@ -196,6 +217,30 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
     {
         get => _anthropicKeyIsSaved;
         private set { _anthropicKeyIsSaved = value; OnPropertyChanged(); }
+    }
+
+    public string OpenAiApiKey
+    {
+        get => _openAiApiKey;
+        set
+        {
+            if (_openAiApiKey == value) return;
+            _openAiApiKey = value;
+            _openAiKeyIsSaved = false;
+            _openAiTestState = TestState.None;
+            _openAiKeyError = null;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(OpenAiKeyIsSaved));
+            OnPropertyChanged(nameof(OpenAiTestState));
+            OnPropertyChanged(nameof(OpenAiKeyError));
+            OnPropertyChanged(nameof(CanSave));
+        }
+    }
+
+    public bool OpenAiKeyIsSaved
+    {
+        get => _openAiKeyIsSaved;
+        private set { _openAiKeyIsSaved = value; OnPropertyChanged(); }
     }
 
     public string ZaiApiKey
@@ -295,6 +340,18 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         private set { _anthropicTestError = value; OnPropertyChanged(); }
     }
 
+    public TestState OpenAiTestState
+    {
+        get => _openAiTestState;
+        private set { _openAiTestState = value; OnPropertyChanged(); OnPropertyChanged(nameof(OpenAiTestError)); }
+    }
+
+    public string? OpenAiTestError
+    {
+        get => _openAiTestError;
+        private set { _openAiTestError = value; OnPropertyChanged(); }
+    }
+
     public TestState ZaiTestState
     {
         get => _zaiTestState;
@@ -339,6 +396,12 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         private set { _anthropicKeyError = value; OnPropertyChanged(); }
     }
 
+    public string? OpenAiKeyError
+    {
+        get => _openAiKeyError;
+        private set { _openAiKeyError = value; OnPropertyChanged(); }
+    }
+
     public string? ZaiKeyError
     {
         get => _zaiKeyError;
@@ -363,12 +426,23 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
     /// </summary>
     public void ValidateRequiredFields()
     {
-        if (_selectedProvider == "anthropic" && !HasKey(_anthropicApiKey, _anthropicKeyIsSaved))
+        if (_selectedProvider == "codex")
+            AnthropicKeyError = null;
+        else if (_selectedProvider == "anthropic" && !HasKey(_anthropicApiKey, _anthropicKeyIsSaved))
             AnthropicKeyError = "Required for your selected service";
         else
             AnthropicKeyError = null;
 
-        if (_selectedProvider == "zai" && !HasKey(_zaiApiKey, _zaiKeyIsSaved))
+        if (_selectedProvider == "codex")
+            OpenAiKeyError = null;
+        else if (_selectedProvider == "openai" && !HasKey(_openAiApiKey, _openAiKeyIsSaved))
+            OpenAiKeyError = "Required for your selected service";
+        else
+            OpenAiKeyError = null;
+
+        if (_selectedProvider == "codex")
+            ZaiKeyError = null;
+        else if (_selectedProvider == "zai" && !HasKey(_zaiApiKey, _zaiKeyIsSaved))
             ZaiKeyError = "Required for your selected service";
         else
             ZaiKeyError = null;
@@ -394,9 +468,13 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
     {
         get
         {
-            bool hasLlmKey = _selectedProvider == "zai"
-                ? HasKey(_zaiApiKey, _zaiKeyIsSaved)
-                : HasKey(_anthropicApiKey, _anthropicKeyIsSaved);
+            bool hasLlmKey = _selectedProvider switch
+            {
+                "zai" => HasKey(_zaiApiKey, _zaiKeyIsSaved),
+                "openai" => HasKey(_openAiApiKey, _openAiKeyIsSaved),
+                "codex" => true,
+                _ => HasKey(_anthropicApiKey, _anthropicKeyIsSaved),
+            };
 
             bool hasAudioKeys = HasKey(_assemblyAiApiKey, _assemblyAiKeyIsSaved)
                              && HasKey(_elevenLabsApiKey, _elevenLabsKeyIsSaved);
@@ -415,6 +493,9 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         // Write keys (only write if the user entered a new value, not the placeholder).
         if (!_anthropicKeyIsSaved && !string.IsNullOrWhiteSpace(_anthropicApiKey))
             _secretsStore.Write(SecretsStore.AnthropicApiKey, _anthropicApiKey);
+
+        if (!_openAiKeyIsSaved && !string.IsNullOrWhiteSpace(_openAiApiKey))
+            _secretsStore.Write(SecretsStore.OpenAiApiKey, _openAiApiKey);
 
         if (!_zaiKeyIsSaved && !string.IsNullOrWhiteSpace(_zaiApiKey))
             _secretsStore.Write(SecretsStore.ZaiApiKey, _zaiApiKey);
@@ -436,6 +517,7 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
     }
 
     public void ClearAnthropicKey() { AnthropicApiKey = ""; AnthropicKeyIsSaved = false; }
+    public void ClearOpenAiKey() { OpenAiApiKey = ""; OpenAiKeyIsSaved = false; }
     public void ClearZaiKey() { ZaiApiKey = ""; ZaiKeyIsSaved = false; }
     public void ClearAssemblyAiKey() { AssemblyAiApiKey = ""; AssemblyAiKeyIsSaved = false; }
     public void ClearElevenLabsKey() { ElevenLabsApiKey = ""; ElevenLabsKeyIsSaved = false; }
@@ -519,6 +601,44 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         }
     }
 
+    public async Task TestOpenAiAsync(CancellationToken ct = default)
+    {
+        var key = _openAiKeyIsSaved
+            ? _secretsStore.Read(SecretsStore.OpenAiApiKey) ?? ""
+            : _openAiApiKey;
+
+        OpenAiTestState = TestState.Testing;
+        OpenAiTestError = null;
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/chat/completions");
+            request.Headers.Add("Authorization", $"Bearer {key}");
+            request.Content = new StringContent(
+                """{"model":"gpt-5.2","max_completion_tokens":1,"messages":[{"role":"developer","content":"Reply with ok."},{"role":"user","content":"hi"}]}""",
+                Encoding.UTF8, "application/json");
+
+            using var response = await _httpClient.SendAsync(request, ct).ConfigureAwait(false);
+            if (response.IsSuccessStatusCode)
+            {
+                OpenAiTestState = TestState.Success;
+                ClickyAnalytics.TrackProviderTestRun("openai", success: true);
+            }
+            else
+            {
+                OpenAiTestError = FriendlyError("OpenAI", (int)response.StatusCode);
+                OpenAiTestState = TestState.Failure;
+                ClickyAnalytics.TrackProviderTestRun("openai", success: false, ErrorCategory((int)response.StatusCode));
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            OpenAiTestError = FriendlyError("OpenAI", ex);
+            OpenAiTestState = TestState.Failure;
+            ClickyAnalytics.TrackProviderTestRun("openai", success: false, ErrorCategory(ex));
+        }
+    }
+
     public async Task TestAssemblyAiAsync(CancellationToken ct = default)
     {
         var key = _assemblyAiKeyIsSaved
@@ -595,8 +715,8 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
 
     private void LoadFromStores()
     {
-        _selectedProvider = _settingsStore.LlmProvider;
-        _selectedModel = _settingsStore.LlmModel;
+        _selectedProvider = NormalizeProvider(_settingsStore.LlmProvider);
+        _selectedModel = NormalizeModel(_settingsStore.LlmModel);
         _elevenLabsVoiceId = _settingsStore.ElevenLabsVoiceId;
 
         // Seed device selection from the store. If the saved device ID is no
@@ -610,6 +730,9 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         if (_secretsStore.Exists(SecretsStore.AnthropicApiKey))
             _anthropicKeyIsSaved = true;
 
+        if (_secretsStore.Exists(SecretsStore.OpenAiApiKey))
+            _openAiKeyIsSaved = true;
+
         if (_secretsStore.Exists(SecretsStore.ZaiApiKey))
             _zaiKeyIsSaved = true;
 
@@ -618,6 +741,18 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
 
         if (_secretsStore.Exists(SecretsStore.ElevenLabsApiKey))
             _elevenLabsKeyIsSaved = true;
+    }
+
+    private static string NormalizeProvider(string provider) =>
+        provider == "codex" ? "codex" : "codex";
+
+    private static string NormalizeModel(string model)
+    {
+        foreach (var choice in CodexModels)
+        {
+            if (choice.Value == model) return model;
+        }
+        return CodexModels[0].Value;
     }
 
     private static string ResolveSavedDeviceId(string saved, IReadOnlyList<AudioDevices.DeviceInfo> available)

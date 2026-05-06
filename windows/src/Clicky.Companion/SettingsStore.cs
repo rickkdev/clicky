@@ -116,10 +116,10 @@ public class SettingsStore
     internal class SettingsData
     {
         [JsonPropertyName("llmProvider")]
-        public string LlmProvider { get; set; } = "anthropic";
+        public string LlmProvider { get; set; } = "codex";
 
         [JsonPropertyName("llmModel")]
-        public string LlmModel { get; set; } = "claude-sonnet-4-6";
+        public string LlmModel { get; set; } = "gpt-5.5";
 
         [JsonPropertyName("elevenLabsVoiceId")]
         // Default to Adam — one of ElevenLabs' built-in default voices that free
