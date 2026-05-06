@@ -20,6 +20,7 @@ public partial class App : Application
 
     private static Mutex? _singleInstanceMutex;
     private TrayIconManager? _trayIconManager;
+    private MainWindow? _mainWindow;
     private CompanionPanelWindow? _companionPanel;
     private CompanionViewModel? _companionViewModel;
     private GlobalPushToTalkHook? _pushToTalkHook;
@@ -40,17 +41,13 @@ public partial class App : Application
         if (!createdNew)
         {
             MessageBox.Show(
-                "Clicky is already running in your system tray.",
+                "Clicky is already running.",
                 "Clicky",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
             Shutdown();
             return;
         }
-
-        // Create the hidden host window (no taskbar entry, invisible).
-        var mainWindow = new MainWindow();
-        MainWindow = mainWindow;
 
         // Initialize settings and secrets stores under %APPDATA%\Clicky.
         _settingsStore = new SettingsStore();
@@ -106,6 +103,10 @@ public partial class App : Application
     /// </summary>
     private void InitializeApp()
     {
+        _mainWindow = new MainWindow(_companionViewModel!);
+        _mainWindow.SettingsRequested += OnSettingsClicked;
+        MainWindow = _mainWindow;
+
         _companionPanel = new CompanionPanelWindow(_companionViewModel!);
 
         // Set up system tray icon with menu and left-click event.
@@ -139,19 +140,11 @@ public partial class App : Application
         _permissionPollTimer.Tick += OnPermissionPollTick;
         _permissionPollTimer.Start();
 
-        // On first launch (no onboarded registry value) or if any permission
-        // is missing on subsequent launches, auto-open the panel.
-        // We defer this so the tray icon and window are fully initialized first.
+        // Open the real application window on launch. The tray icon remains as
+        // a convenience for reopening the app after the window is hidden.
         Dispatcher.InvokeAsync(() =>
         {
-            if (_companionViewModel!.IsOnboardingVisible)
-            {
-                _companionPanel.ShowForOnboarding();
-            }
-            else
-            {
-                _companionPanel!.ShowPanel();
-            }
+            _mainWindow!.ShowApplicationWindow();
         }, DispatcherPriority.Loaded);
 
         // Install the global push-to-talk hook on the dispatcher thread.
@@ -223,6 +216,12 @@ public partial class App : Application
             if (_companionPanel?.Visibility == Visibility.Visible)
             {
                 _companionPanel.Hide();
+                hidAny = true;
+            }
+
+            if (_mainWindow?.Visibility == Visibility.Visible)
+            {
+                _mainWindow.Hide();
                 hidAny = true;
             }
 
@@ -387,7 +386,7 @@ public partial class App : Application
 
     private void OnTrayIconClicked(object? sender, System.EventArgs e)
     {
-        _companionPanel?.Toggle();
+        _mainWindow?.ShowApplicationWindow();
     }
 
     private void OnSettingsClicked(object? sender, System.EventArgs e)
@@ -599,6 +598,12 @@ public partial class App : Application
         _pointingSmokeWindow?.Close();
         _pointingSmokeWindow = null;
         _companionPanel?.Close();
+        if (_mainWindow is not null)
+        {
+            _mainWindow.SettingsRequested -= OnSettingsClicked;
+            _mainWindow.Close();
+            _mainWindow = null;
+        }
 
         // Dispose the mutex (releases ownership automatically).
         // Do NOT call ReleaseMutex() — OnExit may run on a different thread

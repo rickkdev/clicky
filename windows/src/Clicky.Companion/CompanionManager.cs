@@ -79,7 +79,7 @@ public sealed class CompanionManager : IAsyncDisposable, IDisposable
     private DateTime _pressTimestamp;
 
     /// <summary>The system prompt sent to Claude, mirroring Mac's companionVoiceResponseSystemPrompt.</summary>
-    internal static readonly string CompanionSystemPrompt = """
+    public static readonly string CompanionSystemPrompt = """
         you're clicky, a friendly always-on companion that lives in the user's system tray. the user just spoke to you via push-to-talk and you can see their screen(s). your reply will be spoken aloud via text-to-speech, so write the way you'd actually talk. this is an ongoing conversation â€” you remember everything they've said before.
 
         rules:
@@ -114,7 +114,7 @@ public sealed class CompanionManager : IAsyncDisposable, IDisposable
         - element is on screen 2 (not where cursor is): "that's over on your other monitor â€” see the terminal window? [POINT:400,300:terminal:screen2]"
         """;
 
-    internal static readonly string StructuredPointingSystemPrompt = """
+    public static readonly string StructuredPointingSystemPrompt = """
         you're clicky, a friendly always-on companion that can see the user's screen. return only one json object. do not use markdown.
 
         schema:
@@ -524,7 +524,7 @@ public sealed class CompanionManager : IAsyncDisposable, IDisposable
                 await foreach (var delta in _llmClient.SendAsync(
                     historySnapshot,
                     labeledScreens,
-                    CompanionSystemPrompt,
+                    KnowledgeContextProvider.BuildPrompt(CompanionSystemPrompt),
                     transcript,
                     ct).ConfigureAwait(false))
                 {
@@ -684,7 +684,7 @@ public sealed class CompanionManager : IAsyncDisposable, IDisposable
         await foreach (var delta in _llmClient.SendAsync(
             historySnapshot,
             labeledScreens,
-            StructuredPointingSystemPrompt,
+            KnowledgeContextProvider.BuildPrompt(StructuredPointingSystemPrompt),
             transcript,
             ct).ConfigureAwait(false))
         {
@@ -1013,7 +1013,7 @@ public sealed class CompanionManager : IAsyncDisposable, IDisposable
             await foreach (var delta in _llmClient.SendAsync(
                 Array.Empty<Message>(),
                 Array.Empty<CapturedScreen>(),
-                CompanionSystemPrompt,
+                KnowledgeContextProvider.BuildPrompt(CompanionSystemPrompt),
                 "timing diagnostic: reply with one short sentence.",
                 ct).ConfigureAwait(false))
             {
@@ -1058,7 +1058,7 @@ public sealed class CompanionManager : IAsyncDisposable, IDisposable
             await foreach (var delta in _llmClient.SendAsync(
                 Array.Empty<Message>(),
                 labeledScreens,
-                CompanionSystemPrompt,
+                KnowledgeContextProvider.BuildPrompt(CompanionSystemPrompt),
                 "timing diagnostic: describe the screen in one short sentence and end with [POINT:none].",
                 ct).ConfigureAwait(false))
             {
