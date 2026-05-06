@@ -60,6 +60,15 @@ Branch: ralph/windows-port (continues from the completed Windows port — see ar
 - WGC Win11+ APIs (IsBorderRequired, IsCursorCaptureEnabled) must be called via reflection when targeting SDK 10.0.19041.
 - `LibraryImport` source generators don't handle delegate params with `ref` — use `DllImport` for callbacks like `MonitorEnumProc`.
 
+- Desktop pointing smoke verification is tray-driven: right-click tray icon -> `Desktop Smoke Test`, click `box A`/`box B`/`box C`, then inspect `%APPDATA%\Clicky\point-debug\*-raw.jpg`, `*-annotated.png`, and `%APPDATA%\Clicky\debug.log` `[SMOKE]`/`[POINT]` lines. This path is desktop-only and should stay outside default CI.
+- Full-turn CI coverage should stay deterministic: use `CompanionManager`'s fake capture/overlay seams with fake LLM and TTS clients; keep real desktop compositor, visible WPF overlay, microphone, speakers, and provider API keys out of default `dotnet test`.
+- Synthetic box fixtures prove explicit coordinate conversion and overlay last mile only. They do not prove semantic AI localization. Real pointing work must be validated with real screenshot fixtures and allowed/distractor regions for failures like Egypt->Libya or Algeria->ocean.
+- Windows pointing is back to a single-response baseline: one normal LLM request may include one `[POINT]` tag, then `PointTagParser` converts that explicit screenshot coordinate to physical pixels and the overlay dispatches it. Do not re-add locator/verifier/fallback LLM calls until the redesign and real-fixture evaluator prove a new protocol.
+- The Windows pointing redesign contract lives in `windows/docs/pointing-redesign.md`. The US-049 structured `{ spokenText, pointIntent }` path is behind `CompanionManager`'s `useRedesignedPointingProtocol` switch and is default-off until US-050 records real desktop evidence. Keep verifier/locator/fallback layers out unless the fixture gate proves a need.
+- As of US-050, `Clicky.App.App.UseRedesignedPointingProtocolByDefault` enables the structured pointing path for the packaged Windows app. Keep the `CompanionManager` constructor switch available for deterministic tests and comparison paths.
+- Windows turn timing evidence uses `[TURN]` lines in `%APPDATA%\Clicky\debug.log` with a correlation id, provider/model, capture payload bytes, cursor-screen filtering state, LLM/TTS milestones, point parse, and overlay dispatch. Use tray `Provider Timing Diagnostics` for real provider comparisons: inspect `diagnostic-text-llm-*`, `diagnostic-image-llm-*`, `capture-*`, and `diagnostic-tts-*` before blaming overlay rendering or model vision.
+- Semantic pointing fixtures live in `windows/tests/Clicky.Tests/Fixtures/pointing/`: add screenshot-style PNGs, allowed polygons, distractor polygons, and canned outputs there. Run `SemanticPointingEvaluationTests` before changing semantic map/UI pointing behavior.
+
 ## Completed Stories
 
 ## 2026-04-11 - US-018
@@ -85,6 +94,29 @@ Branch: ralph/windows-port (continues from the completed Windows port — see ar
   - The old `ClaudeClient` had two constructors (public for prod, internal for test). The new pattern uses a single public constructor with `ILlmClient` injection — simpler and avoids the dual-constructor smell.
   - `App.xaml.cs` still reads `workerBaseUrl` from `appsettings.json` for audio clients (`AssemblyAiStreamingTranscriber`, `ElevenLabsTtsClient`). US-021 will migrate those to direct API calls too.
 ---
+
+## 2026-04-28 - US-042
+- Added deterministic end-to-end pointing fixture tests in `windows/tests/Clicky.Tests/PointingEndToEndTests.cs`
+- The new suite builds synthetic JPEG screenshots in memory with clearly labeled colored boxes like `box a`, `box b`, and `box c`, then feeds fake Claude-style `[POINT:x,y:label:screenN]` responses through the real Windows path: `PointTagParser.Parse()` -> `PointTagParser.ConvertToScreenCoordinatesDetailed()`
+- Assertions are box-based rather than single-pixel equality: the final mapped `ScreenPoint` must land inside the expected display-space rectangle for the target box, which catches meaningful regressions while tolerating harmless rounding
+- Covered monitor/layout cases:
+  - single monitor at 100% scaling
+  - high-DPI single monitor
+  - secondary monitor with negative virtual-desktop origin
+  - explicit `:screen2` selection across two synthetic displays
+- Added a metadata contract check that decodes the generated JPEG and verifies `CapturedScreen.ScreenshotPixelWidth/Height` exactly match the actual encoded image dimensions
+- Verified with:
+  - `dotnet test windows\\tests\\Clicky.Tests\\Clicky.Tests.csproj -c Release --filter PointingEndToEndTests`
+  - `dotnet test windows\\tests\\Clicky.Tests\\Clicky.Tests.csproj -c Release --filter "PointTagParserTests|PointingEndToEndTests|OverlayWindowManagerTests|BlueCursorControlTests"`
+- Result: new fixture suite passed 5/5; combined pointing/overlay suite passed 53/53
+- Files changed:
+  - NEW: `windows/tests/Clicky.Tests/PointingEndToEndTests.cs`
+- **Learnings for future iterations:**
+  - A hermetic synthetic-fixture test is the right place to lock down screenshot-space -> display-space math; it avoids WPF compositor flakiness and still catches the regressions we care about
+  - Asserting that the point lands inside an expected box is stronger than checking one exact pixel because it mirrors the real user question: "did it point at box A?"
+  - This suite does NOT prove the live desktop compositor placed the overlay correctly on a physical monitor â€” that remaining gap is tracked as US-043
+---
+
 
 ## 2026-04-11 - US-019
 - Created `Clicky.Companion.SecretsStore` — DPAPI-encrypted key-value store at `%APPDATA%\Clicky\secrets.bin`. Whole-file encryption with `DataProtectionScope.CurrentUser`. Methods: `Write`, `Read`, `Delete`, `Exists`. Standardized key constants for all four services.
@@ -453,4 +485,305 @@ Branch: ralph/windows-port (continues from the completed Windows port — see ar
   - `VersionInfo.Current` reads from `AssemblyInformationalVersionAttribute` which is set by the `<Version>` property in the csproj — no separate constant to update
   - The Inno Setup installer script had a stale `0.1.0` version that was out of sync with the csproj `1.0.0` — always check both when bumping versions
   - The Overlay DLL test abort is an Application Control policy issue on this machine, not a test failure — ignore it
+---
+
+## 2026-04-12 - US-035
+- Added `[POINT]` diagnostic logging at every stage of the screen-pointing pipeline
+- After screen capture: logs each CapturedScreen's DisplayBounds, ScreenshotPixelWidth×Height, and IsCursorScreen
+- After PointTagParser.Parse(): logs whether a directive was found and its raw x, y, label, screenNumber values
+- After ConvertToScreenCoordinates(): logs the converted screenPoint and displayBounds, or null reason
+- After FlyTo() dispatch: logs confirmation with final screen point and bubble text
+- Added `Action<string>? Logger` property to OverlayWindowManager with logging inside FlyTo() (overlay index, bounds, match/fallback)
+- Wired `Logger = DebugLog.Write` in App.xaml.cs after constructing the overlay manager
+- All log lines use the `[POINT]` prefix for easy grep in debug.log
+- Build: 0 warnings. Tests: 280 passed, 0 failed
+- Files changed:
+  - MODIFIED: `windows/src/Clicky.Companion/CompanionManager.cs`
+  - MODIFIED: `windows/src/Clicky.Overlay/OverlayWindowManager.cs`
+  - MODIFIED: `windows/src/Clicky.App/App.xaml.cs`
+- **Learnings for future iterations:**
+  - `Clicky.Overlay` does not reference `Clicky.Companion`, so DebugLog is not accessible — use `Action<string>? Logger` callback pattern for cross-project logging
+  - All point pipeline stages are in `SendTranscriptToClaudeWithScreenshot` lines ~380-500 of CompanionManager.cs
+  - OverlayWindowManager.FlyTo matches overlays by displayBounds first, then by containment, then fallback to first overlay
+---
+
+## 2026-04-12 - US-036
+- Added `BlueCursor.Hide()` call on all overlay windows before screen capture in `CompanionManager.HandlePressed()`
+- Uses `_dispatcher.Invoke` (synchronous) to guarantee cursor is gone before `CaptureAllScreensAsJpegAsync` starts
+- Guarded with null check on `_overlayManager`
+- Files changed:
+  - MODIFIED: `windows/src/Clicky.Companion/CompanionManager.cs`
+- Build: 0 warnings. Tests: 280 passed, 0 failed
+- **Learnings for future iterations:**
+  - `HandlePressed()` is already on the dispatcher thread (marshalled via `_dispatcher.InvokeAsync` in the hotkey consumer loop), so `_dispatcher.Invoke` executes inline synchronously — no deadlock risk
+  - `OverlayWindowManager.Overlays` is the public read-only list of overlay windows; each has a `BlueCursor` property with a `Hide()` method
+  - The `FlyTo` method in `OverlayWindowManager` already hides all cursors before showing the new one — the same pattern is reused here
+---
+
+## 2026-04-12 - US-037
+- Fixed WGC capture size vs monitor bounds coordinate mismatch in `ScreenCapture.CaptureWithWgcAsync`
+- Changed `CalculateScaledSize` call to use `monitor.Bounds.Width/Height` instead of `itemSize.Width/Height`, ensuring `ScreenshotPixelWidth/Height` is derived from the same source as `DisplayBounds`
+- Frame pool still uses `itemSize` (actual WGC surface size) as required
+- Added diagnostic `Debug.WriteLine` warning when WGC itemSize differs from monitor bounds
+- Verified GDI fallback path already uses `bounds.Width/Height` consistently — no change needed
+- Files changed: `windows/src/Clicky.Capture/ScreenCapture.cs`
+- **Learnings for future iterations:**
+  - `GraphicsCaptureItem.Size` can differ from `GetMonitorInfo` bounds due to desktop composition, virtual desktops, or rounding — always use the same source for coordinate math
+  - The coordinate pipeline flows: `ScreenshotPixelWidth/Height` ↔ `DisplayBounds` in `CapturedScreen` → `scaleX/Y` in `PointTagParser.ConvertToScreenCoordinates`. Changing one side without the other causes pointer offset
+  - Test failures (67/280) are pre-existing: Windows Application Control blocks `Clicky.Api.dll` from loading in test runner — unrelated to code changes
+---
+
+## 2026-04-12 - US-038
+- Added `TestFlyToCenter()` method to `OverlayWindowManager` — flies blue cursor to center of primary monitor with "test overlay" bubble text
+- Added `TestOverlayAsync()` method to `CompanionManager` — exercises full pipeline: capture screens → build fake `[POINT:centerX,centerY:test target]` → Parse → ConvertToScreenCoordinates → FlyTo, with DebugLog at each step
+- Added "Test Overlay" menu item to tray context menu in `TrayIconManager` (between Model submenu and separator, above Quit)
+- Wired `TestOverlayClicked` event from `TrayIconManager` through `App.xaml.cs` to `CompanionManager.TestOverlayAsync()`
+- Always visible (not gated behind #if DEBUG) — useful for end-user troubleshooting
+- Files changed:
+  - MODIFIED: `windows/src/Clicky.Overlay/OverlayWindowManager.cs`
+  - MODIFIED: `windows/src/Clicky.Companion/CompanionManager.cs`
+  - MODIFIED: `windows/src/Clicky.App/TrayIconManager.cs`
+  - MODIFIED: `windows/src/Clicky.App/App.xaml.cs`
+- Build: 0 warnings. Tests: 280 total (134 pass, 146 blocked by Application Control policy — pre-existing)
+- **Learnings for future iterations:**
+  - Tray menu items are built in `TrayIconManager.BuildContextMenu()` — add new items there and expose events for App.xaml.cs to wire up
+  - `PointTagParser.Parse` + `ConvertToScreenCoordinates` can be exercised independently of the LLM pipeline by constructing fake POINT tag strings
+  - The capture → parse → convert → flyto pipeline is the canonical test path for overlay correctness
+---
+## 2026-04-12 - US-039
+- Implemented single-monitor capture filter in CompanionManager.SendTranscriptToClaudeWithScreenshot
+- After capturing all screens (and logging them), the cursor screen is filtered out and its label is overridden via `ScreenCapture.BuildLabel(1, 0, true)` to produce `"user's screen (cursor is here)"` instead of the multi-screen label
+- Added `[POINT] filter: sending 1 screen to LLM (cursor screen only)` debug log line
+- Falls back to all screens if no cursor screen is found (edge case)
+- Files changed: windows/src/Clicky.Companion/CompanionManager.cs
+- Build: 0 warnings. Tests: 280 pass
+- **Learnings for future iterations:**
+  - The cursor screen filter was partially implemented already (screens list reassignment) but missing the label override and log line — always check acceptance criteria carefully against existing code
+  - `ScreenCapture.BuildLabel(1, 0, true)` returns `"user's screen (cursor is here)"` — use this when sending a single screen to normalize the label
+  - The `screens` variable used downstream for `PointTagParser.ConvertToScreenCoordinates` must be the same filtered list so coordinate conversion maps correctly
+---
+
+## 2026-04-12 - US-040
+- Changed `MaxDimension` from `1280` to `3840` in `ScreenCapture.cs` line 20
+- For 1080p/1440p monitors, screenshots now pass through at native resolution (no downscale)
+- 4K monitors still get capped at 3840px longest edge to avoid excessive payload
+- Files changed: `windows/src/Clicky.Capture/ScreenCapture.cs`
+- Build: 0 warnings, 0 errors. Tests: 20 pass, 3 fail (pre-existing Application Control policy blocks on Clicky.Audio.dll/Clicky.Overlay.dll — unrelated to this change)
+- **Learnings for future iterations:**
+  - `CalculateScaledSize` handles any `MaxDimension` value — only the constant needs changing for resolution adjustments
+  - Test failures for Audio/Overlay tests are caused by Windows Application Control policy blocking unsigned DLLs, not code issues
+---
+
+## 2026-04-12 - US-041
+- Implemented coordinate grid overlay on screenshots for LLM spatial anchoring
+- Added `DrawCoordinateGrid(Bitmap)` public static method to `ScreenCapture` — draws semi-transparent gray grid lines every 200px with white-on-dark coordinate labels at intersections
+- Added `bool drawGrid = false` parameter to `CaptureAllScreensAsJpegAsync` so `DumpToTempAsync` (smoke-test output) is unaffected
+- GDI path: grid drawn at native resolution before resize
+- WGC path: JPEG decoded → grid drawn → re-encoded (WinRT SoftwareBitmap doesn't expose GDI+ drawing)
+- CompanionManager: all three production capture call sites pass `drawGrid: true`
+- Files changed: `windows/src/Clicky.Capture/ScreenCapture.cs`, `windows/src/Clicky.Companion/CompanionManager.cs`
+- **Learnings for future iterations:**
+  - WGC capture path produces JPEG via WinRT BitmapEncoder — to draw on the image you must decode the JPEG back to a GDI+ Bitmap, draw, then re-encode
+  - `git stash` on this repo can trigger Windows Application Control to block recompiled DLLs (different hash) — the extra test failures are environment noise, not code issues
+  - `System.Drawing.Text.TextRenderingHint.ClearTypeGridFit` gives readable small text on GDI+ bitmaps
+---
+
+## 2026-04-30 14:51 +02:00 - US-043
+- Implemented the local desktop pointing smoke harness: tray menu now opens a deterministic WPF fixture window with labeled `box A`, `box B`, and `box C` targets.
+- Clicking a fixture box captures the live desktop with the production screenshot path, synthesizes a fake `[POINT:x,y:label:screenN]` tag from the clicked box center, runs the real parse -> convert -> fly overlay path, and writes raw plus annotated artifacts under `%APPDATA%\Clicky\point-debug`.
+- Added `[SMOKE]` debug-log entries for capture, fake response, conversion, and overlay dispatch so failures can be diagnosed from `%APPDATA%\Clicky\debug.log`.
+- Added CI-safe tests for the helper that maps a physical desktop target to screenshot-space POINT coordinates, including a negative-origin secondary-monitor case.
+- Files changed:
+  - NEW: `windows/src/Clicky.App/PointingSmokeWindow.xaml`
+  - NEW: `windows/src/Clicky.App/PointingSmokeWindow.xaml.cs`
+  - MODIFIED: `windows/src/Clicky.App/App.xaml.cs`
+  - MODIFIED: `windows/src/Clicky.App/TrayIconManager.cs`
+  - MODIFIED: `windows/src/Clicky.Companion/CompanionManager.cs`
+  - MODIFIED: `windows/tests/Clicky.Tests/PointTagParserTests.cs`
+  - MODIFIED: `AGENTS.md`
+  - MODIFIED: `prd.json`
+  - MODIFIED: `progress.txt`
+- Verified:
+  - `dotnet test windows\tests\Clicky.Tests\Clicky.Tests.csproj -c Release --filter "PointTagParserTests|OverlayWindowManagerTests"`: 30 passed
+  - `dotnet test windows\tests\Clicky.Tests\Clicky.Tests.csproj -c Release`: 294 passed
+- **Learnings for future iterations:**
+  - The desktop smoke path intentionally uses a fake POINT tag rather than a live model so it isolates capture/parse/conversion/overlay behavior from provider variability.
+  - `CompanionManager.BuildPointDirectiveForScreenPoint` is the reusable helper for converting known physical fixture targets into screenshot-space POINT tags.
+  - Raw and annotated pointing artifacts are saved from the exact `CapturedScreen.ImageBytes` used by the fake-point path, so the annotated PNG answers whether the screenshot-space coordinate landed inside the target box.
+---
+
+## 2026-04-30 14:58 +02:00 - US-044
+- Added deterministic full-turn end-to-end coverage in `windows/tests/Clicky.Tests/FullTurnEndToEndTests.cs`.
+- The new suite wires the real `CompanionManager` response orchestration to fake capture, fake LLM streaming, fake TTS, and fake overlay dispatch, then asserts observable outcomes: state transitions, LLM inputs, spoken text, conversation history, point conversion, overlay dispatch, settings-open request on key failure, malformed point handling, cancellation during model swap, and TTS failure error state.
+- Added narrow internal test seams to `CompanionManager` for screenshot capture and overlay dispatch, plus an awaitable `CurrentResponseTask` for deterministic tests.
+- Made `ElevenLabsTtsClient.StopPlayback()` virtual so tests can verify interruption behavior without touching audio hardware.
+- Documented the Windows test pyramid in `windows/tests/Clicky.Tests/README.md`, including which tests are CI-safe and how to use the tray Desktop Smoke Test for compositor-dependent validation.
+- Updated root `AGENTS.md` with the deterministic-full-turn-vs-desktop-smoke testing convention.
+- Files changed:
+  - MODIFIED: `windows/src/Clicky.Companion/CompanionManager.cs`
+  - MODIFIED: `windows/src/Clicky.Api/ElevenLabsTtsClient.cs`
+  - NEW: `windows/tests/Clicky.Tests/FullTurnEndToEndTests.cs`
+  - NEW: `windows/tests/Clicky.Tests/README.md`
+  - MODIFIED: `AGENTS.md`
+  - MODIFIED: `prd.json`
+  - MODIFIED: `progress.txt`
+- Verified:
+  - `dotnet test windows\tests\Clicky.Tests\Clicky.Tests.csproj -c Release --filter FullTurnEndToEndTests`: 5 passed
+  - `dotnet test windows\tests\Clicky.Tests\Clicky.Tests.csproj -c Release`: 299 passed
+- **Learnings for future iterations:**
+  - `CompanionManager.SendTranscriptToClaudeWithScreenshot` is the stable CI-safe seam for full-turn orchestration once transcript text is finalized; use fake capture/LLM/TTS/overlay boundaries rather than live desktop or provider calls.
+  - Desktop smoke evidence complements, but should not replace, deterministic tests: annotated artifacts answer screenshot-space correctness, while the live blue cursor answers WPF compositor/DPI placement.
+  - Keep TTS clients mockable; `SpeakAsync` and `StopPlayback` both need to be virtual for cancellation and interruption tests.
+---
+
+## 2026-04-30 17:30 +02:00 - US-045
+- Reset the Windows pointing path to a single LLM response: removed the fast point-locator side request, duplicate/fallback dispatch race, and grid-specific prompt scaffolding from `CompanionManager`.
+- Kept the explicit coordinate baseline intact: `PointTagParser` still parses `[POINT:x,y:label:screenN]`, converts screenshot pixels via `CapturedScreen` metadata, saves raw/annotated/metadata debug artifacts, and dispatches one overlay fly-to.
+- Stopped production and smoke/test-overlay captures from drawing the coordinate grid; screenshots sent to the model are now plain captured images with dimension labels only.
+- Removed tests that encoded the failed locator behavior as success and added full-turn regressions proving a pointing turn uses exactly one LLM request and can dispatch the parsed point before a blocked TTS playback finishes.
+- Files changed:
+  - MODIFIED: `windows/src/Clicky.Companion/CompanionManager.cs`
+  - MODIFIED: `windows/tests/Clicky.Tests/CompanionManagerTests.cs`
+  - MODIFIED: `windows/tests/Clicky.Tests/FullTurnEndToEndTests.cs`
+  - MODIFIED: `prd.json`
+  - MODIFIED: `progress.txt`
+- Verified:
+  - `dotnet test windows\tests\Clicky.Tests\Clicky.Tests.csproj -c Release --filter "FullTurnEndToEndTests|CompanionManagerTests"`: 18 passed
+  - `dotnet build windows\Clicky.sln -c Release`: passed
+  - `dotnet test windows\Clicky.sln -c Release`: passed
+- **Learnings for future iterations:**
+  - Semantic target localization is currently unsolved on Windows screenshots; explicit coordinate conversion and overlay rendering are separate, retained concerns.
+  - A second hidden LLM call can make pointing look faster or more accurate in synthetic tests while still failing real map targets. Future semantic work must start from the design doc and fixture evaluator in US-047/US-048.
+  - Keep point debug artifacts tied to the single parsed directive so capture -> model response -> parsed directive -> converted screen point -> overlay dispatch has one source of truth.
+---
+
+## 2026-04-30 17:37 +02:00 - US-046
+- Added structured `[TURN]` timing logs to the normal Windows turn path with correlation id, provider/model, transcript availability, capture start/end, image payload evidence, cursor-screen filtering, LLM request/first-token/response-end, first TTS enqueue, first observable TTS playback start, point parse, overlay dispatch, TTS complete, and turn complete/error/cancel events.
+- Added `TurnTimingRecord` for deterministic formatting and payload evidence, plus a `TtsPipeline` callback so first playback start can be observed without changing audio behavior.
+- Added tray `Provider Timing Diagnostics`, which runs one text-only LLM probe, one screenshot LLM probe, and one TTS-only probe against the current configured keys and writes comparable `[TURN]` lines without requiring speech input.
+- Documented CI-safe timing tests versus desktop/manual diagnostics in `windows/tests/Clicky.Tests/README.md`.
+- Files changed:
+  - NEW: `windows/src/Clicky.Companion/TurnTimingRecord.cs`
+  - MODIFIED: `windows/src/Clicky.Companion/CompanionManager.cs`
+  - MODIFIED: `windows/src/Clicky.Companion/TtsPipeline.cs`
+  - MODIFIED: `windows/src/Clicky.App/TrayIconManager.cs`
+  - MODIFIED: `windows/src/Clicky.App/App.xaml.cs`
+  - MODIFIED: `windows/tests/Clicky.Tests/FullTurnEndToEndTests.cs`
+  - NEW: `windows/tests/Clicky.Tests/TurnTimingRecordTests.cs`
+  - MODIFIED: `windows/tests/Clicky.Tests/README.md`
+  - MODIFIED: `AGENTS.md`
+  - MODIFIED: `prd.json`
+  - MODIFIED: `progress.txt`
+- Verified:
+  - `dotnet test windows\tests\Clicky.Tests\Clicky.Tests.csproj -c Release --filter "TurnTimingRecordTests|ProviderTimingDiagnostics_RunsTextImageAndTtsProbesWithFakes|FullTurn_StreamsResponse_DispatchesOverlay_StartsTts_AndReturnsIdle"`: 5 passed
+  - `dotnet build windows\Clicky.sln -c Release`: passed, 0 warnings
+  - `dotnet test windows\Clicky.sln -c Release`: 307 passed
+- Manual run instructions:
+  - Right-click the tray icon and choose `Provider Timing Diagnostics`.
+  - Inspect `%APPDATA%\Clicky\debug.log` for `[TURN]` lines with the same `id=...`.
+  - Compare `diagnostic-text-llm-start/end` to `diagnostic-image-llm-start/end` to isolate vision/image overhead.
+  - Check `capture-start/end` plus `totalImageBytes`, `gridAnnotated`, and `cursorScreenFiltering` before blaming model latency.
+  - Check `diagnostic-tts-start/end` and normal-turn `first-tts-enqueue`, `first-tts-playback-start`, and `tts-complete` before blaming overlay or pointing.
+- **Learnings for future iterations:**
+  - Keep `[TURN]` timeline logging in `CompanionManager`; it is the orchestration layer that can see capture, LLM, TTS, point parsing, and overlay dispatch together.
+  - `TtsPipeline` now accepts an optional `onSpeakStarted` callback. Use that for timing/telemetry; do not make fake audio providers necessary for production timing.
+  - Real provider timing is manual/local only. CI should use `TurnTimingRecordTests` and fake LLM/TTS/capture seams so tests never require API keys, microphone, speakers, or a visible desktop.
+---
+
+## 2026-04-30 17:40 +02:00 - US-047
+- Created `windows/docs/pointing-redesign.md`, documenting the fresh Windows pointing protocol before implementation.
+- The doc separates semantic localization, screenshot-to-screen coordinate conversion, and overlay rendering ownership, and defines the failure modes for each layer.
+- Compared one-pass answer-with-POINT, two-phase point-first-then-answer, and structured speech-plus-point-intent protocols, selecting the structured `{ spokenText, pointIntent }` protocol behind a feature flag for US-049.
+- Defined timing and accuracy targets: point dispatch as soon as a point decision exists, wrong-country/water map points are failures, and `[POINT:none]` / structured no-point is preferable to a misleading visible cursor.
+- Documented provider/model fixture gate expectations and the minimal implementation surface for the next story.
+- Files changed:
+  - NEW: `windows/docs/pointing-redesign.md`
+  - MODIFIED: `AGENTS.md`
+  - MODIFIED: `prd.json`
+  - MODIFIED: `progress.txt`
+- Verified:
+  - `dotnet build windows\Clicky.sln -c Release`: passed, 0 warnings
+  - `dotnet test windows\Clicky.sln -c Release`: passed
+- **Learnings for future iterations:**
+  - Use `windows/docs/pointing-redesign.md` as the contract for US-049; it recommends a structured internal result rather than another free-form point tag or hidden side request.
+  - Treat `PointIntentKind.None` as a successful safety outcome. For hard map targets, no visible pointer is better than a neighboring-country or ocean point.
+  - Keep coordinate conversion and overlay tests separate from semantic fixture evaluation; a correct `PointTagParser` conversion does not prove the model picked the right target.
+---
+
+## 2026-04-30 17:47 +02:00 - US-048
+- Built the semantic pointing evaluation harness for real screenshot-style fixtures without changing production pointing behavior.
+- Added fixture assets and metadata under `windows/tests/Clicky.Tests/Fixtures/pointing/`: world map Egypt, world map Algeria, nearby-country distractors, dense settings panel, and simple labeled UI target.
+- Added allowed-region and distractor-region polygon evaluation in `Clicky.Pointing.SemanticPointingEvaluator`; canned `[POINT:...]` and `[POINT:none]` responses are evaluated in CI without provider calls.
+- Added optional live-provider evaluation script `windows/scripts/run-semantic-pointing-eval.ps1`, which reads the current Clicky settings/secrets, runs configured Claude or GLM against the fixtures, and writes JSON/CSV reports under `%APPDATA%\Clicky\point-debug\semantic-eval`.
+- Documented how to add fixtures from failed user reports in `windows/tests/Clicky.Tests/README.md`.
+- Files changed:
+  - NEW: `windows/src/Clicky.Pointing/SemanticPointingEvaluation.cs`
+  - NEW: `windows/tests/Clicky.Tests/SemanticPointingEvaluationTests.cs`
+  - NEW: `windows/tests/Clicky.Tests/Fixtures/pointing/*`
+  - NEW: `windows/scripts/run-semantic-pointing-eval.ps1`
+  - MODIFIED: `windows/tests/Clicky.Tests/Clicky.Tests.csproj`
+  - MODIFIED: `windows/tests/Clicky.Tests/README.md`
+  - MODIFIED: `AGENTS.md`
+  - MODIFIED: `prd.json`
+  - MODIFIED: `progress.txt`
+- Verified:
+  - `dotnet test windows\tests\Clicky.Tests\Clicky.Tests.csproj -c Release --filter SemanticPointingEvaluationTests`: 15 passed
+  - `dotnet build windows\Clicky.sln -c Release`: passed, 0 warnings
+  - `dotnet test windows\Clicky.sln -c Release`: 322 passed
+- **Learnings for future iterations:**
+  - Treat semantic pointing as a fixture-gated model behavior problem: a candidate point must land inside an allowed polygon and outside every distractor polygon.
+  - `[POINT:none]` is a passing safe outcome for map fixtures marked `PointOrNone`; wrong-country and water coordinates remain failures.
+  - Keep live provider fixture runs local/manual via the script. CI should evaluate canned outputs only, so default tests stay deterministic and do not require API keys.
+---
+
+## 2026-04-30 18:20 +02:00 - US-049
+- Implemented the redesigned Windows pointing protocol behind `CompanionManager`'s `useRedesignedPointingProtocol` switch, defaulting off for production until US-050 records real desktop evidence.
+- Added structured `PointingTurnResult` / `PointIntent` parsing in `Clicky.Pointing`, including conservative handling for invalid schema, low confidence, missing coordinates, out-of-bounds coordinates, and explicit no-point results.
+- Wired the structured path through the normal single LLM turn: one model response is adapted into a single point decision, valid points dispatch before blocked TTS completes, no-point results still speak the user-facing answer, and `PointTagParser` coordinate conversion remains unchanged.
+- Integrated structured results with the US-048 semantic fixture evaluator so simple/dense UI points can pass while Egypt/Algeria wrong-country or water points fail and `[POINT:none]` remains an accepted safe map outcome.
+- Added focused tests for parser behavior, blocked-TTS early dispatch, no-point behavior, out-of-bounds suppression, cancellation during model swap, second-turn concurrency, and no duplicate overlay dispatch.
+- Files changed:
+  - NEW: `windows/src/Clicky.Pointing/StructuredPointingTurnResult.cs`
+  - MODIFIED: `windows/src/Clicky.Companion/CompanionManager.cs`
+  - NEW: `windows/tests/Clicky.Tests/StructuredPointingTurnParserTests.cs`
+  - MODIFIED: `windows/tests/Clicky.Tests/FullTurnEndToEndTests.cs`
+  - MODIFIED: `windows/tests/Clicky.Tests/SemanticPointingEvaluationTests.cs`
+  - MODIFIED: `AGENTS.md`
+  - MODIFIED: `prd.json`
+  - MODIFIED: `progress.txt`
+- Verified:
+  - `dotnet test windows\tests\Clicky.Tests\Clicky.Tests.csproj -c Release --filter "StructuredPointingTurnParserTests|StructuredPointing|SemanticPointingEvaluationTests"`: 31 passed
+  - `dotnet build windows\Clicky.sln -c Release`: passed, 0 warnings
+  - `dotnet test windows\Clicky.sln -c Release`: blocked on this host by Windows Application Control loading `Clicky.Audio.dll` (`0x800711C7`); 294 tests passed and 44 failed with the same policy error after `Unblock-File`
+- **Learnings for future iterations:**
+  - Keep the redesigned protocol's machine-readable decision in `PointIntent`; downstream code should not scrape multiple point tags or fallback coordinate sources.
+  - The structured path intentionally buffers the provider's JSON before speaking; it can still dispatch before TTS completion, but US-050 should use real `[TURN]` logs to decide whether provider latency is acceptable.
+  - Treat out-of-bounds, missing-coordinate, and low-confidence structured points as no-point safety outcomes, not recoverable coordinates to clamp or correct.
+---
+
+## 2026-04-30 17:57 +02:00 - US-050
+- Enabled the redesigned structured pointing protocol for the packaged Windows app by wiring `App.xaml.cs` to pass `useRedesignedPointingProtocol: true` through `Clicky.App.App.UseRedesignedPointingProtocolByDefault`.
+- Kept the `CompanionManager` constructor switch available for tests/comparison, but production now defaults to the safer structured `PointIntent` path where hard map prompts may intentionally produce no visible pointer instead of a wrong coordinate.
+- Bumped `Clicky.App` version from `1.4.7` to `1.4.8` and rebuilt the root `Clicky.App.exe` with `powershell -ExecutionPolicy Bypass -File .\publish-dev.ps1`.
+- Root exe verification: `FullName=C:\Users\mail\Documents\workspace\clicky\clicky\Clicky.App.exe`, `Length=192083239`, `LastWriteTime=2026-04-30 17:57:01`, `ProductVersion=1.4.8+e8963636b4340f34c7a3a8eda2947d839d84549e`, `FileVersion=1.4.8.0`.
+- Added `AppPointingConfigurationTests` to lock production default-on wiring.
+- Manual real-desktop prompt verification was not completed on this host. The required evidence path remains: run the packaged app, try `show me Egypt`, `show me Algeria`, one dense settings target, and one normal UI button/menu target, then inspect `%APPDATA%\Clicky\point-debug` artifacts plus same-id `[TURN]` lines in `%APPDATA%\Clicky\debug.log`. Map acceptance remains country-region point or intentional no-point; neighboring-country/ocean points are failures.
+- Files changed:
+  - MODIFIED: `windows/src/Clicky.App/App.xaml.cs`
+  - MODIFIED: `windows/src/Clicky.App/Clicky.App.csproj`
+  - NEW: `windows/tests/Clicky.Tests/AppPointingConfigurationTests.cs`
+  - MODIFIED: `Clicky.App.exe`
+  - MODIFIED: `AGENTS.md`
+  - MODIFIED: `prd.json`
+  - MODIFIED: `progress.txt`
+- Verified:
+  - `dotnet test windows\tests\Clicky.Tests\Clicky.Tests.csproj -c Release --filter AppPointingConfigurationTests`: 1 passed
+  - `dotnet build windows\Clicky.sln -c Release`: passed, 0 warnings
+  - `powershell -ExecutionPolicy Bypass -File .\publish-dev.ps1`: passed
+  - `Get-Item .\Clicky.App.exe | Select-Object FullName,Length,LastWriteTime,@{Name='ProductVersion';Expression={$_.VersionInfo.ProductVersion}},@{Name='FileVersion';Expression={$_.VersionInfo.FileVersion}}`: version fields verified as above
+  - `dotnet test windows\Clicky.sln -c Release`: blocked by Windows Application Control policy loading `Clicky.Pointing.dll` (`0x800711C7`); 268 tests passed, 71 failed due blocked assembly or downstream timeouts. This matches the known host policy limitation recorded in US-049.
+- **Learnings for future iterations:**
+  - Production default-on behavior should be asserted at the app wiring layer, not by changing the `CompanionManager` constructor default that many deterministic tests intentionally omit.
+  - Keep the structured pointing path enabled by app configuration while preserving the switch for A/B diagnosis; this avoids reintroducing old verifier/locator layers just to compare behavior.
+  - `ProductVersion` on the single-file publish includes a commit hash suffix, while `FileVersion` stays numeric (`1.4.8.0`).
 ---

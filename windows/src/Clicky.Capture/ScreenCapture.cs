@@ -17,7 +17,7 @@ namespace Clicky.Capture;
 /// </summary>
 public static class ScreenCapture
 {
-    private const int MaxDimension = 2048;
+    private const int MaxDimension = 3840;
     private const long JpegQuality = 75;
 
     /// <summary>
@@ -30,11 +30,12 @@ public static class ScreenCapture
     /// Used only when the WGC exclusion API is available.
     /// </param>
     public static Task<List<CapturedScreen>> CaptureAllScreensAsJpegAsync(
-        IReadOnlyList<IntPtr>? excludeHwnds = null)
-        => CaptureAllScreensAsJpegAsync(excludeHwnds, CancellationToken.None);
+        IReadOnlyList<IntPtr>? excludeHwnds = null,
+        bool drawGrid = false)
+        => CaptureAllScreensAsJpegAsync(excludeHwnds, CancellationToken.None, drawGrid);
 
     public static async Task<List<CapturedScreen>> CaptureAllScreensAsJpegAsync(
-        IReadOnlyList<IntPtr>? excludeHwnds, CancellationToken ct)
+        IReadOnlyList<IntPtr>? excludeHwnds, CancellationToken ct, bool drawGrid = false)
     {
         ct.ThrowIfCancellationRequested();
         // 1. Enumerate monitors via EnumDisplayMonitors
@@ -63,7 +64,7 @@ public static class ScreenCapture
         {
             try
             {
-                results = await CaptureWithWgcAsync(monitors, cursorPoint);
+                results = await CaptureWithWgcAsync(monitors, cursorPoint, drawGrid);
             }
             catch
             {
@@ -72,7 +73,7 @@ public static class ScreenCapture
             }
         }
 
-        results ??= CaptureWithGdi(monitors, cursorPoint);
+        results ??= CaptureWithGdi(monitors, cursorPoint, drawGrid);
 
         if (results.Count == 0)
             throw new InvalidOperationException("Failed to capture any screen.");
@@ -100,7 +101,8 @@ public static class ScreenCapture
 
     private static async Task<List<CapturedScreen>> CaptureWithWgcAsync(
         List<MonitorInfo> monitors,
-        Point cursorPoint)
+        Point cursorPoint,
+        bool drawGrid)
     {
         // Create D3D11 device → IDXGIDevice → WinRT IDirect3DDevice
         using var d3dDevice = CreateDirect3DDevice();
@@ -116,14 +118,32 @@ public static class ScreenCapture
             var item = CreateCaptureItemForMonitor(monitor.Handle);
             var itemSize = item.Size;
 
-            // Calculate scaled dimensions (max 1280px on longer edge)
-            var (scaledW, scaledH) = CalculateScaledSize(itemSize.Width, itemSize.Height);
+            // Calculate scaled dimensions from monitor bounds (not itemSize) so that
+            // ScreenshotPixelWidth/Height is derived from the same source as DisplayBounds.
+            // The frame pool still uses itemSize (the actual WGC surface size).
+            var (scaledW, scaledH) = CalculateScaledSize(monitor.Bounds.Width, monitor.Bounds.Height);
+
+            if (itemSize.Width != monitor.Bounds.Width || itemSize.Height != monitor.Bounds.Height)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"[ScreenCapture] WGC itemSize ({itemSize.Width}x{itemSize.Height}) differs from " +
+                    $"monitor bounds ({monitor.Bounds.Width}x{monitor.Bounds.Height}) for monitor {i}");
+            }
 
             // Capture a single frame
             var jpegBytes = await CaptureSingleFrameAsync(d3dDevice, item, itemSize, scaledW, scaledH);
 
             if (jpegBytes is not null)
             {
+                if (drawGrid)
+                {
+                    // Decode JPEG → GDI+ Bitmap, draw grid, re-encode
+                    using var ms = new MemoryStream(jpegBytes);
+                    using var bmp = new Bitmap(ms);
+                    DrawCoordinateGrid(bmp);
+                    jpegBytes = EncodeJpeg(bmp, JpegQuality);
+                }
+
                 results.Add(new CapturedScreen
                 {
                     ImageBytes = jpegBytes,
@@ -307,7 +327,8 @@ public static class ScreenCapture
 
     private static List<CapturedScreen> CaptureWithGdi(
         List<MonitorInfo> monitors,
-        Point cursorPoint)
+        Point cursorPoint,
+        bool drawGrid)
     {
         var results = new List<CapturedScreen>();
 
@@ -323,6 +344,9 @@ public static class ScreenCapture
             {
                 g.CopyFromScreen(bounds.X, bounds.Y, 0, 0, bounds.Size, CopyPixelOperation.SourceCopy);
             }
+
+            if (drawGrid)
+                DrawCoordinateGrid(fullBitmap);
 
             // Resize to max 1280px on longer edge
             var (scaledW, scaledH) = CalculateScaledSize(bounds.Width, bounds.Height);
@@ -348,6 +372,70 @@ public static class ScreenCapture
         }
 
         return results;
+    }
+
+    // ── Coordinate grid overlay ──────────────────────────────────────
+
+    private const int MinorGridSpacing = 100;
+    private const int GridSpacing = 200;
+
+    /// <summary>
+    /// Draws a subtle coordinate grid overlay on a GDI+ bitmap in-place.
+    /// Grid lines every 200 pixels with coordinate labels at intersections.
+    /// </summary>
+    public static void DrawCoordinateGrid(Bitmap bitmap)
+    {
+        using var g = Graphics.FromImage(bitmap);
+        g.SmoothingMode = SmoothingMode.Default;
+        g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+
+        using var minorPen = new Pen(Color.FromArgb(38, 180, 180, 180), 1f);
+        using var pen = new Pen(Color.FromArgb(86, 220, 220, 220), 1f);
+        using var font = new Font("Segoe UI", 9f, FontStyle.Regular, GraphicsUnit.Point);
+        using var textBrush = new SolidBrush(Color.White);
+        using var bgBrush = new SolidBrush(Color.FromArgb(160, 0, 0, 0));
+
+        int w = bitmap.Width;
+        int h = bitmap.Height;
+
+        // Draw light 100 px minor lines first, then stronger 200 px labeled lines.
+        for (int x = MinorGridSpacing; x < w; x += MinorGridSpacing)
+            if (x % GridSpacing != 0)
+                g.DrawLine(minorPen, x, 0, x, h);
+
+        for (int y = MinorGridSpacing; y < h; y += MinorGridSpacing)
+            if (y % GridSpacing != 0)
+                g.DrawLine(minorPen, 0, y, w, y);
+
+        // Draw vertical grid lines
+        for (int x = GridSpacing; x < w; x += GridSpacing)
+            g.DrawLine(pen, x, 0, x, h);
+
+        // Draw horizontal grid lines
+        for (int y = GridSpacing; y < h; y += GridSpacing)
+            g.DrawLine(pen, 0, y, w, y);
+
+        // Draw coordinate labels at intersections
+        for (int x = GridSpacing; x < w; x += GridSpacing)
+        {
+            for (int y = GridSpacing; y < h; y += GridSpacing)
+            {
+                var label = $"{x},{y}";
+                var size = g.MeasureString(label, font);
+
+                // Offset label slightly from the intersection
+                float lx = x + 3f;
+                float ly = y + 3f;
+
+                // Keep label within bitmap bounds
+                if (lx + size.Width > w) lx = x - size.Width - 3f;
+                if (ly + size.Height > h) ly = y - size.Height - 3f;
+
+                // Background rectangle for contrast
+                g.FillRectangle(bgBrush, lx - 1f, ly - 1f, size.Width + 2f, size.Height);
+                g.DrawString(label, font, textBrush, lx, ly);
+            }
+        }
     }
 
     // ── Shared helpers ─────────────────────────────────────────────────

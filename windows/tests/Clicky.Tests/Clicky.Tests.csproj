@@ -27,4 +27,8 @@
     <ProjectReference Include="..\..\src\Clicky.Pointing\Clicky.Pointing.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="Fixtures\**\*.*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

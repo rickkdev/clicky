@@ -28,6 +28,9 @@ public class OverlayWindow : Window
     /// <summary>The blue cursor control hosted on this overlay.</summary>
     public BlueCursorControl BlueCursor { get; }
 
+    /// <summary>The exact-point debug crosshair hosted on this overlay.</summary>
+    public DebugCrosshairControl DebugCrosshair { get; }
+
     public OverlayWindow(Rectangle monitorBounds, double dpiScaleX = 1.0, double dpiScaleY = 1.0)
     {
         MonitorBounds = monitorBounds;
@@ -56,10 +59,12 @@ public class OverlayWindow : Window
 
         // Host the blue cursor control on a Canvas that fills the overlay
         BlueCursor = new BlueCursorControl();
+        DebugCrosshair = new DebugCrosshairControl();
         var canvas = new Canvas
         {
             IsHitTestVisible = false
         };
+        canvas.Children.Add(DebugCrosshair.Visual);
         canvas.Children.Add(BlueCursor.Visual);
         Content = canvas;
     }
@@ -80,6 +85,31 @@ public class OverlayWindow : Window
                  | NativeMethods.WS_EX_TOOLWINDOW
                  | NativeMethods.WS_EX_NOACTIVATE;
         NativeMethods.SetWindowLong(Hwnd, NativeMethods.GWL_EXSTYLE, exStyle);
+        ReassertTopmost();
+    }
+
+    /// <summary>
+    /// Reasserts the Win32 topmost z-order without activating the overlay.
+    /// Transparent no-activate WPF windows can drift behind other topmost-ish UI,
+    /// so callers refresh this immediately before showing the cursor.
+    /// </summary>
+    public void ReassertTopmost()
+    {
+        if (Hwnd == IntPtr.Zero)
+            return;
+
+        Topmost = true;
+        NativeMethods.SetWindowPos(
+            Hwnd,
+            NativeMethods.HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            NativeMethods.SWP_NOMOVE |
+            NativeMethods.SWP_NOSIZE |
+            NativeMethods.SWP_NOACTIVATE |
+            NativeMethods.SWP_SHOWWINDOW);
     }
 
     /// <summary>Disposes the hosted BlueCursorControl when the window closes.</summary>

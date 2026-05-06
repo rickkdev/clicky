@@ -1,0 +1,225 @@
+using System.Drawing;
+using System.Text.Json;
+using Clicky.Capture;
+
+namespace Clicky.Pointing;
+
+public enum PointIntentKind
+{
+    None,
+    Point,
+}
+
+public sealed record PointIntent
+{
+    public required PointIntentKind Kind { get; init; }
+    public int? X { get; init; }
+    public int? Y { get; init; }
+    public int? ScreenNumber { get; init; }
+    public string? Label { get; init; }
+    public string? NoPointReason { get; init; }
+
+    public static PointIntent None(string? reason = null) => new()
+    {
+        Kind = PointIntentKind.None,
+        NoPointReason = reason,
+    };
+}
+
+public sealed record PointingTurnResult
+{
+    public required string SpokenText { get; init; }
+    public required PointIntent PointIntent { get; init; }
+}
+
+public static class StructuredPointingTurnParser
+{
+    public static PointingTurnResult Parse(string modelResponse)
+    {
+        if (TryParseJsonObject(modelResponse, out var document))
+        {
+            using (document)
+            {
+                var root = document.RootElement;
+                var spokenText = ReadString(root, "spokenText") ?? string.Empty;
+                var intent = ParsePointIntent(root);
+                return new PointingTurnResult
+                {
+                    SpokenText = spokenText.Trim(),
+                    PointIntent = intent,
+                };
+            }
+        }
+
+        return new PointingTurnResult
+        {
+            SpokenText = PointTagParser.Parse(modelResponse).SpokenText.Trim(),
+            PointIntent = PointIntent.None("invalid_schema"),
+        };
+    }
+
+    public static PointDirective? ToDirective(PointIntent intent, IReadOnlyList<CapturedScreen> screens)
+    {
+        if (intent.Kind != PointIntentKind.Point)
+            return null;
+
+        if (intent.X is not { } x || intent.Y is not { } y)
+            return null;
+
+        if (x < 0 || y < 0)
+            return null;
+
+        var targetScreen = SelectScreen(intent.ScreenNumber, screens);
+        if (targetScreen is null)
+            return null;
+
+        if (x >= targetScreen.ScreenshotPixelWidth || y >= targetScreen.ScreenshotPixelHeight)
+            return null;
+
+        return new PointDirective
+        {
+            X = x,
+            Y = y,
+            Label = string.IsNullOrWhiteSpace(intent.Label) ? "target" : intent.Label.Trim(),
+            ScreenNumber = intent.ScreenNumber,
+        };
+    }
+
+    public static SemanticPointingEvaluationResult EvaluateFixture(
+        SemanticPointingFixture fixture,
+        PointingTurnResult result)
+    {
+        var directive = ToDirective(result.PointIntent, new[]
+        {
+            new CapturedScreen
+            {
+                ImageBytes = Array.Empty<byte>(),
+                Label = "fixture",
+                IsCursorScreen = true,
+                DisplayBounds = new Rectangle(0, 0, fixture.Width, fixture.Height),
+                ScreenshotPixelWidth = fixture.Width,
+                ScreenshotPixelHeight = fixture.Height,
+            }
+        });
+
+        if (directive is null)
+            return SemanticPointingEvaluator.EvaluateResponse(fixture, "[POINT:none]");
+
+        return SemanticPointingEvaluator.EvaluateResponse(
+            fixture,
+            $"[POINT:{directive.X},{directive.Y}:{directive.Label}]");
+    }
+
+    private static PointIntent ParsePointIntent(JsonElement root)
+    {
+        if (!root.TryGetProperty("pointIntent", out var intentElement) ||
+            intentElement.ValueKind != JsonValueKind.Object)
+        {
+            return PointIntent.None("missing_point_intent");
+        }
+
+        var kind = ReadString(intentElement, "kind");
+        if (!string.Equals(kind, "point", StringComparison.OrdinalIgnoreCase))
+        {
+            return PointIntent.None(ReadString(intentElement, "reason")
+                ?? ReadString(intentElement, "noPointReason")
+                ?? "none");
+        }
+
+        var confidence = ReadString(intentElement, "confidence");
+        if (confidence is not null &&
+            !string.Equals(confidence, "high", StringComparison.OrdinalIgnoreCase))
+        {
+            return PointIntent.None("unsafe_low_confidence");
+        }
+
+        var x = ReadInt(intentElement, "x");
+        var y = ReadInt(intentElement, "y");
+        if (x is null || y is null)
+            return PointIntent.None("missing_coordinates");
+
+        return new PointIntent
+        {
+            Kind = PointIntentKind.Point,
+            X = x,
+            Y = y,
+            ScreenNumber = ReadInt(intentElement, "screen") ?? ReadInt(intentElement, "screenNumber"),
+            Label = ReadString(intentElement, "label"),
+        };
+    }
+
+    private static CapturedScreen? SelectScreen(int? screenNumber, IReadOnlyList<CapturedScreen> screens)
+    {
+        if (screens.Count == 0)
+            return null;
+
+        if (screenNumber is null)
+            return screens.FirstOrDefault(s => s.IsCursorScreen) ?? screens[0];
+
+        var index = screenNumber.Value - 1;
+        if (index < 0 || index >= screens.Count)
+            return null;
+
+        return screens[index];
+    }
+
+    private static bool TryParseJsonObject(string text, out JsonDocument document)
+    {
+        document = null!;
+        var trimmed = StripCodeFence(text.Trim());
+        var start = trimmed.IndexOf('{');
+        var end = trimmed.LastIndexOf('}');
+        if (start < 0 || end <= start)
+            return false;
+
+        var json = trimmed[start..(end + 1)];
+        try
+        {
+            document = JsonDocument.Parse(json);
+            return document.RootElement.ValueKind == JsonValueKind.Object;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static string StripCodeFence(string text)
+    {
+        if (!text.StartsWith("```", StringComparison.Ordinal))
+            return text;
+
+        var firstNewline = text.IndexOf('\n');
+        if (firstNewline < 0)
+            return text;
+
+        var withoutOpening = text[(firstNewline + 1)..];
+        var closing = withoutOpening.LastIndexOf("```", StringComparison.Ordinal);
+        return closing >= 0 ? withoutOpening[..closing].Trim() : withoutOpening.Trim();
+    }
+
+    private static string? ReadString(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var property))
+            return null;
+
+        return property.ValueKind == JsonValueKind.String ? property.GetString() : null;
+    }
+
+    private static int? ReadInt(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var property))
+            return null;
+
+        if (property.ValueKind == JsonValueKind.Number && property.TryGetInt32(out var value))
+            return value;
+
+        if (property.ValueKind == JsonValueKind.String &&
+            int.TryParse(property.GetString(), out var stringValue))
+        {
+            return stringValue;
+        }
+
+        return null;
+    }
+}

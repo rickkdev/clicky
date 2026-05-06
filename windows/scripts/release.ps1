@@ -5,7 +5,7 @@
     and optionally wraps it in an Inno Setup installer.
 
 .DESCRIPTION
-    1. Runs dotnet publish to produce a framework-dependent single-file exe.
+    1. Runs dotnet publish to produce a self-contained single-file exe.
     2. If Inno Setup (iscc.exe) is on PATH, compiles the .iss script into
        a Setup_Clicky.exe installer.
 
@@ -51,13 +51,14 @@ if (Test-Path $publishDir) {
     Remove-Item -Recurse -Force $publishDir
 }
 
-# Step 2: Publish as a single-file executable (framework-dependent)
+# Step 2: Publish as a single-file executable (self-contained)
 Write-Host "Publishing Clicky.App..." -ForegroundColor Green
 dotnet publish $appProjectPath `
     -c $Configuration `
     -r $Runtime `
-    --self-contained false `
+    --self-contained true `
     /p:PublishSingleFile=true `
+    /p:IncludeNativeLibrariesForSelfExtract=true `
     -o $publishDir
 
 if ($LASTEXITCODE -ne 0) {

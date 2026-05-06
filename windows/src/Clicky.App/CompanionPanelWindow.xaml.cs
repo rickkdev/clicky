@@ -37,6 +37,15 @@ public partial class CompanionPanelWindow : Window
             return;
         }
 
+        ShowPanel();
+    }
+
+    /// <summary>
+    /// Shows the panel without toggling so app startup and onboarding can
+    /// reliably surface visible UI instead of silently living only in the tray.
+    /// </summary>
+    public void ShowPanel()
+    {
         AnchorNearTray();
         Show();
         Activate();
@@ -88,10 +97,7 @@ public partial class CompanionPanelWindow : Window
     {
         if (Visibility == Visibility.Visible) return;
 
-        AnchorNearTray();
-        Show();
-        Activate();
-        Focus();
+        ShowPanel();
     }
 
     /// <summary>

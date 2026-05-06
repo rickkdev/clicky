@@ -136,6 +136,7 @@ public class ModelSwitchingTests
     {
         var secrets = CreateSecretsStore();
         // Only set z.ai key + audio keys
+        secrets.Write(SecretsStore.OpenAiApiKey, "openai-key");
         secrets.Write(SecretsStore.ZaiApiKey, "zai-key");
         secrets.Write(SecretsStore.AssemblyAiApiKey, "aai-key");
         secrets.Write(SecretsStore.ElevenLabsApiKey, "el-key");
@@ -150,9 +151,9 @@ public class ModelSwitchingTests
         Assert.NotNull(entries[0].DisabledTooltip);
 
         // z.ai models should be enabled
-        Assert.True(entries[3].IsEnabled); // GLM-4.6V
-        Assert.True(entries[4].IsEnabled); // GLM-4.5V
-        Assert.Null(entries[3].DisabledTooltip);
+        Assert.True(entries[4].IsEnabled); // GLM-4.6V
+        Assert.True(entries[5].IsEnabled); // GLM-4.5V
+        Assert.Null(entries[4].DisabledTooltip);
     }
 
     [Fact]
@@ -160,6 +161,7 @@ public class ModelSwitchingTests
     {
         var secrets = CreateSecretsStore();
         secrets.Write(SecretsStore.AnthropicApiKey, "anthropic-key");
+        secrets.Write(SecretsStore.OpenAiApiKey, "openai-key");
         secrets.Write(SecretsStore.AssemblyAiApiKey, "aai-key");
         secrets.Write(SecretsStore.ElevenLabsApiKey, "el-key");
 
@@ -172,16 +174,17 @@ public class ModelSwitchingTests
         Assert.True(entries[2].IsEnabled);
 
         // z.ai models should be disabled
-        Assert.False(entries[3].IsEnabled);
         Assert.False(entries[4].IsEnabled);
-        Assert.NotNull(entries[4].DisabledTooltip);
+        Assert.False(entries[5].IsEnabled);
+        Assert.NotNull(entries[5].DisabledTooltip);
     }
 
     [Fact]
-    public void ModelMenuEntries_BothKeysPresent_AllEnabled()
+    public void ModelMenuEntries_AllKeysPresent_AllEnabled()
     {
         var secrets = CreateSecretsStore();
         secrets.Write(SecretsStore.AnthropicApiKey, "anthropic-key");
+        secrets.Write(SecretsStore.OpenAiApiKey, "openai-key");
         secrets.Write(SecretsStore.ZaiApiKey, "zai-key");
         secrets.Write(SecretsStore.AssemblyAiApiKey, "aai-key");
         secrets.Write(SecretsStore.ElevenLabsApiKey, "el-key");
@@ -203,13 +206,34 @@ public class ModelSwitchingTests
     }
 
     [Fact]
-    public void ModelMenuEntries_HasFiveEntries()
+    public void ModelMenuEntries_OpenAiKeyMissing_OpenAiModelDisabled()
+    {
+        var secrets = CreateSecretsStore();
+        secrets.Write(SecretsStore.AnthropicApiKey, "anthropic-key");
+        secrets.Write(SecretsStore.ZaiApiKey, "zai-key");
+        secrets.Write(SecretsStore.AssemblyAiApiKey, "aai-key");
+        secrets.Write(SecretsStore.ElevenLabsApiKey, "el-key");
+
+        var settings = CreateSettingsStore();
+        var entries = BuildModelMenuEntries(secrets, settings);
+
+        Assert.True(entries[0].IsEnabled);
+        Assert.True(entries[1].IsEnabled);
+        Assert.True(entries[2].IsEnabled);
+        Assert.False(entries[3].IsEnabled);
+        Assert.NotNull(entries[3].DisabledTooltip);
+        Assert.True(entries[4].IsEnabled);
+        Assert.True(entries[5].IsEnabled);
+    }
+
+    [Fact]
+    public void ModelMenuEntries_HasSixEntries()
     {
         var secrets = CreateSecretsStore();
         var settings = CreateSettingsStore();
         var entries = BuildModelMenuEntries(secrets, settings);
 
-        Assert.Equal(5, entries.Count);
+        Assert.Equal(6, entries.Count);
     }
 
     [Fact]
@@ -225,10 +249,12 @@ public class ModelSwitchingTests
         Assert.Equal("claude-haiku-4-5", entries[1].Model);
         Assert.Equal("anthropic", entries[2].Provider);
         Assert.Equal("claude-opus-4-6", entries[2].Model);
-        Assert.Equal("zai", entries[3].Provider);
-        Assert.Equal("glm-4.6v", entries[3].Model);
+        Assert.Equal("openai", entries[3].Provider);
+        Assert.Equal("gpt-5.2", entries[3].Model);
         Assert.Equal("zai", entries[4].Provider);
-        Assert.Equal("glm-4.5v", entries[4].Model);
+        Assert.Equal("glm-4.6v", entries[4].Model);
+        Assert.Equal("zai", entries[5].Provider);
+        Assert.Equal("glm-4.5v", entries[5].Model);
     }
 
     // ───────── Helpers ─────────
@@ -282,8 +308,10 @@ public class ModelSwitchingTests
     private static List<ModelMenuEntry> BuildModelMenuEntries(SecretsStore secrets, SettingsStore settings)
     {
         bool hasAnthropicKey = secrets.Exists(SecretsStore.AnthropicApiKey);
+        bool hasOpenAiKey = secrets.Exists(SecretsStore.OpenAiApiKey);
         bool hasZaiKey = secrets.Exists(SecretsStore.ZaiApiKey);
         string disabledAnthropicTip = "Add your Anthropic key in Settings to enable this model";
+        string disabledOpenAiTip = "Add your OpenAI key in Settings to enable this model";
         string disabledZaiTip = "Add your z.ai key in Settings to enable this model";
 
         return new List<ModelMenuEntry>
@@ -291,6 +319,7 @@ public class ModelSwitchingTests
             new() { Provider = "anthropic", Model = "claude-sonnet-4-6", DisplayName = "Claude Sonnet 4.6", IsEnabled = hasAnthropicKey, DisabledTooltip = hasAnthropicKey ? null : disabledAnthropicTip },
             new() { Provider = "anthropic", Model = "claude-haiku-4-5", DisplayName = "Claude Haiku 4.5", IsEnabled = hasAnthropicKey, DisabledTooltip = hasAnthropicKey ? null : disabledAnthropicTip },
             new() { Provider = "anthropic", Model = "claude-opus-4-6", DisplayName = "Claude Opus 4.6", IsEnabled = hasAnthropicKey, DisabledTooltip = hasAnthropicKey ? null : disabledAnthropicTip },
+            new() { Provider = "openai", Model = "gpt-5.2", DisplayName = "GPT-5.2", IsEnabled = hasOpenAiKey, DisabledTooltip = hasOpenAiKey ? null : disabledOpenAiTip },
             new() { Provider = "zai", Model = "glm-4.6v", DisplayName = "GLM-4.6V", IsEnabled = hasZaiKey, DisabledTooltip = hasZaiKey ? null : disabledZaiTip },
             new() { Provider = "zai", Model = "glm-4.5v", DisplayName = "GLM-4.5V", IsEnabled = hasZaiKey, DisabledTooltip = hasZaiKey ? null : disabledZaiTip },
         };

@@ -70,6 +70,19 @@ public static partial class PointTagParser
         PointDirective directive,
         IReadOnlyList<CapturedScreen> screens)
     {
+        var detailed = ConvertToScreenCoordinatesDetailed(directive, screens);
+        return detailed is null
+            ? null
+            : (detailed.ScreenPoint, detailed.DisplayBounds);
+    }
+
+    /// <summary>
+    /// Converts a directive and returns all intermediate values for debug logging.
+    /// </summary>
+    public static PointConversionResult? ConvertToScreenCoordinatesDetailed(
+        PointDirective directive,
+        IReadOnlyList<CapturedScreen> screens)
+    {
         if (screens.Count == 0)
             return null;
 
@@ -90,18 +103,26 @@ public static partial class PointTagParser
         var clampedY = Math.Max(0, Math.Min(directive.Y, target.ScreenshotPixelHeight - 1));
 
         // Scale from screenshot pixels to display pixels
-        // (screenshot may have been resized to 2048px max edge)
         var scaleX = (double)target.DisplayBounds.Width / target.ScreenshotPixelWidth;
         var scaleY = (double)target.DisplayBounds.Height / target.ScreenshotPixelHeight;
 
         var displayLocalX = clampedX * scaleX;
         var displayLocalY = clampedY * scaleY;
 
-        // Convert to global desktop coordinates by adding the display's origin
-        // (Windows uses top-left origin like screenshots, so no Y-flip needed unlike Mac/AppKit)
+        // Convert to global desktop coordinates by adding the display's origin.
         var globalX = displayLocalX + target.DisplayBounds.X;
         var globalY = displayLocalY + target.DisplayBounds.Y;
 
-        return (new System.Windows.Point(globalX, globalY), target.DisplayBounds);
+        return new PointConversionResult
+        {
+            TargetScreen = target,
+            ClampedX = clampedX,
+            ClampedY = clampedY,
+            ScaleX = scaleX,
+            ScaleY = scaleY,
+            DisplayLocalPoint = new System.Windows.Point(displayLocalX, displayLocalY),
+            ScreenPoint = new System.Windows.Point(globalX, globalY),
+            DisplayBounds = target.DisplayBounds,
+        };
     }
 }

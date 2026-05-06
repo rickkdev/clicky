@@ -9,7 +9,8 @@ using System.Windows.Threading;
 namespace Clicky.Overlay;
 
 /// <summary>
-/// A blue glowing triangle cursor with speech bubble that can fly to a target point.
+/// A blue glowing triangle cursor with speech bubble that follows the OS cursor
+/// and can fly to a target point.
 /// Mirrors <c>BlueCursorView</c> from the Mac reference (OverlayWindow.swift).
 ///
 /// The triangle is 16×16 DIPs, colored #3380FF with a glow (DropShadowEffect).
@@ -23,6 +24,7 @@ public sealed class BlueCursorControl : IDisposable
 
     /// <summary>Triangle size in DIPs (matches Mac 16×16 pt).</summary>
     internal const double TriangleSize = 16.0;
+    internal const double FollowScale = 0.85;
 
     /// <summary>Blue accent color #3380FF.</summary>
     internal static readonly Color AccentColor = Color.FromRgb(0x33, 0x80, 0xFF);
@@ -36,6 +38,9 @@ public sealed class BlueCursorControl : IDisposable
 
     /// <summary>Rest rotation angle in degrees (cursor-like orientation).</summary>
     private const double RestAngle = -35.0;
+    private const double PointingOffsetX = 8.0;
+    private const double PointingOffsetY = 12.0;
+    private const double EdgePadding = 20.0;
 
     /// <summary>Duration the cursor lingers at the target before fading.</summary>
     private const double LingerSeconds = 3.0;
@@ -76,8 +81,13 @@ public sealed class BlueCursorControl : IDisposable
 
     private DispatcherTimer? _flightTimer;
     private DispatcherTimer? _lingerTimer;
+    private DispatcherTimer? _followTimer;
+    private DispatcherTimer? _pointingCompletionFallbackTimer;
     private DateTime _flightStartTime;
     private double _flightDurationSeconds;
+    private System.Drawing.Rectangle _followOverlayBounds;
+    private double _followDpiScaleX = 1.0;
+    private double _followDpiScaleY = 1.0;
 
     // Bézier control points (in overlay-local coordinates)
     private Point _bezierP0; // start
@@ -85,6 +95,9 @@ public sealed class BlueCursorControl : IDisposable
     private Point _bezierP2; // end (target)
 
     private bool _isVisible;
+    private bool _isPointing;
+    private bool _followingRequested;
+    private bool _followingSuspended;
     private bool _disposed;
 
     public BlueCursorControl()
@@ -176,6 +189,55 @@ public sealed class BlueCursorControl : IDisposable
     /// <summary>Whether the cursor is currently visible (flying or lingering).</summary>
     public bool IsVisible => _isVisible;
 
+    /// <summary>Raised after a point animation finishes and the control is ready to follow again.</summary>
+    public event EventHandler? PointingCompleted;
+
+    /// <summary>Starts the idle cursor-following mode for this overlay.</summary>
+    public void StartFollowing(
+        System.Drawing.Rectangle overlayBounds,
+        double dpiScaleX,
+        double dpiScaleY)
+    {
+        _followOverlayBounds = overlayBounds;
+        _followDpiScaleX = dpiScaleX;
+        _followDpiScaleY = dpiScaleY;
+        _followingRequested = true;
+        _followingSuspended = false;
+
+        if (!_isPointing)
+        {
+            EnsureFollowTimer();
+            UpdateFollowPosition();
+        }
+    }
+
+    /// <summary>Temporarily hides the cursor and stops tracking the OS cursor.</summary>
+    public void SuspendFollowing()
+    {
+        _followingSuspended = true;
+        StopFollowTimer();
+        StopAllAnimations();
+        _isPointing = false;
+        _bubbleBorder.Visibility = Visibility.Collapsed;
+        _canvas.Visibility = Visibility.Collapsed;
+        _canvas.Opacity = 1.0;
+        _isVisible = false;
+    }
+
+    /// <summary>Resumes cursor-following after a temporary suspension.</summary>
+    public void ResumeFollowing()
+    {
+        if (!_followingRequested)
+            return;
+
+        _followingSuspended = false;
+        if (!_isPointing)
+        {
+            EnsureFollowTimer();
+            UpdateFollowPosition();
+        }
+    }
+
     /// <summary>
     /// Animates the blue cursor from the current OS cursor position to <paramref name="targetPoint"/>
     /// on the overlay whose bounds contain the target, showing <paramref name="bubbleText"/> on arrival.
@@ -186,10 +248,19 @@ public sealed class BlueCursorControl : IDisposable
     /// <param name="dpiScaleX">DPI scale factor for the monitor (1.0 at 100%, 1.5 at 150%).</param>
     /// <param name="dpiScaleY">DPI scale factor for the monitor (1.0 at 100%, 1.5 at 150%).</param>
     /// <param name="bubbleText">Text to show in the speech bubble (if null/empty, a random phrase is picked).</param>
-    public void FlyTo(Point targetPoint, System.Drawing.Rectangle overlayBounds, double dpiScaleX, double dpiScaleY, string? bubbleText)
+    public void FlyTo(
+        Point targetPoint,
+        System.Drawing.Rectangle overlayBounds,
+        double dpiScaleX,
+        double dpiScaleY,
+        string? bubbleText,
+        bool pinpointMode = false,
+        Action<string>? logger = null)
     {
         // Cancel any in-progress animation
         StopAllAnimations();
+        StopFollowTimer();
+        _isPointing = true;
 
         // Determine start point: current OS cursor position (physical pixels)
         NativeMethods.GetCursorPos(out var cursorPos);
@@ -201,9 +272,18 @@ public sealed class BlueCursorControl : IDisposable
         var startLocal = new Point(
             (startGlobalPhysical.X - overlayBounds.X) / dpiScaleX,
             (startGlobalPhysical.Y - overlayBounds.Y) / dpiScaleY);
-        var endLocal = new Point(
+        var rawEndLocal = new Point(
             (targetPoint.X - overlayBounds.X) / dpiScaleX,
             (targetPoint.Y - overlayBounds.Y) / dpiScaleY);
+        var overlayWidth = overlayBounds.Width / dpiScaleX;
+        var overlayHeight = overlayBounds.Height / dpiScaleY;
+        var endLocal = ComputePointingDestination(rawEndLocal, overlayWidth, overlayHeight, pinpointMode);
+
+        logger?.Invoke(
+            $"[POINT] cursor: startPhysical=({startGlobalPhysical.X:F1},{startGlobalPhysical.Y:F1}) " +
+            $"targetPhysical=({targetPoint.X:F1},{targetPoint.Y:F1}) rawTargetLocal=({rawEndLocal.X:F2},{rawEndLocal.Y:F2}) " +
+            $"finalLocal=({endLocal.X:F2},{endLocal.Y:F2}) overlayDip={overlayWidth:F2}x{overlayHeight:F2} " +
+            $"dpiScale=({dpiScaleX:F3},{dpiScaleY:F3}) pinpoint={pinpointMode}");
 
         // Compute Bézier arc: P0=start, P2=end, P1=control point (offset upward)
         var dx = endLocal.X - startLocal.X;
@@ -251,7 +331,12 @@ public sealed class BlueCursorControl : IDisposable
     /// </summary>
     public void Hide()
     {
+        _followingRequested = false;
+        _followingSuspended = false;
+        StopFollowTimer();
         StopAllAnimations();
+        _isPointing = false;
+        _bubbleBorder.Visibility = Visibility.Collapsed;
         _canvas.Visibility = Visibility.Collapsed;
         _canvas.Opacity = 1.0;
         _isVisible = false;
@@ -261,6 +346,7 @@ public sealed class BlueCursorControl : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        StopFollowTimer();
         StopAllAnimations();
     }
 
@@ -360,13 +446,56 @@ public sealed class BlueCursorControl : IDisposable
         {
             EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
         };
-        fadeOut.Completed += (_, _) =>
-        {
-            _canvas.Visibility = Visibility.Collapsed;
-            _canvas.Opacity = 1.0;
-            _isVisible = false;
-        };
+        fadeOut.Completed += (_, _) => CompletePointingAndResumeFollowing();
+        StartPointingCompletionFallbackTimer();
         _canvas.BeginAnimation(UIElement.OpacityProperty, fadeOut);
+    }
+
+    private void CompletePointingAndResumeFollowing()
+    {
+        StopPointingCompletionFallbackTimer();
+
+        if (!_isPointing)
+            return;
+
+        _canvas.Visibility = Visibility.Collapsed;
+        _canvas.Opacity = 1.0;
+        _isVisible = false;
+        _isPointing = false;
+        _bubbleBorder.Visibility = Visibility.Collapsed;
+        PointingCompleted?.Invoke(this, EventArgs.Empty);
+
+        if (_followingRequested && !_followingSuspended)
+        {
+            EnsureFollowTimer();
+            UpdateFollowPosition();
+        }
+    }
+
+    private void StartPointingCompletionFallbackTimer()
+    {
+        StopPointingCompletionFallbackTimer();
+        _pointingCompletionFallbackTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(FadeOutSeconds + 0.1)
+        };
+        _pointingCompletionFallbackTimer.Tick += OnPointingCompletionFallback;
+        _pointingCompletionFallbackTimer.Start();
+    }
+
+    private void StopPointingCompletionFallbackTimer()
+    {
+        if (_pointingCompletionFallbackTimer is null)
+            return;
+
+        _pointingCompletionFallbackTimer.Stop();
+        _pointingCompletionFallbackTimer.Tick -= OnPointingCompletionFallback;
+        _pointingCompletionFallbackTimer = null;
+    }
+
+    private void OnPointingCompletionFallback(object? sender, EventArgs e)
+    {
+        CompletePointingAndResumeFollowing();
     }
 
     // ── Helpers ──────────────────────────────────────────────────────
@@ -378,6 +507,61 @@ public sealed class BlueCursorControl : IDisposable
         _rotateTransform.Angle = angleDeg;
         _scaleTransform.ScaleX = scale;
         _scaleTransform.ScaleY = scale;
+    }
+
+    private void EnsureFollowTimer()
+    {
+        if (_followTimer is not null)
+            return;
+
+        _followTimer = new DispatcherTimer(DispatcherPriority.Render)
+        {
+            Interval = TimeSpan.FromSeconds(1.0 / 60.0)
+        };
+        _followTimer.Tick += OnFollowTick;
+        _followTimer.Start();
+    }
+
+    private void StopFollowTimer()
+    {
+        if (_followTimer is null)
+            return;
+
+        _followTimer.Stop();
+        _followTimer.Tick -= OnFollowTick;
+        _followTimer = null;
+    }
+
+    private void OnFollowTick(object? sender, EventArgs e)
+    {
+        UpdateFollowPosition();
+    }
+
+    private void UpdateFollowPosition()
+    {
+        if (!_followingRequested || _followingSuspended || _isPointing)
+            return;
+
+        NativeMethods.GetCursorPos(out var cursorPos);
+        if (!_followOverlayBounds.Contains(new System.Drawing.Point(cursorPos.X, cursorPos.Y)))
+        {
+            _canvas.Visibility = Visibility.Collapsed;
+            _isVisible = false;
+            return;
+        }
+
+        var local = new Point(
+            (cursorPos.X + FollowOffsetX - _followOverlayBounds.X) / _followDpiScaleX,
+            (cursorPos.Y + FollowOffsetY - _followOverlayBounds.Y) / _followDpiScaleY);
+        var overlayWidth = _followOverlayBounds.Width / _followDpiScaleX;
+        var overlayHeight = _followOverlayBounds.Height / _followDpiScaleY;
+
+        _bubbleBorder.Visibility = Visibility.Collapsed;
+        _triangleGlow.BlurRadius = BaseGlowRadius;
+        SetPosition(ClampFollowPosition(local, overlayWidth, overlayHeight), RestAngle, FollowScale);
+        _canvas.Opacity = 1.0;
+        _canvas.Visibility = Visibility.Visible;
+        _isVisible = true;
     }
 
     private void StopAllAnimations()
@@ -395,6 +579,8 @@ public sealed class BlueCursorControl : IDisposable
             _lingerTimer.Tick -= OnLingerComplete;
             _lingerTimer = null;
         }
+
+        StopPointingCompletionFallbackTimer();
 
         // Clear any WPF storyboard animations
         _canvas.BeginAnimation(UIElement.OpacityProperty, null);
@@ -448,6 +634,32 @@ public sealed class BlueCursorControl : IDisposable
     /// <summary>
     /// Sets the Bézier control points directly (for testing without calling FlyTo).
     /// </summary>
+    internal static Point ComputePointingDestination(Point targetLocal, double overlayWidth, double overlayHeight, bool pinpointMode = false)
+    {
+        var minX = EdgePadding;
+        var minY = EdgePadding;
+        var maxX = Math.Max(minX, overlayWidth - EdgePadding);
+        var maxY = Math.Max(minY, overlayHeight - EdgePadding);
+        var offsetX = pinpointMode ? 0.0 : PointingOffsetX;
+        var offsetY = pinpointMode ? 0.0 : PointingOffsetY;
+
+        return new Point(
+            Math.Clamp(targetLocal.X + offsetX, minX, maxX),
+            Math.Clamp(targetLocal.Y + offsetY, minY, maxY));
+    }
+
+    internal static Point ClampFollowPosition(Point local, double overlayWidth, double overlayHeight)
+    {
+        var minX = EdgePadding;
+        var minY = EdgePadding;
+        var maxX = Math.Max(minX, overlayWidth - EdgePadding);
+        var maxY = Math.Max(minY, overlayHeight - EdgePadding);
+
+        return new Point(
+            Math.Clamp(local.X, minX, maxX),
+            Math.Clamp(local.Y, minY, maxY));
+    }
+
     internal void SetBezierPoints(Point p0, Point p1, Point p2)
     {
         _bezierP0 = p0;

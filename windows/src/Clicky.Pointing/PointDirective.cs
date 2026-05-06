@@ -38,3 +38,33 @@ public sealed record PointingParseResult
     /// </summary>
     public PointDirective? Directive { get; init; }
 }
+
+/// <summary>
+/// Full screenshot-space to desktop-space conversion details for diagnostics.
+/// </summary>
+public sealed record PointConversionResult
+{
+    /// <summary>The screen chosen for conversion.</summary>
+    public required Clicky.Capture.CapturedScreen TargetScreen { get; init; }
+
+    /// <summary>Directive X after clamping to the screenshot width.</summary>
+    public required int ClampedX { get; init; }
+
+    /// <summary>Directive Y after clamping to the screenshot height.</summary>
+    public required int ClampedY { get; init; }
+
+    /// <summary>Scale factor from screenshot pixels to desktop pixels on X.</summary>
+    public required double ScaleX { get; init; }
+
+    /// <summary>Scale factor from screenshot pixels to desktop pixels on Y.</summary>
+    public required double ScaleY { get; init; }
+
+    /// <summary>Target point in display-local physical pixels.</summary>
+    public required System.Windows.Point DisplayLocalPoint { get; init; }
+
+    /// <summary>Target point in global desktop physical pixels.</summary>
+    public required System.Windows.Point ScreenPoint { get; init; }
+
+    /// <summary>The physical monitor bounds used for the conversion.</summary>
+    public required Rectangle DisplayBounds { get; init; }
+}

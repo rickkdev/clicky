@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -15,6 +16,8 @@ namespace Clicky.App;
 
 public partial class App : Application
 {
+    internal const bool UseRedesignedPointingProtocolByDefault = true;
+
     private static Mutex? _singleInstanceMutex;
     private TrayIconManager? _trayIconManager;
     private CompanionPanelWindow? _companionPanel;
@@ -26,6 +29,7 @@ public partial class App : Application
     private AutoUpdateService? _autoUpdateService;
     private SettingsStore? _settingsStore;
     private SecretsStore? _secretsStore;
+    private PointingSmokeWindow? _pointingSmokeWindow;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -35,6 +39,11 @@ public partial class App : Application
         _singleInstanceMutex = new Mutex(true, "Global\\ClickyAppSingleInstance", out bool createdNew);
         if (!createdNew)
         {
+            MessageBox.Show(
+                "Clicky is already running in your system tray.",
+                "Clicky",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
             Shutdown();
             return;
         }
@@ -46,6 +55,10 @@ public partial class App : Application
         // Initialize settings and secrets stores under %APPDATA%\Clicky.
         _settingsStore = new SettingsStore();
         _secretsStore = new SecretsStore();
+
+        // Dev-mode: seed secrets from environment variables so developers
+        // don't have to re-enter keys after every rebuild/wipe.
+        SeedSecretsFromEnvironment(_secretsStore);
 
         // Migrate US-014 registry values to SettingsStore on first run.
         MigrateRegistrySettings(_settingsStore);
@@ -100,6 +113,9 @@ public partial class App : Application
         _trayIconManager.TrayIconClicked += OnTrayIconClicked;
         _trayIconManager.SettingsClicked += OnSettingsClicked;
         _trayIconManager.ModelSelected += OnModelSelected;
+        _trayIconManager.OverlayTestRequested += OnOverlayTestRequested;
+        _trayIconManager.DesktopSmokeTestRequested += OnDesktopSmokeTestRequested;
+        _trayIconManager.ProviderTimingDiagnosticsRequested += OnProviderTimingDiagnosticsRequested;
 
         // Register for auto-start on first launch (mirrors SMAppService.mainApp.register).
         AutoStartRegistration.EnsureRegistered();
@@ -132,6 +148,10 @@ public partial class App : Application
             {
                 _companionPanel.ShowForOnboarding();
             }
+            else
+            {
+                _companionPanel!.ShowPanel();
+            }
         }, DispatcherPriority.Loaded);
 
         // Install the global push-to-talk hook on the dispatcher thread.
@@ -140,6 +160,7 @@ public partial class App : Application
 
         // Create transparent overlay windows for each monitor (US-011).
         _overlayManager = new OverlayWindowManager();
+        _overlayManager.Logger = DebugLog.Write;
         _overlayManager.Start();
 
         // Build and start the CompanionManager with current keys/config.
@@ -184,26 +205,40 @@ public partial class App : Application
             ttsClient,
             Dispatcher,
             _overlayManager,
-            microphoneDeviceId: _settingsStore!.MicrophoneDeviceId);
+            microphoneDeviceId: _settingsStore!.MicrophoneDeviceId,
+            prepareForCaptureAsync: HideClickyUiForCaptureAsync,
+            llmProvider: _settingsStore.LlmProvider,
+            llmModel: _settingsStore.LlmModel,
+            useRedesignedPointingProtocol: UseRedesignedPointingProtocolByDefault);
         _companionManager.OpenSettingsRequested += OnPipelineKeyError;
         _companionManager.Start();
     }
 
+    private async Task HideClickyUiForCaptureAsync()
+    {
+        await Dispatcher.InvokeAsync(() =>
+        {
+            var hidAny = false;
+
+            if (_companionPanel?.Visibility == Visibility.Visible)
+            {
+                _companionPanel.Hide();
+                hidAny = true;
+            }
+
+            _trayIconManager?.HideOpenPopups();
+
+            if (hidAny)
+            {
+                DebugLog.Write("[POINT] capture-prep: hid visible Clicky companion panel before screenshot");
+            }
+        });
+    }
+
     private ILlmClient BuildLlmClient()
     {
-        var provider = _settingsStore!.LlmProvider;
-        var model = _settingsStore.LlmModel;
-
-        if (provider == "zai")
-        {
-            var key = _secretsStore!.Read(SecretsStore.ZaiApiKey) ?? "";
-            return new ZaiDirectClient(apiKey: key, model: model);
-        }
-        else
-        {
-            var key = _secretsStore!.Read(SecretsStore.AnthropicApiKey) ?? "";
-            return new AnthropicDirectClient(apiKey: key, model: model);
-        }
+        NormalizeCodexProviderSettings();
+        return new CodexAppServerClient(model: _settingsStore!.LlmModel);
     }
 
     private AssemblyAiStreamingTranscriber BuildTranscriber()
@@ -226,18 +261,13 @@ public partial class App : Application
     /// </summary>
     internal List<ModelMenuEntry> BuildModelMenuEntries()
     {
-        bool hasAnthropicKey = _secretsStore!.Exists(SecretsStore.AnthropicApiKey);
-        bool hasZaiKey = _secretsStore!.Exists(SecretsStore.ZaiApiKey);
-        string disabledAnthropicTip = "Add your Anthropic key in Settings to enable this model";
-        string disabledZaiTip = "Add your z.ai key in Settings to enable this model";
-
         return new List<ModelMenuEntry>
         {
-            new() { Provider = "anthropic", Model = "claude-sonnet-4-6", DisplayName = "Claude Sonnet 4.6", IsEnabled = hasAnthropicKey, DisabledTooltip = hasAnthropicKey ? null : disabledAnthropicTip },
-            new() { Provider = "anthropic", Model = "claude-haiku-4-5", DisplayName = "Claude Haiku 4.5", IsEnabled = hasAnthropicKey, DisabledTooltip = hasAnthropicKey ? null : disabledAnthropicTip },
-            new() { Provider = "anthropic", Model = "claude-opus-4-6", DisplayName = "Claude Opus 4.6", IsEnabled = hasAnthropicKey, DisabledTooltip = hasAnthropicKey ? null : disabledAnthropicTip },
-            new() { Provider = "zai", Model = "glm-4.6v", DisplayName = "GLM-4.6V", IsEnabled = hasZaiKey, DisabledTooltip = hasZaiKey ? null : disabledZaiTip },
-            new() { Provider = "zai", Model = "glm-4.5v", DisplayName = "GLM-4.5V", IsEnabled = hasZaiKey, DisabledTooltip = hasZaiKey ? null : disabledZaiTip },
+            new() { Provider = "codex", Model = "gpt-5.5", DisplayName = "GPT-5.5 (Codex OAuth)", IsEnabled = true },
+            new() { Provider = "codex", Model = "gpt-5.4", DisplayName = "GPT-5.4 (Codex OAuth)", IsEnabled = true },
+            new() { Provider = "codex", Model = "gpt-5.4-mini", DisplayName = "GPT-5.4 Mini (Codex OAuth)", IsEnabled = true },
+            new() { Provider = "codex", Model = "gpt-5.3-codex", DisplayName = "GPT-5.3 Codex", IsEnabled = true },
+            new() { Provider = "codex", Model = "gpt-5.3-codex-spark", DisplayName = "GPT-5.3 Codex Spark", IsEnabled = true },
         };
     }
 
@@ -248,9 +278,15 @@ public partial class App : Application
     {
         return (provider, model) switch
         {
+            ("codex", "gpt-5.5") => "GPT-5.5 (Codex OAuth)",
+            ("codex", "gpt-5.4") => "GPT-5.4 (Codex OAuth)",
+            ("codex", "gpt-5.4-mini") => "GPT-5.4 Mini (Codex OAuth)",
+            ("codex", "gpt-5.3-codex") => "GPT-5.3 Codex",
+            ("codex", "gpt-5.3-codex-spark") => "GPT-5.3 Codex Spark",
             ("anthropic", "claude-sonnet-4-6") => "Claude Sonnet 4.6",
             ("anthropic", "claude-haiku-4-5") => "Claude Haiku 4.5",
             ("anthropic", "claude-opus-4-6") => "Claude Opus 4.6",
+            ("openai", "gpt-5.2") => "GPT-5.2",
             ("zai", "glm-4.6v") => "GLM-4.6V",
             ("zai", "glm-4.5v") => "GLM-4.5V",
             _ => model,
@@ -280,7 +316,7 @@ public partial class App : Application
 
         // Build new LLM client and swap it into the running CompanionManager.
         var newClient = BuildLlmClient();
-        await _companionManager.SwapLlmClientAsync(newClient);
+        await _companionManager.SwapLlmClientAsync(newClient, e.Provider, e.Model);
 
         // Update the ViewModel display.
         if (_companionViewModel is not null)
@@ -299,14 +335,21 @@ public partial class App : Application
     /// </summary>
     internal static bool HasRequiredKeys(SecretsStore secrets, SettingsStore settings)
     {
-        var provider = settings.LlmProvider;
-        bool hasLlmKey = provider == "zai"
-            ? secrets.Exists(SecretsStore.ZaiApiKey)
-            : secrets.Exists(SecretsStore.AnthropicApiKey);
-
-        return hasLlmKey
-            && secrets.Exists(SecretsStore.AssemblyAiApiKey)
+        return secrets.Exists(SecretsStore.AssemblyAiApiKey)
             && secrets.Exists(SecretsStore.ElevenLabsApiKey);
+    }
+
+    private void NormalizeCodexProviderSettings()
+    {
+        if (_settingsStore is null) return;
+
+        if (_settingsStore.LlmProvider != "codex")
+            _settingsStore.LlmProvider = "codex";
+
+        var model = _settingsStore.LlmModel;
+        var supported = model is "gpt-5.5" or "gpt-5.4" or "gpt-5.4-mini" or "gpt-5.3-codex" or "gpt-5.3-codex-spark";
+        if (!supported)
+            _settingsStore.LlmModel = "gpt-5.5";
     }
 
     /// <summary>
@@ -351,6 +394,34 @@ public partial class App : Application
     {
         ClickyAnalytics.TrackSettingsOpened();
         OpenSettingsWindow(isFirstRun: false);
+    }
+
+    private void OnOverlayTestRequested(object? sender, OverlayTestRequestedEventArgs e)
+    {
+        _overlayManager?.TestFlyToPreset(e.PresetId);
+    }
+
+    private void OnDesktopSmokeTestRequested(object? sender, System.EventArgs e)
+    {
+        if (_companionManager is null)
+            return;
+
+        if (_pointingSmokeWindow is null)
+        {
+            _pointingSmokeWindow = new PointingSmokeWindow(_companionManager);
+            _pointingSmokeWindow.Closed += (_, _) => _pointingSmokeWindow = null;
+        }
+
+        _pointingSmokeWindow.Show();
+        _pointingSmokeWindow.Activate();
+    }
+
+    private void OnProviderTimingDiagnosticsRequested(object? sender, System.EventArgs e)
+    {
+        if (_companionManager is null)
+            return;
+
+        _ = Task.Run(() => _companionManager.RunProviderTimingDiagnosticsAsync());
     }
 
     private void OpenSettingsWindow(bool isFirstRun)
@@ -408,6 +479,50 @@ public partial class App : Application
                 _companionViewModel.HasCompletedOnboarding = true;
             }
         });
+    }
+
+    /// <summary>
+    /// Seeds API keys from a <c>.env</c> file in the exe's directory (or repo root)
+    /// and/or system environment variables. The .env file is gitignored so keys
+    /// never leak into source control or AI context. Keys already in secrets.bin
+    /// are not overwritten.
+    /// </summary>
+    private static void SeedSecretsFromEnvironment(SecretsStore secrets)
+    {
+        // Load .env file next to the exe (repo root for published builds).
+        var envFile = Path.Combine(AppContext.BaseDirectory, ".env");
+        var envVars = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        if (File.Exists(envFile))
+        {
+            foreach (var line in File.ReadAllLines(envFile))
+            {
+                var trimmed = line.Trim();
+                if (trimmed.Length == 0 || trimmed.StartsWith('#')) continue;
+                var eqIdx = trimmed.IndexOf('=');
+                if (eqIdx <= 0) continue;
+                var key = trimmed[..eqIdx].Trim();
+                var val = trimmed[(eqIdx + 1)..].Trim();
+                envVars[key] = val;
+            }
+        }
+
+        static void Seed(SecretsStore s, string envVar, string secretKey,
+            Dictionary<string, string> fileVars)
+        {
+            if (s.Exists(secretKey)) return;
+            // .env file takes precedence, fall back to system env var.
+            if (!fileVars.TryGetValue(envVar, out var value) || string.IsNullOrWhiteSpace(value))
+                value = Environment.GetEnvironmentVariable(envVar);
+            if (!string.IsNullOrWhiteSpace(value))
+                s.Write(secretKey, value);
+        }
+
+        Seed(secrets, "CLICKY_ANTHROPIC_KEY", SecretsStore.AnthropicApiKey, envVars);
+        Seed(secrets, "CLICKY_OPENAI_KEY", SecretsStore.OpenAiApiKey, envVars);
+        Seed(secrets, "CLICKY_ZAI_KEY", SecretsStore.ZaiApiKey, envVars);
+        Seed(secrets, "CLICKY_ASSEMBLYAI_KEY", SecretsStore.AssemblyAiApiKey, envVars);
+        Seed(secrets, "CLICKY_ELEVENLABS_KEY", SecretsStore.ElevenLabsApiKey, envVars);
     }
 
     /// <summary>
@@ -475,14 +590,21 @@ public partial class App : Application
             _trayIconManager.TrayIconClicked -= OnTrayIconClicked;
             _trayIconManager.SettingsClicked -= OnSettingsClicked;
             _trayIconManager.ModelSelected -= OnModelSelected;
+            _trayIconManager.OverlayTestRequested -= OnOverlayTestRequested;
+            _trayIconManager.DesktopSmokeTestRequested -= OnDesktopSmokeTestRequested;
+            _trayIconManager.ProviderTimingDiagnosticsRequested -= OnProviderTimingDiagnosticsRequested;
             _trayIconManager.Dispose();
             _trayIconManager = null;
         }
+        _pointingSmokeWindow?.Close();
+        _pointingSmokeWindow = null;
         _companionPanel?.Close();
 
-        // Release single-instance mutex so a new launch can acquire it.
-        _singleInstanceMutex?.ReleaseMutex();
+        // Dispose the mutex (releases ownership automatically).
+        // Do NOT call ReleaseMutex() — OnExit may run on a different thread
+        // than OnStartup, causing an ApplicationException.
         _singleInstanceMutex?.Dispose();
+        _singleInstanceMutex = null;
 
         base.OnExit(e);
 

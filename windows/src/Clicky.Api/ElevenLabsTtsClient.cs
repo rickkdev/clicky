@@ -203,7 +203,7 @@ public class ElevenLabsTtsClient : IDisposable
                         decompressor = new AcmMp3FrameDecompressor(mp3Format);
                         bufferedProvider = new BufferedWaveProvider(decompressor.OutputFormat)
                         {
-                            BufferDuration = TimeSpan.FromSeconds(5),
+                            BufferDuration = TimeSpan.FromSeconds(10),
                             ReadFully = true
                         };
 
@@ -220,7 +220,17 @@ public class ElevenLabsTtsClient : IDisposable
 
                     int decoded = decompressor.DecompressFrame(frame, decodeBuffer, 0);
                     if (decoded > 0)
-                        bufferedProvider!.AddSamples(decodeBuffer, 0, decoded);
+                    {
+                        // Backpressure: wait if the buffer is nearly full to avoid
+                        // BufferedWaveProvider throwing "Buffer full" when data
+                        // arrives faster than playback can consume it.
+                        while (bufferedProvider!.BufferedBytes + decoded > bufferedProvider.BufferLength - 4096)
+                        {
+                            linkedToken.ThrowIfCancellationRequested();
+                            await Task.Delay(20, linkedToken).ConfigureAwait(false);
+                        }
+                        bufferedProvider.AddSamples(decodeBuffer, 0, decoded);
+                    }
                 }
             }
 
@@ -252,7 +262,7 @@ public class ElevenLabsTtsClient : IDisposable
     /// <summary>
     /// Immediately stops any current playback so a new utterance can interrupt.
     /// </summary>
-    public void StopPlayback()
+    public virtual void StopPlayback()
     {
         lock (_lock)
         {
