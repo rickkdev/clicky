@@ -15,8 +15,10 @@ public sealed class OverlayWindowManager : IDisposable
 {
     private readonly List<OverlayWindow> _overlays = new();
     private readonly Func<List<MonitorRect>> _enumerateMonitors;
+    private readonly Queue<OverlayPointTarget> _pendingPointTargets = new();
     private OverlayWindow? _activePointingOverlay;
     private DispatcherTimer? _pointingReturnTimer;
+    private OverlayPointTarget? _lastSequenceTarget;
     private bool _disposed;
     private const double PointingReturnSeconds = 3.8;
 
@@ -84,7 +86,25 @@ public sealed class OverlayWindowManager : IDisposable
     /// </summary>
     public void FlyTo(System.Windows.Point screenPoint, Rectangle? displayBounds = null, string? bubbleText = null)
     {
+        _pendingPointTargets.Clear();
+        _lastSequenceTarget = null;
         FlyToInternal(screenPoint, displayBounds, bubbleText, DebugOptions);
+    }
+
+    /// <summary>
+    /// Flies to an ordered set of targets, returning to cursor-following only after
+    /// the final target has completed.
+    /// </summary>
+    public void FlyToSequence(IReadOnlyList<OverlayPointTarget> targets)
+    {
+        _pendingPointTargets.Clear();
+        _lastSequenceTarget = null;
+        foreach (var target in targets)
+        {
+            _pendingPointTargets.Enqueue(target);
+        }
+
+        FlyToNextSequenceTarget();
     }
 
     /// <summary>
@@ -199,7 +219,8 @@ public sealed class OverlayWindowManager : IDisposable
         System.Windows.Point screenPoint,
         Rectangle? displayBounds,
         string? bubbleText,
-        PointerDebugOptions options)
+        PointerDebugOptions options,
+        System.Windows.Point? startPointOverride = null)
     {
         foreach (var overlay in _overlays)
         {
@@ -255,18 +276,38 @@ public sealed class OverlayWindowManager : IDisposable
             target.DpiScaleY,
             bubbleText,
             options.PinpointMode,
-            Logger);
+            Logger,
+            startPointOverride);
         StartPointingReturnTimer();
     }
 
     private void OnPointingCompleted(object? sender, EventArgs e)
     {
+        if (FlyToNextSequenceTarget())
+            return;
+
         ReturnCursorToMouse(forceHideActivePoint: false);
+    }
+
+    private bool FlyToNextSequenceTarget()
+    {
+        if (_pendingPointTargets.Count == 0)
+            return false;
+
+        var target = _pendingPointTargets.Dequeue();
+        System.Windows.Point? startPoint = _lastSequenceTarget?.DisplayBounds == target.DisplayBounds
+            ? _lastSequenceTarget.ScreenPoint
+            : null;
+        _lastSequenceTarget = target;
+        FlyToInternal(target.ScreenPoint, target.DisplayBounds, target.Label, DebugOptions, startPoint);
+        return true;
     }
 
     private void ReturnCursorToMouse(bool forceHideActivePoint)
     {
         StopPointingReturnTimer();
+        _pendingPointTargets.Clear();
+        _lastSequenceTarget = null;
 
         if (_activePointingOverlay is not null)
         {
@@ -335,6 +376,8 @@ public sealed class OverlayWindowManager : IDisposable
     private void DestroyOverlays()
     {
         StopPointingReturnTimer();
+        _pendingPointTargets.Clear();
+        _lastSequenceTarget = null;
 
         if (_activePointingOverlay is not null)
         {
@@ -411,3 +454,9 @@ public sealed class OverlayWindowManager : IDisposable
 
 /// <summary>Monitor bounds (physical pixels) plus per-monitor DPI scale for overlay placement.</summary>
 public record MonitorRect(Rectangle Bounds, double DpiScaleX = 1.0, double DpiScaleY = 1.0);
+
+/// <summary>A desktop-space overlay target in an ordered point sequence.</summary>
+public sealed record OverlayPointTarget(
+    System.Windows.Point ScreenPoint,
+    Rectangle DisplayBounds,
+    string Label);

@@ -118,17 +118,20 @@ public sealed class CompanionManager : IAsyncDisposable, IDisposable
         you're clicky, a friendly always-on companion that can see the user's screen. return only one json object. do not use markdown.
 
         schema:
-        {"spokenText":"short natural sentence for text-to-speech","pointIntent":{"kind":"point","x":0,"y":0,"screen":1,"label":"target","confidence":"high"}}
+        {"spokenText":"short natural sentence for text-to-speech","pointIntents":[{"kind":"point","x":0,"y":0,"screen":1,"label":"first target","confidence":"high"},{"kind":"point","x":0,"y":0,"screen":1,"label":"second target","confidence":"high"}]}
         or:
-        {"spokenText":"short natural sentence for text-to-speech","pointIntent":{"kind":"none","reason":"not_visible"}}
+        {"spokenText":"short natural sentence for text-to-speech","pointIntents":[{"kind":"none","reason":"not_visible"}]}
 
         rules:
         - decide whether a visible pointer would help answer the user.
         - point only for show, find, click, locate, identify, navigation, or app-control requests where the target is visible and unambiguous.
+        - if the user asks for multiple visible things, return them in the order clicky should showcase them.
+        - use one point for ordinary single-target requests. use two to five points only when the user's request genuinely needs multiple targets.
         - coordinates are screenshot pixels with origin at the top-left of the selected image. x increases rightward, y increases downward.
         - for map regions, choose a coordinate inside the visible filled region or border of the requested country or region. never choose nearby labels, neighboring countries, oceans, legends, or text outside the region.
         - if unsure, return kind "none". a skipped pointer is better than a wrong pointer.
         - confidence must be "high" for a point. use "none" for low confidence.
+        - keep each label short and specific, because it appears next to the pointer.
         """;
 
     /// <summary>
@@ -697,10 +700,11 @@ public sealed class CompanionManager : IAsyncDisposable, IDisposable
         if (ct.IsCancellationRequested) return;
 
         var result = StructuredPointingTurnParser.Parse(responseBuilder.ToString());
-        var directive = StructuredPointingTurnParser.ToDirective(result.PointIntent, screens);
-        timing.Mark("point-parse", directive is null
+        var directives = StructuredPointingTurnParser.ToDirectives(result.PointIntents, screens);
+        var directive = directives.FirstOrDefault();
+        timing.Mark("point-parse", directives.Count == 0
             ? $"kind={result.PointIntent.Kind} reason={result.PointIntent.NoPointReason ?? "none"}"
-            : TurnTimingRecord.FormatPointDirective(directive));
+            : $"points={directives.Count} first={TurnTimingRecord.FormatPointDirective(directive)}");
 
         if (directive is { } dir)
         {
@@ -717,10 +721,12 @@ public sealed class CompanionManager : IAsyncDisposable, IDisposable
             _conversationHistory.RemoveRange(0, _conversationHistory.Count - MaxConversationHistory);
         }
 
-        if (directive is not null && (_overlayManager is not null || _overlayFlyTo is not null))
+        if (directives.Count > 0 && (_overlayManager is not null || _overlayFlyTo is not null))
         {
-            directive = ApplyGeoMapOverrideIfAvailable(transcript, directive, screens);
-            if (await DispatchPointDirectiveAsync(directive, screens, ct).ConfigureAwait(false))
+            var adjustedDirectives = directives
+                .Select(d => ApplyGeoMapOverrideIfAvailable(transcript, d, screens))
+                .ToArray();
+            if (await DispatchPointDirectivesAsync(adjustedDirectives, screens, ct).ConfigureAwait(false))
             {
                 timing.Mark("overlay-dispatch");
             }
@@ -903,27 +909,43 @@ public sealed class CompanionManager : IAsyncDisposable, IDisposable
         IReadOnlyList<CapturedScreen> screens,
         CancellationToken ct)
     {
-        var converted = PointTagParser.ConvertToScreenCoordinatesDetailed(directive, screens);
-        if (converted is null)
+        return await DispatchPointDirectivesAsync([directive], screens, ct).ConfigureAwait(false);
+    }
+
+    private async Task<bool> DispatchPointDirectivesAsync(
+        IReadOnlyList<PointDirective> directives,
+        IReadOnlyList<CapturedScreen> screens,
+        CancellationToken ct)
+    {
+        var targets = new List<OverlayPointTarget>();
+        foreach (var directive in directives)
         {
-            DebugLog.Write($"[POINT] convert: returned null - screens.Count={screens.Count}, screenNumber={directive.ScreenNumber?.ToString() ?? "null"}");
-            return false;
+            var converted = PointTagParser.ConvertToScreenCoordinatesDetailed(directive, screens);
+            if (converted is null)
+            {
+                DebugLog.Write($"[POINT] convert: returned null - screens.Count={screens.Count}, screenNumber={directive.ScreenNumber?.ToString() ?? "null"}");
+                continue;
+            }
+
+            SavePointDebugArtifact(directive, converted);
+            DebugLog.Write(
+                $"[POINT] convert: targetLabel=\"{converted.TargetScreen.Label}\" directive=({directive.X},{directive.Y}) " +
+                $"clamped=({converted.ClampedX},{converted.ClampedY}) screenshot={converted.TargetScreen.ScreenshotPixelWidth}x{converted.TargetScreen.ScreenshotPixelHeight} " +
+                $"displayBounds=({converted.DisplayBounds.X},{converted.DisplayBounds.Y},{converted.DisplayBounds.Width},{converted.DisplayBounds.Height}) " +
+                $"scale=({converted.ScaleX:F4},{converted.ScaleY:F4}) displayLocal=({converted.DisplayLocalPoint.X:F2},{converted.DisplayLocalPoint.Y:F2}) " +
+                $"screenPoint=({converted.ScreenPoint.X:F1},{converted.ScreenPoint.Y:F1})");
+            targets.Add(new OverlayPointTarget(converted.ScreenPoint, converted.DisplayBounds, directive.Label));
         }
 
-        SavePointDebugArtifact(directive, converted);
-        DebugLog.Write(
-            $"[POINT] convert: targetLabel=\"{converted.TargetScreen.Label}\" directive=({directive.X},{directive.Y}) " +
-            $"clamped=({converted.ClampedX},{converted.ClampedY}) screenshot={converted.TargetScreen.ScreenshotPixelWidth}x{converted.TargetScreen.ScreenshotPixelHeight} " +
-            $"displayBounds=({converted.DisplayBounds.X},{converted.DisplayBounds.Y},{converted.DisplayBounds.Width},{converted.DisplayBounds.Height}) " +
-            $"scale=({converted.ScaleX:F4},{converted.ScaleY:F4}) displayLocal=({converted.DisplayLocalPoint.X:F2},{converted.DisplayLocalPoint.Y:F2}) " +
-            $"screenPoint=({converted.ScreenPoint.X:F1},{converted.ScreenPoint.Y:F1})");
+        if (targets.Count == 0)
+            return false;
 
         await _dispatcher.InvokeAsync(() =>
         {
             _viewModel.VoiceState = VoiceState.Idle;
-            DispatchOverlayFlyTo(converted.ScreenPoint, converted.DisplayBounds, directive.Label);
+            DispatchOverlayFlyToSequence(targets);
         }, DispatcherPriority.Normal, ct);
-        DebugLog.Write($"[POINT] flyto: dispatched screenPoint=({converted.ScreenPoint.X:F1},{converted.ScreenPoint.Y:F1}) bubble=\"{directive.Label}\"");
+        DebugLog.Write($"[POINT] flyto: dispatched sequence count={targets.Count}");
         return true;
     }
 
@@ -947,6 +969,20 @@ public sealed class CompanionManager : IAsyncDisposable, IDisposable
         }
 
         _overlayManager?.FlyTo(point, displayBounds, label);
+    }
+
+    private void DispatchOverlayFlyToSequence(IReadOnlyList<OverlayPointTarget> targets)
+    {
+        if (_overlayFlyTo is not null)
+        {
+            foreach (var target in targets)
+            {
+                _overlayFlyTo(target.ScreenPoint, target.DisplayBounds, target.Label);
+            }
+            return;
+        }
+
+        _overlayManager?.FlyToSequence(targets);
     }
 
     /// <summary>

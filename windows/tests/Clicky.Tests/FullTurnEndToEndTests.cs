@@ -367,6 +367,33 @@ public sealed class FullTurnEndToEndTests
     }
 
     [Fact]
+    public async Task StructuredPointing_MultipleTargets_DispatchesInOrder()
+    {
+        var llm = new FakeLlmClient("""
+            {"spokenText":"first the api key, then the model setting.","pointIntents":[{"kind":"point","x":120,"y":80,"screen":1,"label":"api key","confidence":"high"},{"kind":"point","x":300,"y":180,"screen":1,"label":"model setting","confidence":"high"}]}
+            """);
+        var overlayCalls = new List<OverlayCall>();
+        var harness = CreateHarness(
+            new CompanionViewModel(),
+            llm,
+            new RecordingTtsClient(),
+            overlayFlyTo: (point, bounds, label) => overlayCalls.Add(new OverlayCall(point, bounds, label)),
+            useRedesignedPointingProtocol: true);
+
+        harness.Manager.SendTranscriptToClaudeWithScreenshot("show me the api key setting and then the model setting");
+        await harness.Manager.CurrentResponseTask!.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(2, overlayCalls.Count);
+        Assert.Equal("api key", overlayCalls[0].Label);
+        Assert.Equal("model setting", overlayCalls[1].Label);
+        Assert.Equal(new System.Windows.Point(250, 180), overlayCalls[0].Point);
+        Assert.Equal(new System.Windows.Point(610, 380), overlayCalls[1].Point);
+        Assert.Equal("first the api key, then the model setting.", harness.Manager.ConversationHistory.Single().AssistantText);
+
+        harness.Shutdown();
+    }
+
+    [Fact]
     public async Task StructuredPointing_SecondTurnCancelsFirstAndDispatchesOnlyLatest()
     {
         var llm = new FirstCallBlocksSecondCallRespondsLlmClient("""

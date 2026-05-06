@@ -20,6 +20,34 @@ public sealed class StructuredPointingTurnParserTests
         Assert.Equal(390, result.PointIntent.Y);
         Assert.Equal(1, result.PointIntent.ScreenNumber);
         Assert.Equal("api key", result.PointIntent.Label);
+        Assert.Single(result.PointIntents);
+    }
+
+    [Fact]
+    public void Parse_ValidPointIntentsJson_ReturnsOrderedPointIntents()
+    {
+        var result = StructuredPointingTurnParser.Parse("""
+            {"spokenText":"first here, then there.","pointIntents":[{"kind":"point","x":120,"y":80,"screen":1,"label":"first setting","confidence":"high"},{"kind":"point","x":320,"y":210,"screen":1,"label":"second setting","confidence":"high"}]}
+            """);
+
+        Assert.Equal("first here, then there.", result.SpokenText);
+        Assert.Equal(2, result.PointIntents.Count);
+        Assert.Equal("first setting", result.PointIntents[0].Label);
+        Assert.Equal("second setting", result.PointIntents[1].Label);
+        Assert.Equal("first setting", result.PointIntent.Label);
+    }
+
+    [Fact]
+    public void ToDirectives_DropsInvalidSequenceTargets()
+    {
+        var result = StructuredPointingTurnParser.Parse("""
+            {"spokenText":"these are the settings.","pointIntents":[{"kind":"point","x":120,"y":80,"screen":1,"label":"valid","confidence":"high"},{"kind":"point","x":999,"y":80,"screen":1,"label":"outside","confidence":"high"},{"kind":"point","x":180,"y":100,"screen":1,"label":"low confidence","confidence":"low"}]}
+            """);
+
+        var directives = StructuredPointingTurnParser.ToDirectives(result.PointIntents, [Screen(400, 240)]);
+
+        var directive = Assert.Single(directives);
+        Assert.Equal("valid", directive.Label);
     }
 
     [Fact]

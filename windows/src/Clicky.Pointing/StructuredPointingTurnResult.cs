@@ -30,6 +30,7 @@ public sealed record PointingTurnResult
 {
     public required string SpokenText { get; init; }
     public required PointIntent PointIntent { get; init; }
+    public IReadOnlyList<PointIntent> PointIntents { get; init; } = [];
 }
 
 public static class StructuredPointingTurnParser
@@ -42,11 +43,13 @@ public static class StructuredPointingTurnParser
             {
                 var root = document.RootElement;
                 var spokenText = ReadString(root, "spokenText") ?? string.Empty;
-                var intent = ParsePointIntent(root);
+                var intents = ParsePointIntents(root);
+                var intent = intents.FirstOrDefault() ?? PointIntent.None("missing_point_intent");
                 return new PointingTurnResult
                 {
                     SpokenText = spokenText.Trim(),
                     PointIntent = intent,
+                    PointIntents = intents,
                 };
             }
         }
@@ -55,6 +58,7 @@ public static class StructuredPointingTurnParser
         {
             SpokenText = PointTagParser.Parse(modelResponse).SpokenText.Trim(),
             PointIntent = PointIntent.None("invalid_schema"),
+            PointIntents = [PointIntent.None("invalid_schema")],
         };
     }
 
@@ -85,6 +89,25 @@ public static class StructuredPointingTurnParser
         };
     }
 
+    public static IReadOnlyList<PointDirective> ToDirectives(
+        IReadOnlyList<PointIntent> intents,
+        IReadOnlyList<CapturedScreen> screens,
+        int maxDirectives = 5)
+    {
+        var directives = new List<PointDirective>();
+        foreach (var intent in intents)
+        {
+            if (directives.Count >= maxDirectives)
+                break;
+
+            var directive = ToDirective(intent, screens);
+            if (directive is not null)
+                directives.Add(directive);
+        }
+
+        return directives;
+    }
+
     public static SemanticPointingEvaluationResult EvaluateFixture(
         SemanticPointingFixture fixture,
         PointingTurnResult result)
@@ -110,6 +133,40 @@ public static class StructuredPointingTurnParser
             $"[POINT:{directive.X},{directive.Y}:{directive.Label}]");
     }
 
+    private static IReadOnlyList<PointIntent> ParsePointIntents(JsonElement root)
+    {
+        if (TryReadIntentArray(root, "pointIntents", out var pointIntents) ||
+            TryReadIntentArray(root, "pointSequence", out pointIntents))
+        {
+            return pointIntents;
+        }
+
+        return [ParsePointIntent(root)];
+    }
+
+    private static bool TryReadIntentArray(
+        JsonElement root,
+        string propertyName,
+        out IReadOnlyList<PointIntent> intents)
+    {
+        intents = [];
+        if (!root.TryGetProperty(propertyName, out var arrayElement) ||
+            arrayElement.ValueKind != JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        var parsed = new List<PointIntent>();
+        foreach (var item in arrayElement.EnumerateArray())
+        {
+            if (item.ValueKind == JsonValueKind.Object)
+                parsed.Add(ParsePointIntentObject(item));
+        }
+
+        intents = parsed.Count == 0 ? [PointIntent.None("empty_point_sequence")] : parsed;
+        return true;
+    }
+
     private static PointIntent ParsePointIntent(JsonElement root)
     {
         if (!root.TryGetProperty("pointIntent", out var intentElement) ||
@@ -118,6 +175,11 @@ public static class StructuredPointingTurnParser
             return PointIntent.None("missing_point_intent");
         }
 
+        return ParsePointIntentObject(intentElement);
+    }
+
+    private static PointIntent ParsePointIntentObject(JsonElement intentElement)
+    {
         var kind = ReadString(intentElement, "kind");
         if (!string.Equals(kind, "point", StringComparison.OrdinalIgnoreCase))
         {

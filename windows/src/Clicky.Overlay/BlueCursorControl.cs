@@ -255,7 +255,8 @@ public sealed class BlueCursorControl : IDisposable
         double dpiScaleY,
         string? bubbleText,
         bool pinpointMode = false,
-        Action<string>? logger = null)
+        Action<string>? logger = null,
+        Point? startPointOverride = null)
     {
         // Cancel any in-progress animation
         StopAllAnimations();
@@ -263,8 +264,7 @@ public sealed class BlueCursorControl : IDisposable
         _isPointing = true;
 
         // Determine start point: current OS cursor position (physical pixels)
-        NativeMethods.GetCursorPos(out var cursorPos);
-        var startGlobalPhysical = new Point(cursorPos.X + FollowOffsetX, cursorPos.Y + FollowOffsetY);
+        var startGlobalPhysical = startPointOverride ?? GetCursorStartPoint();
 
         // Convert from physical pixels to overlay-local DIPs:
         // 1. Subtract the physical monitor origin to get monitor-local physical coords
@@ -324,6 +324,12 @@ public sealed class BlueCursorControl : IDisposable
         };
         _flightTimer.Tick += OnFlightTick;
         _flightTimer.Start();
+    }
+
+    private static Point GetCursorStartPoint()
+    {
+        NativeMethods.GetCursorPos(out var cursorPos);
+        return new Point(cursorPos.X + FollowOffsetX, cursorPos.Y + FollowOffsetY);
     }
 
     /// <summary>
