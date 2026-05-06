@@ -5,6 +5,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$publishRoot = Split-Path -Parent $repoRoot
 Set-Location $repoRoot
 
 $project = "windows/src/Clicky.App/Clicky.App.csproj"
@@ -15,7 +16,7 @@ $publishArgs = @(
     "--self-contained", "true",
     "-p:PublishSingleFile=true",
     "-p:IncludeNativeLibrariesForSelfExtract=true",
-    "-o", "."
+    "-o", $publishRoot
 )
 
 $staleFiles = @(
@@ -62,18 +63,20 @@ Start-Sleep -Milliseconds 500
 
 foreach ($file in $staleFiles)
 {
-    if (Test-Path -LiteralPath $file)
+    $path = Join-Path $publishRoot $file
+    if (Test-Path -LiteralPath $path)
     {
-        Remove-Item -LiteralPath $file -Force
+        Remove-Item -LiteralPath $path -Force
     }
 }
 
 & dotnet @publishArgs
 
-$version = (Get-Item .\Clicky.App.exe).VersionInfo.ProductVersion
-Write-Host "Published Clicky.App.exe ($version) to $repoRoot"
+$publishedExe = Join-Path $publishRoot "Clicky.App.exe"
+$version = (Get-Item $publishedExe).VersionInfo.ProductVersion
+Write-Host "Published Clicky.App.exe ($version) to $publishRoot"
 
 if ($Launch)
 {
-    Start-Process -FilePath .\Clicky.App.exe
+    Start-Process -FilePath $publishedExe
 }

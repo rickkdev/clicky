@@ -76,6 +76,7 @@ Only update AGENTS.md if you have **genuinely reusable knowledge** that would he
 - Do NOT commit broken code
 - Keep changes focused and minimal
 - Follow existing code patterns
+- After any Windows app change is complete, bump the Clicky version when preparing a user-facing build and run `.\publish-dev.ps1` from this repo. That script must publish `Clicky.App.exe` into the outer workspace root folder, `C:\Users\mail\Documents\workspace\clicky`, not only into the nested Git repo.
 
 ## Browser Testing (If Available)
 
