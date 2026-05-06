@@ -1,359 +1,654 @@
-{
-  "project": "Clicky — direct-to-provider, bring-your-own-keys",
-  "branchName": "ralph/windows-port",
-  "description": "Turn Clicky from a server-proxied app into a shippable personal tool: each user installs the binary, opens a settings window on first launch, pastes their own API keys for Anthropic and/or z.ai (LLM) plus AssemblyAI (streaming transcription) and ElevenLabs (TTS), and Clicky talks directly to those providers from the user's machine. No Cloudflare Worker. No shared backend. No keys on disk in plaintext — all secrets encrypted with Windows DPAPI under the current user's profile. The existing worker/ directory remains in the repo because it is shared with the Mac reference implementation, but the Windows client no longer calls it in any code path. Users can switch between Claude and GLM at runtime via a tray menu without restarting. This PRD builds on the completed Windows port (see archive/prd-windows-port.json for the 17 shipped stories) and supersedes the earlier worker-routing GLM integration draft (see archive/prd-glm-worker-routing.json) that this project decided against because it required every user to run Cloudflare Wrangler locally. Target vision model for GLM: glm-4.6v. The Mac reference implementation is not modified.",
-  "userStories": [
-    {
-      "id": "US-018",
-      "title": "ILlmClient interface + AnthropicDirectClient (direct to api.anthropic.com)",
-      "description": "As a user with my own Anthropic API key, I want Clicky to call api.anthropic.com directly with my key instead of going through a worker, so I can run the app without any backend infrastructure.",
-      "acceptanceCriteria": [
-        "New interface `Clicky.Api.ILlmClient` exposes `IAsyncEnumerable<string> SendAsync(IReadOnlyList<Message> history, IReadOnlyList<CapturedScreen> screens, string systemPrompt, string userText, CancellationToken ct)` — the exact surface `CompanionManager` already consumes, extracted from the existing `ClaudeClient`",
-        "The existing `Clicky.Api.ClaudeClient` is replaced by `Clicky.Api.AnthropicDirectClient : ILlmClient` that POSTs to `https://api.anthropic.com/v1/messages` directly with headers `x-api-key: <userKey>`, `anthropic-version: 2023-06-01`, `content-type: application/json`",
-        "Constructor signature: `AnthropicDirectClient(string apiKey, string model = \"claude-sonnet-4-6\", HttpClient? httpClient = null)`. No proxy URL — the worker path is gone.",
-        "Request body shape, SSE parsing, PNG/JPEG magic-byte media_type detection, and TLS warmup HEAD request behavior are preserved byte-for-byte from the old ClaudeClient (see US-007 notes in archive/progress-windows-port.txt)",
-        "`Clicky.Companion.CompanionManager` now takes `ILlmClient` via constructor injection instead of constructing a `ClaudeClient` itself. App.xaml.cs constructs `AnthropicDirectClient` with a temporary hardcoded key for this story only — real key plumbing lands in US-019",
-        "All existing US-007 tests (SSE parsing, delta extraction, media type detection) pass against the new AnthropicDirectClient unchanged",
-        "One new test: a `FakeLlmClient : ILlmClient` verifies CompanionManager's dependency injection seam works end-to-end",
-        "Build: 0 warnings. Tests: all existing Windows-port tests still pass",
-        "Commit all changes with message: feat: US-018 - ILlmClient interface + AnthropicDirectClient"
-      ],
-      "priority": 1,
-      "passes": true,
-      "notes": "This is primarily a refactor + direct-API swap. Keep the scope narrow: don't add provider selection, key storage, or UI yet — those land in US-019 through US-024. The hardcoded temporary key is fine for this story because US-019 will replace it within one iteration."
-    },
-    {
-      "id": "US-019",
-      "title": "SecretsStore (DPAPI) + SettingsStore (JSON) under %APPDATA%\\Clicky",
-      "description": "As a user, I want my API keys encrypted at rest using my Windows account credentials, and my non-secret settings persisted in a readable JSON file, so nobody can extract my keys from disk and I can inspect/reset my config without a GUI if needed.",
-      "acceptanceCriteria": [
-        "`Clicky.Companion.SecretsStore` wraps `System.Security.Cryptography.ProtectedData.Protect` / `Unprotect` with `DataProtectionScope.CurrentUser`. Methods: `void Write(string key, string value)`, `string? Read(string key)`, `void Delete(string key)`, `bool Exists(string key)`",
-        "Secrets are stored as an encrypted blob at `%APPDATA%\\Clicky\\secrets.bin`. The plaintext internal format is a simple JSON dictionary; encryption is applied to the whole file, not per-entry",
-        "`Clicky.Companion.SettingsStore` reads/writes `%APPDATA%\\Clicky\\settings.json` with fields: `LlmProvider` (string: \"anthropic\" or \"zai\"), `LlmModel` (string), `ElevenLabsVoiceId` (string, default `kPzsL2i3teMYv0FxEYQ6` to match Mac), `OnboardingComplete` (bool), `AnalyticsOptOut` (bool)",
-        "Both stores auto-create the %APPDATA%\\Clicky directory on first write",
-        "Keys used by SecretsStore are standardized constants: `anthropic_api_key`, `zai_api_key`, `assemblyai_api_key`, `elevenlabs_api_key`",
-        "App.xaml.cs on OnStartup instantiates SettingsStore + SecretsStore, reads the configured provider/model/keys, and passes them into the CompanionManager constructor (replacing the hardcoded key from US-018)",
-        "US-014's OnboardingService registry read is migrated: if `HKCU\\Software\\Clicky\\onboarded` exists, copy its value to SettingsStore.OnboardingComplete on first run of this story's code, then prefer the SettingsStore value thereafter. Same for `analyticsOptOut`",
-        "Unit tests: SecretsStore round-trip (write → read → same value), SecretsStore decryption under a different user profile fails gracefully (returns null rather than throwing), SettingsStore round-trip, SettingsStore defaults when file is missing, migration from registry test",
-        "Build: 0 warnings. Tests: all pass on a Windows test host",
-        "Commit all changes with message: feat: US-019 - SecretsStore (DPAPI) + SettingsStore under APPDATA"
-      ],
-      "priority": 2,
-      "passes": true,
-      "notes": "DPAPI is per-user-account, not per-machine — backups restored to a different Windows user will fail to decrypt, which is correct security behavior. Document this in the SettingsWindow help text (lands in US-022). Do NOT add a passphrase fallback; the whole point of DPAPI is that it's invisible to the user."
-    },
-    {
-      "id": "US-020",
-      "title": "ZaiDirectClient for GLM models (direct to api.z.ai OpenAI-compatible endpoint)",
-      "description": "As a user with a z.ai API key, I want Clicky to use GLM-4.6V as a vision-capable alternative to Claude, with the same UI and screen-pointing behavior, so I have a choice of LLM providers.",
-      "acceptanceCriteria": [
-        "New `Clicky.Api.ZaiDirectClient : ILlmClient` POSTs to `https://api.z.ai/api/paas/v4/chat/completions` with headers `Authorization: Bearer <userKey>`, `Content-Type: application/json`, `Accept: text/event-stream`",
-        "Constructor: `ZaiDirectClient(string apiKey, string model = \"glm-4.6v\", HttpClient? httpClient = null)`",
-        "Translates Clicky's existing Anthropic-shape inputs (system prompt + message history + CapturedScreen list + user text) into OpenAI chat-completions request body: system prompt becomes `messages[0] = {role:\"system\", content: systemPrompt}`, history turns pass through with their existing roles, the final user turn's text + screens become one user message with a `content` array of `{type:\"text\", text:...}` and `{type:\"image_url\", image_url:{url:\"data:<media_type>;base64,<base64Data>\"}}` entries",
-        "Image media_type is sniffed by PNG/JPEG magic bytes (reuse `AnthropicDirectClient.DetectImageMediaType` via refactor or duplicate — do not import a new library)",
-        "Streaming response parsing: reads `data: {...}` SSE lines, extracts `choices[0].delta.content` text chunks, yields them through the `IAsyncEnumerable<string>` return (same interface shape as AnthropicDirectClient). The `[DONE]` sentinel ends the stream cleanly",
-        "Chunk-boundary UTF-8 splits (a multi-byte character split across two HTTP chunks) do not corrupt the yielded text — use an incremental decoder, not a per-chunk Encoding.UTF8.GetString",
-        "Malformed JSON lines are logged and skipped, not thrown — one bad line must not kill the stream",
-        "Valid model values accepted: `glm-4.6v` (default, vision), `glm-4.5v` (fallback, vision). Text-only models (`glm-5.1`, `glm-5-turbo`, `glm-5`, `glm-4.5-air`, `glm-4.7-no-vision-variants`) must NOT be offered as choices because they silently break the [POINT:x,y:label:screenN] feature — Clicky requires vision",
-        "Unit tests: text-only request translation, single-image request translation, multi-image multi-screen request translation, SSE chunk parsing fixture (realistic glm-4.6v response with a [POINT:...] tag mid-stream), UTF-8 chunk-boundary split test, malformed-chunk skip test",
-        "End-to-end test with FakeHttpMessageHandler: canned OpenAI SSE input → expected string deltas out through ILlmClient.SendAsync",
-        "Build: 0 warnings. Tests: all pass",
-        "Commit all changes with message: feat: US-020 - ZaiDirectClient for GLM-4.6V"
-      ],
-      "priority": 3,
-      "passes": true,
-      "notes": "This is the most algorithmically dense story. Budget time for the SSE chunk-boundary tests — getting them right is what separates a demo-quality integration from a shippable one. The Anthropic-shape system prompt (built by CompanionManager in US-010, includes the [POINT:x,y:label:screenN] tag instructions) passes through unchanged — GLM-4.6V is prompted in the same English, it just speaks OpenAI over the wire."
-    },
-    {
-      "id": "US-021",
-      "title": "Direct-to-provider audio clients (AssemblyAI + ElevenLabs, no worker)",
-      "description": "As a user with AssemblyAI and ElevenLabs API keys, I want Clicky to call those services directly with my keys, so I can run the app without any Cloudflare Worker.",
-      "acceptanceCriteria": [
-        "`Clicky.Api.AssemblyAiStreamingTranscriber` is updated: the existing `FetchTokenAsync` that hits `{workerBaseUrl}/transcribe-token` is replaced with a direct call to `https://streaming.assemblyai.com/v3/token?expires_in_seconds=60` with header `Authorization: <userKey>` (AssemblyAI's token endpoint uses the raw API key, NOT `Bearer`)",
-        "Constructor: `AssemblyAiStreamingTranscriber(string apiKey, HttpClient? httpClient = null)` — proxyUrl parameter removed",
-        "The WebSocket connection to `wss://streaming.assemblyai.com/v3/ws` and all session mechanics (keyterms, sample_rate=16000, encoding=pcm_s16le, format_turns=true, speech_model=u3-rt-pro, partial/final turn processing, error callback, ForceEndpoint grace period) are preserved from US-008 unchanged",
-        "`Clicky.Api.ElevenLabsTtsClient` is updated: existing POST to `{workerBaseUrl}/tts` is replaced with a direct POST to `https://api.elevenlabs.io/v1/text-to-speech/{voiceId}/stream` with headers `xi-api-key: <userKey>`, `Content-Type: application/json`, `Accept: audio/mpeg` and body `{text, model_id: \"eleven_flash_v2_5\", voice_settings: {stability: 0.5, similarity_boost: 0.75}}`",
-        "Constructor: `ElevenLabsTtsClient(string apiKey, string voiceId, HttpClient? httpClient = null)`. The voice ID is now a constructor parameter (read from SettingsStore.ElevenLabsVoiceId by App.xaml.cs)",
-        "MP3 decoding via NAudio Mp3FileReader and WaveOutEvent playback path from US-009 is preserved unchanged",
-        "All existing US-008 and US-009 unit tests continue to pass after the refactor (session URI builder, keyterm serialization, partial/final dispatch, IsPlaying, StopPlayback, Dispose safety, cancellation)",
-        "New tests: direct token fetch URL + header format, direct TTS POST URL + header format, voice ID parameter threading",
-        "App.xaml.cs constructs both clients with keys + voice ID from SecretsStore + SettingsStore; CompanionManager receives them via constructor injection (matching the pattern from US-018/US-019)",
-        "Build: 0 warnings. Tests: all pass",
-        "Commit all changes with message: feat: US-021 - Direct AssemblyAI and ElevenLabs clients"
-      ],
-      "priority": 4,
-      "passes": true,
-      "notes": "AssemblyAI's token-fetch auth uses the raw key in the Authorization header, not `Bearer <key>` — double-check this before coding. This is the last story that touches the Clicky.Api layer; after it, the worker is completely unused by the Windows client."
-    },
-    {
-      "id": "US-022",
-      "title": "SettingsWindow WPF UI with Test buttons",
-      "description": "As a first-time user, I want a friendly settings window where I can paste my API keys, pick my LLM provider and model, and verify each key works with a Test button before saving.",
-      "acceptanceCriteria": [
-        "New `Clicky.App.SettingsWindow.xaml` — resizable, non-modal, dark theme matching CompanionPanelWindow, ~480×640 DIP default size, centered on primary display",
-        "Fields (top to bottom): **LLM Provider** (ComboBox: `Anthropic Claude`, `z.ai GLM`), **LLM Model** (ComboBox whose items change based on provider: Anthropic → `claude-sonnet-4-6`, `claude-haiku-4-5`, `claude-opus-4-6`; z.ai → `glm-4.6v`, `glm-4.5v`), **Anthropic API Key** (PasswordBox + Test button + `Get key →` link), **z.ai API Key** (PasswordBox + Test button + link), **AssemblyAI API Key** (PasswordBox + Test button + link), **ElevenLabs API Key** (PasswordBox + Test button + link), **ElevenLabs Voice ID** (TextBox, pre-filled with `kPzsL2i3teMYv0FxEYQ6`)",
-        "`Get key →` links open the default browser to: Anthropic → `https://console.anthropic.com/settings/keys`, z.ai → `https://z.ai/manage-apikey/apikey-list`, AssemblyAI → `https://www.assemblyai.com/app/account`, ElevenLabs → `https://elevenlabs.io/app/settings/api-keys`",
-        "Each Test button fires a one-shot auth probe against the corresponding service using the currently-entered key (not the saved one), shows a spinner during the probe, and then turns green (✓) or red (✗) with a tooltip containing the error message. Probes: Anthropic → POST /v1/messages with `max_tokens: 1, model: claude-haiku-4-5, messages: [{role: user, content: \"hi\"}]`; z.ai → POST /api/paas/v4/chat/completions with `max_tokens: 1, model: glm-4.5v, messages: [{role: user, content: \"hi\"}]`; AssemblyAI → GET /v3/token?expires_in_seconds=60 (returns token on success, 401 on bad key); ElevenLabs → GET /v1/user/subscription (free auth check, returns subscription info)",
-        "Save button writes keys via SecretsStore, non-secret fields via SettingsStore, raises a `SettingsSaved` event, and closes the window. Save is enabled only when the required keys for the selected provider are entered (Anthropic provider → Anthropic key required; z.ai provider → z.ai key required; AssemblyAI + ElevenLabs keys always required because audio is mandatory)",
-        "Quit button (secondary, less prominent) calls Application.Current.Shutdown — required for the first-run case where the user doesn't want to enter keys",
-        "Help text at the bottom: small italic footnote explaining \"Your keys are encrypted with your Windows account and stored only on this PC. Clicky never uploads them anywhere.\"",
-        "Window is reachable from the existing tray right-click menu via a new `Settings...` item (added between `Open` and `Quit`)",
-        "When reopened after initial save, fields are pre-populated from SecretsStore/SettingsStore (passwords shown as placeholder `••••••••` with a `Change` button that clears the field)",
-        "Unit tests: ViewModel command enablement (Save disabled until required fields entered), model list updates when provider changes, SecretsStore persistence on Save",
-        "Build: 0 warnings. Tests: all pass. Manual: open Settings from tray, fill fields, all four Test buttons work against real services with a real key",
-        "Commit all changes with message: feat: US-022 - SettingsWindow UI with Test buttons"
-      ],
-      "priority": 5,
-      "passes": true,
-      "notes": "Copy matters here — this is the onboarding experience for everyone who installs Clicky. Use friendly, plain English. Avoid words like 'provider', 'endpoint', 'API key rejected (401)'. Prefer 'Service', 'Couldn't reach Anthropic — check your key'. Do not add import/export or encryption passphrase features in this story; scope-creep risk is high."
-    },
-    {
-      "id": "US-023",
-      "title": "First-run setup flow",
-      "description": "As a first-time user, I want Clicky to walk me through entering my API keys the first time I launch it, and to re-open the settings window on subsequent launches if I'm missing a required key, so I never hit a confusing silent failure.",
-      "acceptanceCriteria": [
-        "On App.OnStartup, after the existing SettingsStore + SecretsStore initialization (US-019), check: (a) are the currently-selected provider's LLM key and the two audio keys (AssemblyAI + ElevenLabs) all present in SecretsStore? (b) is SettingsStore.OnboardingComplete true?",
-        "If either check fails → open SettingsWindow (US-022) BEFORE the permissions panel from US-014 and block further app initialization until SettingsWindow raises SettingsSaved or the user quits",
-        "SettingsWindow in first-run mode shows a friendly header: \"Welcome to Clicky — let's set up your API keys\" instead of the normal \"Settings\" header",
-        "After successful save, SettingsStore.OnboardingComplete is set to true and the normal app init flow continues: construct tray icon → overlay manager → CompanionManager → permissions panel (US-014) auto-opens if any OS permission is still missing",
-        "On launches where both checks pass, the normal flow runs unchanged (tray icon appears silently in background, no window opens)",
-        "If the user closes SettingsWindow via the X button (not Save, not Quit) during first-run, the app exits cleanly — never leave the app half-initialized",
-        "Runtime detection: if the user deletes their key from SecretsStore externally (or DPAPI decryption fails due to a restored backup), the next push-to-talk attempt fails gracefully by surfacing the error to CompanionViewModel as a one-shot toast-style banner reading \"Your API key is missing or invalid. Open Settings to fix.\", AND re-opens SettingsWindow automatically",
-        "Unit tests: first-run with no secrets opens SettingsWindow, returning user with complete secrets does not, partial config (LLM key present but AssemblyAI missing) opens SettingsWindow with a highlighted inline error on the missing field",
-        "Manual test: delete `%APPDATA%\\Clicky\\secrets.bin`, launch app, verify SettingsWindow opens with welcome header",
-        "Build: 0 warnings. Tests: all pass",
-        "Commit all changes with message: feat: US-023 - First-run setup flow"
-      ],
-      "priority": 6,
-      "passes": true,
-      "notes": "The failure-mode path (key deleted or revoked mid-session) is the one most likely to cause support issues for other users. Spend time on it: make the error surfacing specific, actionable, and non-modal. Do NOT silently retry."
-    },
-    {
-      "id": "US-024",
-      "title": "Tray Model submenu for runtime LLM switching",
-      "description": "As a user, I want to switch between Claude and GLM from the tray menu without restarting Clicky, so I can compare providers or hot-swap if one service is down.",
-      "acceptanceCriteria": [
-        "TrayIconManager's context menu gains a new `Model` submenu inserted between `Settings...` and `Quit`",
-        "The submenu contains one radio-style item per available (provider, model) pair: Claude Sonnet 4.6, Claude Haiku 4.5, Claude Opus 4.6, GLM-4.6V, GLM-4.5V",
-        "The currently-active model is marked with ● (bullet) or a check-mark icon",
-        "Items whose required API key is NOT in SecretsStore are grayed out and show a tooltip: `Add your <provider> key in Settings to enable this model`",
-        "Clicking an enabled item triggers `CompanionManager.SwapLlmClientAsync(provider, model)`: (a) cancels any in-flight Claude/TTS task, (b) disposes the old ILlmClient, (c) constructs a new AnthropicDirectClient or ZaiDirectClient via the same factory App.xaml.cs uses at startup, (d) updates SettingsStore.LlmProvider + LlmModel, (e) updates CompanionViewModel.LlmModelDisplay so the panel footer reflects the change",
-        "CompanionManager.SwapLlmClientAsync is safe to call while the CompanionManager is in any VoiceState — if currently Listening/Processing/Responding, the swap waits for or cancels the current turn before taking effect, and the next push-to-talk uses the new client",
-        "ClickyAnalytics (US-016) fires a `model_switched` event with properties `{ from_provider, from_model, to_provider, to_model }` (respects the existing analyticsOptOut flag)",
-        "Unit tests: SwapLlmClientAsync transitions, grayed-out item enablement logic based on SecretsStore contents, VoiceState restoration to Idle after swap",
-        "Manual test: with a valid push-to-talk turn mid-stream, click a different model — verify the stream is cleanly cancelled and the next turn uses the new client",
-        "Build: 0 warnings. Tests: all pass",
-        "Commit all changes with message: feat: US-024 - Tray Model submenu for runtime LLM switching"
-      ],
-      "priority": 7,
-      "passes": true,
-      "notes": "The mid-turn swap is the tricky case. Look at how US-010's CompanionManager already cancels currentResponseTask on re-press; SwapLlmClientAsync can reuse the same cancellation plumbing."
-    },
-    {
-      "id": "US-025",
-      "title": "Shippable-product polish: README, installer notes, error copy, analytics events",
-      "description": "As a prospective user finding Clicky on GitHub, I want a README that makes the value proposition clear, a setup flow I can complete without reading docs, and error messages that tell me how to fix problems rather than surfacing stack traces.",
-      "acceptanceCriteria": [
-        "windows/README.md `Using Clicky` section rewritten for end-users (not developers): what it does, what keys you need, links to sign up for each service, approximate cost expectations, how to install",
-        "windows/README.md explicitly notes: `worker/` is legacy / optional shared-server mode used by the Mac reference implementation and not required for the Windows build",
-        "Top-level README.md (repo root) updated so the Windows port is presented as a first-class product, not an afterthought, with a screenshot of SettingsWindow and a screenshot of the blue cursor in action",
-        "All user-facing error copy audited: any `Exception.Message` directly surfaced to the UI must be replaced with a friendly `{what happened} + {what to do}` pair. Example: `Couldn't reach Anthropic — check your internet connection or your API key in Settings` instead of `The operation was canceled.`",
-        "CompanionViewModel exposes a new `LastError` string + clear command that the panel shows as a dismissable inline banner",
-        "ClickyAnalytics gets three new events: `onboarding_completed` (fired on first successful SettingsSaved), `settings_opened` (tray menu click), `provider_test_run` (properties: service, success, error_category). All respect analyticsOptOut",
-        "Installer script (windows/scripts/clicky-installer.iss from US-017) updated: the `[Files]` section ensures appsettings.json is NOT shipped (we no longer need WorkerBaseUrl there), uninstall section optionally offers to delete `%APPDATA%\\Clicky\\` contents with an explicit opt-in checkbox",
-        "Manual end-to-end test on a clean Windows 11 VM: run Setup_Clicky.exe, launch Clicky from Start Menu, complete SettingsWindow with real keys, grant permissions, perform one successful push-to-talk turn with Claude, switch to GLM via tray menu, perform one more successful turn. Document this in progress.txt",
-        "Build: 0 warnings. Tests: all pass",
-        "Commit all changes with message: feat: US-025 - Shippable polish for README installer copy analytics"
-      ],
-      "priority": 8,
-      "passes": true,
-      "notes": "This is the story that distinguishes a hobby project from a product you can point friends at. Don't rush it. The copy audit is the most labor-intensive piece — grep for `throw new`, `.Message`, `MessageBox.Show`, and every user-visible string in XAML files."
-    },
-    {
-      "id": "US-026",
-      "title": "Quit reliably terminates the process",
-      "description": "As a user, when I click Quit from the tray menu I want the app to actually exit — no lingering Clicky.App.exe in Task Manager, no orphaned WASAPI / WebSocket / HttpClient threads keeping the process alive.",
-      "acceptanceCriteria": [
-        "Reproduce the bug first: launch Clicky, do at least one push-to-talk turn (so mic capture + transcription WebSocket + LLM stream + TTS playback have all run), then click tray → Quit. Confirm Clicky.App.exe is still in Task Manager. Capture a managed-thread dump (procdump -ma, or debugger attach) BEFORE writing any fix so the culprit thread is identified, not guessed",
-        "Root-cause the hang. Likely suspects, in order: (a) `CompanionManager.Dispose` at `windows/src/Clicky.Companion/CompanionManager.cs:502-514` cancels `_hookConsumerCts` but never awaits the fire-and-forget `ConsumeHotkeyTransitionsAsync` task started at line 110; (b) `MicrophoneCapture.Dispose` at `windows/src/Clicky.Audio/MicrophoneCapture.cs:150-155` may not join the NAudio WASAPI thread; (c) HTTP calls inside `AnthropicDirectClient`, `ZaiDirectClient`, `ElevenLabsTtsClient`, `AssemblyAiStreamingTranscriber` may be running without a shutdown CancellationToken and blocking the dispatcher. Document in progress.txt which one(s) were actually holding the process alive",
-        "Fix the identified root cause(s). Required changes: store long-running background tasks as `Task` fields (not `_ = ...`) and `await` them with a 2-second timeout inside the owner's `Dispose`/`DisposeAsync`. Any new worker `Thread` must be `IsBackground = true`. Every outbound `HttpClient.SendAsync` / `ClientWebSocket.ReceiveAsync` on the shutdown path must accept a `CancellationToken` wired to a shutdown `CancellationTokenSource` owned by `App`",
-        "`App.xaml.cs` gains a shutdown `CancellationTokenSource` created in `OnStartup`, cancelled at the top of `OnExit` before any Dispose calls, and passed into CompanionManager/clients through their existing constructors (or a new `SetShutdownToken` method if adding a ctor param ripples too widely)",
-        "`App.OnExit` at `windows/src/Clicky.App/App.xaml.cs:427-459` is converted to dispose in a deterministic order: (1) cancel shutdown token, (2) await CompanionManager.DisposeAsync with 2s timeout, (3) dispose overlay manager, (4) dispose push-to-talk hook, (5) dispose tray icon. Add a final safety net: after `base.OnExit(e)`, if any foreground thread is still alive after 500ms, call `Environment.Exit(0)`. The safety net is belt-and-braces — it must NOT be used to paper over a hang the dispose chain should have prevented",
-        "Unit test: a `FakeLlmClient` and `FakeTranscriber` that intentionally block forever on an `HttpClient`-like stream. `CompanionManager.DisposeAsync` must still return within 2 seconds by cancelling them. Same pattern for `MicrophoneCapture`",
-        "Manual verification: after the fix, perform the original repro (one full push-to-talk turn, then Quit). Task Manager must show Clicky.App.exe gone within 1 second of the click. Repeat 3× — all three must terminate cleanly",
-        "Regression check: Quit from a cold state (app just started, no turn performed) must also work. Quit mid-turn (while TTS is speaking) must cancel playback AND exit within 1 second",
-        "Build: 0 warnings. Tests: all pass",
-        "Append diagnosis + fix summary to progress.txt, including the exact thread stack(s) that were blocking shutdown",
-        "Commit all changes with message: feat: US-026 - Quit reliably terminates the process"
-      ],
-      "priority": 9,
-      "passes": true,
-      "notes": "Diagnose before fixing. `Environment.Exit(0)` is a hammer that will hide bugs — fix the actual blocker first, then add the safety net. The `ShutdownMode=\"OnExplicitShutdown\"` in App.xaml is correct for a tray app and must not be changed; any non-background foreground thread will prevent process exit under that mode, which is why hunting down the specific blocker matters."
-    },
-    {
-      "id": "US-027",
-      "title": "Show Clicky version in tray menu + Settings window",
-      "description": "As a user who just ran an auto-update, I want to see the current Clicky version in the tray and in Settings so I can verify the update actually installed without digging into Task Manager or the filesystem.",
-      "acceptanceCriteria": [
-        "Add `<Version>1.0.0</Version>` to `windows/src/Clicky.App/Clicky.App.csproj` inside the existing `<PropertyGroup>`. This becomes the single source of truth that flows into `AssemblyInformationalVersion` at build time",
-        "New helper `Clicky.App.VersionInfo.Current` returns the version string via `Assembly.GetExecutingAssembly().GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? \"dev\"`. Strip any `+<commithash>` suffix before returning",
-        "Tray icon tooltip is updated in `TrayIconManager.cs` where the `NotifyIcon` is constructed: set `Text = $\"Clicky {VersionInfo.Current}\"` so hovering the tray icon shows the version",
-        "Tray context menu gains a disabled info item `Version {x.y.z}` inserted just above the `Quit` item at `windows/src/Clicky.App/TrayIconManager.cs:89`. Use `IsEnabled = false` so it's visually greyed and non-clickable",
-        "Settings window shows the version at the bottom of the main grid in `windows/src/Clicky.App/SettingsWindow.xaml` as a small muted TextBlock (e.g. `Foreground=\"#888\" FontSize=\"11\"`) reading `Clicky {x.y.z}`. Place it alongside or just above the existing DPAPI help footnote",
-        "If `AutoUpdateService` is able to expose a `LatestKnownVersion` property without significant refactor, the Settings footer additionally reads `Clicky {current} — update available: {latest}` when latest > current. If exposing that is non-trivial, skip it for this story and leave a TODO — do NOT rewrite the auto-update plumbing",
-        "Unit test: `VersionInfo.Current` returns a non-empty string in a test run (validates the attribute is actually emitted by the csproj change)",
-        "Manual verification: build the installer, install it, hover the tray icon → tooltip shows `Clicky 1.0.0`. Right-click → menu shows `Version 1.0.0` greyed above Quit. Open Settings → footer shows `Clicky 1.0.0`. Bump the csproj version to 1.0.1, rebuild, reinstall → all three surfaces show 1.0.1",
-        "Build: 0 warnings. Tests: all pass",
-        "Commit all changes with message: feat: US-027 - Show version in tray and settings"
-      ],
-      "priority": 10,
-      "passes": true,
-      "notes": "Tiny story on purpose — the goal is a reliable visual confirmation that updates landed, not a polished About dialog. Do not add an About window, changelog viewer, or update-check button in this story. Keep the diff under ~60 lines across 4 files."
-    },
-    {
-      "id": "US-028",
-      "title": "Fix DPI-scaling bug that breaks pointer accuracy on high-DPI displays",
-      "description": "As a user on a high-DPI Windows laptop, when I ask Clicky to point at something on screen I want the blue cursor to land on the actual target, not 20–50% off. On scaled displays (125%, 150%, 200%) the pointer currently lands far from the intended element, and the error grows with distance from the monitor origin.",
-      "acceptanceCriteria": [
-        "Reproduce the bug on a 150% DPI display first. Ask Clicky to point at a well-known target (Windows taskbar clock, a specific file in the VS Code explorer). Document the pixel offset and its scaling behavior in progress.txt before fixing",
-        "Root cause: physical pixels are being handed to WPF APIs that expect DIPs. Three files are implicated: `windows/src/Clicky.Capture/ScreenCapture.cs:425-437` returns monitor bounds from `GetMonitorInfo` in physical pixels; `windows/src/Clicky.Pointing/PointTagParser.cs:94-103` produces a `screenPoint` in physical pixels by scaling and offsetting with those bounds; `windows/src/Clicky.Overlay/OverlayWindow.cs:41-48` assigns those physical-pixel values directly to WPF `Window.Left/Top/Width/Height` which are always DIPs (the comment on line 41-43 asserting otherwise is wrong); `windows/src/Clicky.Overlay/BlueCursorControl.cs:197-198` then subtracts physical-pixel overlay bounds from a physical-pixel target to compute canvas-local coordinates, which WPF also interprets as DIPs",
-        "Fix strategy: keep screenshot→physical-pixel math in the capture/parser layer, and convert to DIPs exactly once at the WPF boundary. Introduce a `DpiHelper` (or similar) that calls `GetDpiForMonitor(MDT_EFFECTIVE_DPI)` per `HMONITOR` and returns a `(double ScaleX, double ScaleY)` tuple, plus a convenience `System.Windows.Point ToDips(System.Drawing.Point physical, HMONITOR monitor)`",
-        "`OverlayWindow` constructor converts `monitorBounds` from physical pixels to DIPs before assigning `Left/Top/Width/Height`. Store both the original physical `MonitorBounds` (for matching against PointDirective.DisplayBounds) AND the new DIP bounds (for layout). The comment on line 41-43 is deleted and replaced with one that correctly describes WPF's DIP coordinate system",
-        "`BlueCursorControl.FlyTo` converts `targetPoint` and the `GetCursorPos` result from physical pixels to DIPs before computing canvas-local coordinates. Uses the overlay's cached DPI scale to avoid re-querying the OS on every animation tick",
-        "`PointTagParser.ConvertToScreenCoordinates` is NOT changed — it continues to return physical-pixel global coordinates. The DIP conversion happens at the overlay-layer boundary, giving a single conversion point that future code can trust",
-        "Unit test: `DpiHelper` round-trip (physical → DIP → physical) is identity for a monitor at 100%, and scales correctly for 125% / 150% / 200%. Provide a fake monitor-DPI source so tests don't depend on the real display config",
-        "Unit test: `PointTagParser` output is unchanged (no regression in the existing physical-pixel contract)",
-        "Unit test: a test `OverlayWindow` (or extracted helper) given a physical-pixel target on a 150% monitor produces a DIP canvas-local point matching the expected value within 0.5 DIP",
-        "Manual verification on a high-DPI laptop: hotkey → \"point at the Windows clock\" → the blue cursor must land on the clock, not beside it. Repeat on the far corner of the screen (where the DPI bug causes the largest offset) — must still land within ~20 px of the target. If multi-monitor is available, test the same on a secondary monitor at a different DPI",
-        "Regression check on a 100% single-monitor setup: accuracy must be unchanged from before the fix",
-        "Build: 0 warnings. Tests: all pass",
-        "Append the reproduced offset values (before) and the post-fix measurements (after) to progress.txt",
-        "Commit all changes with message: feat: US-028 - Fix DPI scaling for pointer accuracy on high-DPI displays"
-      ],
-      "priority": 11,
-      "passes": true,
-      "notes": "The secondary hypothesis — that the image dimensions sent to Claude (AnthropicDirectClient.cs:63-76) disagree with the resized JPEG dimensions — should only be investigated if DPI alone doesn't close the gap. Measure before and after. Do NOT change the coordinate contract of PointTagParser; keeping it in physical pixels means future code (e.g. a hypothetical Win32 SendInput click feature) still has the right reference frame."
-    },
-    {
-      "id": "US-029",
-      "title": "Stream TTS + overlap capture to cut perceived latency",
-      "description": "As a user, I want Clicky to start speaking almost as soon as I let go of the push-to-talk key, not after several seconds of silence. Today, TTS only starts playing after the whole ElevenLabs MP3 has been downloaded AND the entire LLM response has streamed — both are serialized pointlessly.",
-      "acceptanceCriteria": [
-        "Measure current latency as a baseline before changing anything. Instrument `CompanionManager.SendTranscriptToClaudeWithScreenshot` at `windows/src/Clicky.Companion/CompanionManager.cs:318-396` to log (a) key-release→first-LLM-token, (b) first-LLM-token→first-TTS-byte, (c) first-TTS-byte→first-audio-heard. Record the baseline numbers in progress.txt",
-        "Change 1 — stream TTS audio instead of buffering the whole MP3. Update `windows/src/Clicky.Api/ElevenLabsTtsClient.cs:62-92` to consume the HTTP response as a `Stream` and feed it into NAudio via a buffered pipe (`MediaFoundationReader` over a `BufferedWaveProvider`, or a custom `Stream` wrapper that blocks `Read` until more bytes arrive). First audio sample must leave the speakers no later than ~300 ms after the first HTTP response byte arrives, not after the full MP3 is downloaded",
-        "Change 2 — start TTS on sentence boundaries instead of waiting for the whole LLM response. In `CompanionManager` where the LLM `IAsyncEnumerable<string>` is consumed, buffer tokens until the first sentence terminator (`.`, `!`, `?`, or two consecutive newlines), kick off an ElevenLabs TTS request for that chunk, continue buffering the next sentence, and queue subsequent TTS requests to play sequentially without gaps. The `[POINT:x,y:label:screenN]` tag must still be stripped before the text is spoken (`PointTagParser.Parse` already handles this — call it per-sentence)",
-        "Change 3 — overlap screen capture with the hotkey press. Today capture runs after key release. Kick off `ScreenCapture.CaptureAllScreensAsJpegAsync` when the key is first pressed (inside the hotkey press handler in `CompanionManager`), store the `Task<List<CapturedScreen>>`, and `await` it at the point the LLM request is built. On key release the capture is usually already done, saving 300–1000 ms. Cancel the capture task if the press is shorter than ~100 ms (accidental tap)",
-        "Change 4 — tighten the WGC first-frame timeout at `windows/src/Clicky.Capture/ScreenCapture.cs:171` from 2 seconds to 800 ms. On Windows 11, WGC first-frame is normally <300 ms; the 2 s ceiling just prolongs failure fallback to GDI+",
-        "Change 5 (optional, only if time permits) — pre-warm HTTPS connections to `api.anthropic.com`, `api.z.ai`, `api.elevenlabs.io`, and `streaming.assemblyai.com` on `App.OnStartup` with a throwaway HEAD or GET. Skip with a TODO if it adds complexity",
-        "Cancellation: every new async path (pipelined TTS queue, capture-on-press, streamed audio reader) must honor `CompanionManager`'s existing cancellation plumbing from US-010. A new push-to-talk must cleanly cancel any in-flight TTS playback and queued sentences, matching the existing behavior for full-response TTS",
-        "Ordering guarantee: sentences must play in the order they were emitted by the LLM. Test with a mocked LLM that emits sentences at varying speeds and a mocked TTS client with variable latency — the audio queue must never reorder",
-        "Unit tests: sentence-boundary tokenizer (handles `[POINT:...]` tag stripped mid-sentence, handles newlines, handles abbreviations like `Dr.` or `e.g.` gracefully — accept some false positives but document them), streaming MP3 reader starts playback before stream completes, pipelined TTS queue preserves order under varying latency, capture-on-press cancellation on short tap",
-        "Manual measurement after the fix: the same three latency metrics from the baseline, with each change applied incrementally. Target: end-to-end key-release→first-audio-heard under 1.5 seconds on a typical broadband connection (baseline today is likely 3–6 s). Document actual before/after numbers in progress.txt",
-        "Regression check: pointing accuracy from US-028 must be unchanged — the capture-on-press change must still hand Claude the correct screenshot dimensions and `CapturedScreen.DisplayBounds`",
-        "Build: 0 warnings. Tests: all pass",
-        "Commit all changes with message: feat: US-029 - Stream TTS and overlap capture for perceived latency"
-      ],
-      "priority": 12,
-      "passes": true,
-      "notes": "Ship changes 1+2+3 as the core of this story — they compound. Change 4 is a trivial one-line win. Change 5 is optional. Sentence-boundary detection is a known tar pit; accept a simple `.!?` + newline heuristic, do not pull in a sentence-tokenizer library, and do not attempt to handle edge cases like `Dr. Smith` perfectly — if a false split causes a short extra TTS call, that is acceptable. Measure, don't guess: the baseline and post-fix numbers in progress.txt are the acceptance gate, not code review aesthetics."
-    },
-    {
-      "id": "US-030",
-      "title": "Higher-resolution screenshots for better pointer accuracy on all displays",
-      "description": "As a user on any display resolution, I want Clicky to send higher-resolution screenshots to the LLM so that the [POINT:x,y] coordinates it returns are more precise, and the blue cursor lands closer to the intended UI element.",
-      "acceptanceCriteria": [
-        "Increase `MaxDimension` from 1280 to 2048 in `windows/src/Clicky.Capture/ScreenCapture.cs:20`. This halves the coordinate error on 2560px displays and reduces it by 3× on 4K (3840px) displays — every pixel of LLM imprecision now maps to fewer physical pixels",
-        "Lower `JpegQuality` from 80 to 75 in `windows/src/Clicky.Capture/ScreenCapture.cs:21` to partially offset the larger image payload. At 2048px the JPEG is about 40-60% larger at quality 75 vs 1280px at quality 80, which is acceptable for broadband connections and stays well within Claude and GLM-4.6V's image size limits",
-        "Replace `(int)` truncation with `(int)Math.Round(...)` in `CalculateScaledSize` at `windows/src/Clicky.Capture/ScreenCapture.cs:377-378`. Current code `(int)(MaxDimension / aspect)` truncates fractional pixels — on ultrawide displays (e.g. 3440x1440, aspect 2.388) this causes a 1-pixel dimension mismatch between the reported `ScreenshotPixelWidth/Height` and the actual JPEG, which accumulates into a pointing offset at screen edges",
-        "Fix off-by-one clamping in `PointTagParser.ConvertToScreenCoordinates` at `windows/src/Clicky.Pointing/PointTagParser.cs:89-90`. Change `Math.Min(directive.X, target.ScreenshotPixelWidth)` to `Math.Min(directive.X, target.ScreenshotPixelWidth - 1)` and same for Y — coordinates are 0-indexed so the max valid coordinate is `dimension - 1`, not `dimension`",
-        "Update any test fixtures that assert `MaxDimension == 1280` to expect 2048. Grep for `1280` in `windows/tests/` to find them",
-        "These changes must improve accuracy on ALL display configurations, not just high-DPI: (a) standard 1920×1080 at 100% — screenshot is 1920×1080 (no resize needed, within 2048), improving precision from 1.5:1 to 1:1 compared to the old 1280px cap; (b) 2560×1440 at 100% — screenshot is 2048×1152 (1.25:1 instead of 2:1); (c) 3840×2160 at 150% — physical capture is 3840×2160, resized to 2048×1152 (1.875:1 instead of 3:1); (d) 3440×1440 ultrawide — resized to 2048×857 (1.68:1 instead of 2.69:1)",
-        "Regression: existing US-028 DPI tests and US-029 capture-on-press tests must still pass. The `ScreenshotPixelWidth/Height` metadata stored in `CapturedScreen` must still match the actual JPEG dimensions exactly — verify with a unit test that captures a known-size bitmap and checks the metadata",
-        "Build: 0 warnings. Tests: all pass",
-        "Commit all changes with message: feat: US-030 - Higher-resolution screenshots for pointer accuracy"
-      ],
-      "priority": 13,
-      "passes": true,
-      "notes": "This is the single highest-impact change for pointing accuracy. At 1280px, Claude is routinely off by 10-20 screenshot pixels, which maps to 20-60 physical pixels depending on the display. At 2048px the same 10-20 pixel error maps to 12-37 physical pixels — a 40-50% improvement with zero changes to the LLM prompting. The trade-off is slightly larger API payloads (~150KB vs ~100KB per screenshot), which adds 50-100ms on broadband but is negligible compared to the 500-2000ms LLM TTFT. Do NOT go above 2048 — larger images don't measurably improve vision model coordinate accuracy but do increase cost and latency."
-    },
-    {
-      "id": "US-031",
-      "title": "Eager first-chunk TTS to cut time-to-first-audio",
-      "description": "As a user, I want to hear the beginning of Clicky's response as fast as possible after I release the push-to-talk key, instead of waiting for the LLM to produce a complete sentence ending with a period before TTS starts.",
-      "acceptanceCriteria": [
-        "Add an eager first-chunk mode to `SentenceTokenizer` at `windows/src/Clicky.Companion/SentenceTokenizer.cs`. Add a private `bool _firstChunkEmitted = false` field. When `_firstChunkEmitted` is false and the buffer has accumulated at least 60 characters, `FindSentenceBoundary` additionally considers `,` (comma), `—` (em-dash, U+2014), `–` (en-dash, U+2013), `;` (semicolon), and `:` (colon) followed by a space as valid split points, in addition to the existing `.!?\\n\\n` boundaries",
-        "After the first chunk is emitted via the eager path, set `_firstChunkEmitted = true` and revert to the standard `.!?\\n\\n` sentence-boundary logic for all subsequent chunks — this prevents choppy playback after the initial response",
-        "The 60-character minimum prevents pathological splits on very short opening phrases like `yeah,` or `sure,` — these should buffer until a normal sentence boundary or the eager threshold is hit",
-        "Example: Claude streams `you'll want to open the color inspector — it's right up in the top right area of the toolbar.` The old tokenizer waits for the final `.` (entire sentence). The new tokenizer emits `you'll want to open the color inspector` at the em-dash after ~45 tokens, then `it's right up in the top right area of the toolbar.` at the period. Estimated savings: 500-1500ms off first-audio latency depending on LLM token rate",
-        "Edge case: if the first `.!?` arrives before the buffer hits 60 chars, the normal sentence boundary fires first and `_firstChunkEmitted` is set — no double-split risk",
-        "Edge case: [POINT:...] tags must not be counted toward the 60-char threshold. Strip point tags from the length check (not from the actual text — stripping happens downstream in CompanionManager)",
-        "Unit tests: (a) eager split on comma after 60+ chars, (b) eager split on em-dash, (c) no eager split when buffer < 60 chars (waits for normal boundary), (d) normal `.!?` boundary still fires if it comes before 60 chars, (e) second sentence uses normal boundaries only (no mid-comma splits), (f) `[POINT:...]` tag not counted in threshold",
-        "This improvement works identically on all hardware — it is pure text-processing logic with no OS, DPI, or device dependencies",
-        "Build: 0 warnings. Tests: all pass",
-        "Commit all changes with message: feat: US-031 - Eager first-chunk TTS splitting"
-      ],
-      "priority": 14,
-      "passes": true,
-      "notes": "This pairs with US-032 (streaming MP3 playback). Together they cut 800-2300ms from first-audio latency. Alone, this saves 500-1500ms because the TTS request fires earlier. Do NOT reduce the 60-char threshold below 50 — very short TTS chunks sound robotic and are wasteful (ElevenLabs has per-request overhead). Do NOT add clause-level splitting for sentences after the first — it makes the voice choppy. The first sentence is the only one where latency matters more than naturalness."
-    },
-    {
-      "id": "US-032",
-      "title": "True streaming MP3 playback for TTS",
-      "description": "As a user, I want Clicky to start playing the TTS audio as soon as the first MP3 frames arrive from ElevenLabs, instead of waiting for the entire MP3 file to download before playback begins.",
-      "acceptanceCriteria": [
-        "Rewrite `PlayStreamingMp3Async` in `windows/src/Clicky.Api/ElevenLabsTtsClient.cs:98-157`. Currently the method downloads the entire MP3 into a `MemoryStream`, then creates an `Mp3FileReader` and plays. The new implementation must start playback after the first few MP3 frames are decoded, while the HTTP download continues in parallel",
-        "Implementation approach: (a) create a `BufferedWaveProvider` at 44100 Hz stereo (or whatever format the first `Mp3Frame` reports) with a buffer of ~5 seconds; (b) start `WaveOutEvent`/`WasapiOut` playing from the `BufferedWaveProvider` immediately; (c) in a loop, read chunks from the HTTP response stream, decode MP3 frames using `Mp3Frame.LoadFromStream` + `IMp3FrameDecompressor` (NAudio's `AcmMp3FrameDecompressor`), and add decoded PCM to the `BufferedWaveProvider`; (d) when the HTTP stream ends, wait for the `BufferedWaveProvider` to drain (playback completes)",
-        "The `BufferedWaveProvider.ReadFully` property must be set to `true` so it returns silence instead of stalling when the HTTP stream is temporarily slower than playback — this prevents audio glitches on slow connections",
-        "Handle format detection: the first `Mp3Frame` determines the sample rate and channel count. Create the `BufferedWaveProvider` and `IMp3FrameDecompressor` after the first frame is decoded, not before",
-        "Preserve the existing `StopPlayback()` semantics: calling `StopPlayback()` mid-stream must (a) stop the `WaveOutEvent`/`WasapiOut`, (b) cancel the HTTP download loop, and (c) dispose all resources. Use the existing `_lock` for thread safety",
-        "Preserve the existing `IsPlaying` property: return true while the `WaveOutEvent` is in `PlaybackState.Playing`",
-        "Preserve the WasapiOut path for specific output devices (`_outputDeviceId`): the `CreateWavePlayer` helper is unchanged, the only difference is what `IWaveProvider` is passed to `Init()` — `BufferedWaveProvider` instead of `Mp3FileReader`",
-        "Estimated latency savings: 300-800ms per TTS sentence. The old path waited for the full MP3 download (typically 300-800ms for a 1-2 sentence chunk at ElevenLabs' output rate). The new path starts playback after ~2-3 MP3 frames (~50-100ms of audio data)",
-        "This works on all Windows machines — NAudio's `Mp3Frame` and `AcmMp3FrameDecompressor` use the ACM codec that ships with every Windows installation since Vista. No additional codec or library is required",
-        "Unit test: mock HTTP stream that feeds MP3 data in 1KB chunks with 50ms delays. Verify `IsPlaying` becomes true before all chunks are delivered (proving playback started during download). Use a real short MP3 fixture (generate one with NAudio or include a ~1s test file)",
-        "Cancellation test: start streaming playback, cancel after 200ms — verify no resource leaks (all disposed within 1s)",
-        "Build: 0 warnings. Tests: all pass",
-        "Commit all changes with message: feat: US-032 - True streaming MP3 playback for TTS"
-      ],
-      "priority": 15,
-      "passes": true,
-      "notes": "The current `PlayStreamingMp3Async` already has the scaffolding for streaming (the `playbackStarted` flag, the `startPlaybackThreshold` constant) but the comment at line 126-128 says 'For simplicity we'll wait for the full download since NAudio's Mp3FileReader needs seekable streams.' The fix is to bypass `Mp3FileReader` entirely and decode frame-by-frame with `Mp3Frame` + `AcmMp3FrameDecompressor` into a `BufferedWaveProvider`. This is a well-documented NAudio pattern. Do NOT pull in MediaFoundation or any external codec — the built-in ACM MP3 decoder is universally available and sufficient."
-    },
-    {
-      "id": "US-033",
-      "title": "TLS warmup for ElevenLabs to eliminate first-request handshake delay",
-      "description": "As a user, I want the first TTS request to ElevenLabs to be as fast as subsequent ones, by pre-establishing the TLS connection at app startup instead of paying the handshake cost on the first push-to-talk turn.",
-      "acceptanceCriteria": [
-        "Add a `WarmUpTlsConnectionIfNeeded` method to `ElevenLabsTtsClient` at `windows/src/Clicky.Api/ElevenLabsTtsClient.cs`, following the exact same pattern as `AnthropicDirectClient.WarmUpTlsConnectionIfNeeded` at `windows/src/Clicky.Api/AnthropicDirectClient.cs:182-204`",
-        "Use a static lock + static bool flag (`_hasStartedTlsWarmup`) to ensure the warmup HEAD request fires exactly once across all `ElevenLabsTtsClient` instances, same as the Anthropic pattern",
-        "The warmup fires `Task.Run(async () => { HEAD https://api.elevenlabs.io })` on construction. The HEAD request uses the existing `_httpClient` instance so the connection pool is shared with subsequent TTS requests. Set `ConnectionClose = false` to keep the connection alive",
-        "Failures are silently swallowed (try/catch around the whole warmup) — this is purely an optimization, not a requirement. A failed warmup just means the first TTS call pays the full TLS handshake",
-        "Estimated savings: 100-300ms on the first TTS request. Subsequent requests reuse the pooled connection regardless",
-        "This works on all networks and all Windows configurations — it's a standard HTTP optimization with no OS-specific dependencies",
-        "Unit test: construct `ElevenLabsTtsClient` with a `FakeHttpMessageHandler`, verify that a HEAD request to `https://api.elevenlabs.io` is made within 1 second of construction",
-        "Build: 0 warnings. Tests: all pass",
-        "Commit all changes with message: feat: US-033 - TLS warmup for ElevenLabs TTS"
-      ],
-      "priority": 16,
-      "passes": true,
-      "notes": "Smallest story in this batch — should be under 30 lines of code. The Anthropic client already does this (US-018 preserved it from the original ClaudeClient). Copy the pattern exactly. Do NOT add warmup for AssemblyAI — the transcriber's WebSocket connection is established per-session and the token-fetch HTTP call is lightweight enough that the TLS handshake doesn't dominate."
-    },
-    {
-      "id": "US-034",
-      "title": "Version bump to 1.1.0 for accuracy + latency improvements",
-      "description": "As a user, I want the version number to reflect that meaningful improvements to pointer accuracy and response latency have shipped, so I can confirm I'm running the updated build.",
-      "acceptanceCriteria": [
-        "Bump `<Version>` from `1.0.0` to `1.1.0` in `windows/src/Clicky.App/Clicky.App.csproj`",
-        "Verify that `VersionInfo.Current` (from US-027) returns `1.1.0` — run the existing unit test or add a quick assertion if one doesn't exist",
-        "Verify tray tooltip shows `Clicky 1.1.0` (hover the tray icon), tray context menu shows `Version 1.1.0` (right-click), and Settings window footer shows `Clicky 1.1.0`",
-        "If the Inno Setup installer script at `windows/scripts/clicky-installer.iss` has a hardcoded version string, update it to `1.1.0` as well",
-        "This story must only be committed AFTER US-030, US-031, US-032, and US-033 have all passed — it is the final seal on the accuracy + latency improvement batch",
-        "Build: 0 warnings. Tests: all pass",
-        "Commit all changes with message: chore: US-034 - Bump version to 1.1.0"
-      ],
-      "priority": 17,
-      "passes": true,
-      "notes": "Tiny story — a single line change in the csproj plus verification. The version bump signals to users (especially those using auto-update from US-017) that the accuracy and latency improvements from US-030 through US-033 have landed. Do not bump to 2.0.0 — these are enhancements, not breaking changes."
-    }
-  ]
+﻿{
+    "project":  "Clicky â€” direct-to-provider, bring-your-own-keys",
+    "branchName":  "ralph/windows-port",
+    "description":  "Turn Clicky from a server-proxied app into a shippable personal tool: each user installs the binary, opens a settings window on first launch, pastes their own API keys for Anthropic and/or z.ai (LLM) plus AssemblyAI (streaming transcription) and ElevenLabs (TTS), and Clicky talks directly to those providers from the user\u0027s machine. No Cloudflare Worker. No shared backend. No keys on disk in plaintext â€” all secrets encrypted with Windows DPAPI under the current user\u0027s profile. The existing worker/ directory remains in the repo because it is shared with the Mac reference implementation, but the Windows client no longer calls it in any code path. Users can switch between Claude and GLM at runtime via a tray menu without restarting. This PRD builds on the completed Windows port (see archive/prd-windows-port.json for the 17 shipped stories) and supersedes the earlier worker-routing GLM integration draft (see archive/prd-glm-worker-routing.json) that this project decided against because it required every user to run Cloudflare Wrangler locally. Target vision model for GLM: glm-4.6v. The Mac reference implementation is not modified.",
+    "userStories":  [
+                        {
+                            "id":  "US-018",
+                            "title":  "ILlmClient interface + AnthropicDirectClient (direct to api.anthropic.com)",
+                            "description":  "As a user with my own Anthropic API key, I want Clicky to call api.anthropic.com directly with my key instead of going through a worker, so I can run the app without any backend infrastructure.",
+                            "acceptanceCriteria":  [
+                                                       "New interface `Clicky.Api.ILlmClient` exposes `IAsyncEnumerable\u003cstring\u003e SendAsync(IReadOnlyList\u003cMessage\u003e history, IReadOnlyList\u003cCapturedScreen\u003e screens, string systemPrompt, string userText, CancellationToken ct)` â€” the exact surface `CompanionManager` already consumes, extracted from the existing `ClaudeClient`",
+                                                       "The existing `Clicky.Api.ClaudeClient` is replaced by `Clicky.Api.AnthropicDirectClient : ILlmClient` that POSTs to `https://api.anthropic.com/v1/messages` directly with headers `x-api-key: \u003cuserKey\u003e`, `anthropic-version: 2023-06-01`, `content-type: application/json`",
+                                                       "Constructor signature: `AnthropicDirectClient(string apiKey, string model = \"claude-sonnet-4-6\", HttpClient? httpClient = null)`. No proxy URL â€” the worker path is gone.",
+                                                       "Request body shape, SSE parsing, PNG/JPEG magic-byte media_type detection, and TLS warmup HEAD request behavior are preserved byte-for-byte from the old ClaudeClient (see US-007 notes in archive/progress-windows-port.txt)",
+                                                       "`Clicky.Companion.CompanionManager` now takes `ILlmClient` via constructor injection instead of constructing a `ClaudeClient` itself. App.xaml.cs constructs `AnthropicDirectClient` with a temporary hardcoded key for this story only â€” real key plumbing lands in US-019",
+                                                       "All existing US-007 tests (SSE parsing, delta extraction, media type detection) pass against the new AnthropicDirectClient unchanged",
+                                                       "One new test: a `FakeLlmClient : ILlmClient` verifies CompanionManager\u0027s dependency injection seam works end-to-end",
+                                                       "Build: 0 warnings. Tests: all existing Windows-port tests still pass",
+                                                       "Commit all changes with message: feat: US-018 - ILlmClient interface + AnthropicDirectClient"
+                                                   ],
+                            "priority":  1,
+                            "passes":  true,
+                            "notes":  "This is primarily a refactor + direct-API swap. Keep the scope narrow: don\u0027t add provider selection, key storage, or UI yet â€” those land in US-019 through US-024. The hardcoded temporary key is fine for this story because US-019 will replace it within one iteration."
+                        },
+                        {
+                            "id":  "US-019",
+                            "title":  "SecretsStore (DPAPI) + SettingsStore (JSON) under %APPDATA%\\Clicky",
+                            "description":  "As a user, I want my API keys encrypted at rest using my Windows account credentials, and my non-secret settings persisted in a readable JSON file, so nobody can extract my keys from disk and I can inspect/reset my config without a GUI if needed.",
+                            "acceptanceCriteria":  [
+                                                       "`Clicky.Companion.SecretsStore` wraps `System.Security.Cryptography.ProtectedData.Protect` / `Unprotect` with `DataProtectionScope.CurrentUser`. Methods: `void Write(string key, string value)`, `string? Read(string key)`, `void Delete(string key)`, `bool Exists(string key)`",
+                                                       "Secrets are stored as an encrypted blob at `%APPDATA%\\Clicky\\secrets.bin`. The plaintext internal format is a simple JSON dictionary; encryption is applied to the whole file, not per-entry",
+                                                       "`Clicky.Companion.SettingsStore` reads/writes `%APPDATA%\\Clicky\\settings.json` with fields: `LlmProvider` (string: \"anthropic\" or \"zai\"), `LlmModel` (string), `ElevenLabsVoiceId` (string, default `kPzsL2i3teMYv0FxEYQ6` to match Mac), `OnboardingComplete` (bool), `AnalyticsOptOut` (bool)",
+                                                       "Both stores auto-create the %APPDATA%\\Clicky directory on first write",
+                                                       "Keys used by SecretsStore are standardized constants: `anthropic_api_key`, `zai_api_key`, `assemblyai_api_key`, `elevenlabs_api_key`",
+                                                       "App.xaml.cs on OnStartup instantiates SettingsStore + SecretsStore, reads the configured provider/model/keys, and passes them into the CompanionManager constructor (replacing the hardcoded key from US-018)",
+                                                       "US-014\u0027s OnboardingService registry read is migrated: if `HKCU\\Software\\Clicky\\onboarded` exists, copy its value to SettingsStore.OnboardingComplete on first run of this story\u0027s code, then prefer the SettingsStore value thereafter. Same for `analyticsOptOut`",
+                                                       "Unit tests: SecretsStore round-trip (write â†’ read â†’ same value), SecretsStore decryption under a different user profile fails gracefully (returns null rather than throwing), SettingsStore round-trip, SettingsStore defaults when file is missing, migration from registry test",
+                                                       "Build: 0 warnings. Tests: all pass on a Windows test host",
+                                                       "Commit all changes with message: feat: US-019 - SecretsStore (DPAPI) + SettingsStore under APPDATA"
+                                                   ],
+                            "priority":  2,
+                            "passes":  true,
+                            "notes":  "DPAPI is per-user-account, not per-machine â€” backups restored to a different Windows user will fail to decrypt, which is correct security behavior. Document this in the SettingsWindow help text (lands in US-022). Do NOT add a passphrase fallback; the whole point of DPAPI is that it\u0027s invisible to the user."
+                        },
+                        {
+                            "id":  "US-020",
+                            "title":  "ZaiDirectClient for GLM models (direct to api.z.ai OpenAI-compatible endpoint)",
+                            "description":  "As a user with a z.ai API key, I want Clicky to use GLM-4.6V as a vision-capable alternative to Claude, with the same UI and screen-pointing behavior, so I have a choice of LLM providers.",
+                            "acceptanceCriteria":  [
+                                                       "New `Clicky.Api.ZaiDirectClient : ILlmClient` POSTs to `https://api.z.ai/api/paas/v4/chat/completions` with headers `Authorization: Bearer \u003cuserKey\u003e`, `Content-Type: application/json`, `Accept: text/event-stream`",
+                                                       "Constructor: `ZaiDirectClient(string apiKey, string model = \"glm-4.6v\", HttpClient? httpClient = null)`",
+                                                       "Translates Clicky\u0027s existing Anthropic-shape inputs (system prompt + message history + CapturedScreen list + user text) into OpenAI chat-completions request body: system prompt becomes `messages[0] = {role:\"system\", content: systemPrompt}`, history turns pass through with their existing roles, the final user turn\u0027s text + screens become one user message with a `content` array of `{type:\"text\", text:...}` and `{type:\"image_url\", image_url:{url:\"data:\u003cmedia_type\u003e;base64,\u003cbase64Data\u003e\"}}` entries",
+                                                       "Image media_type is sniffed by PNG/JPEG magic bytes (reuse `AnthropicDirectClient.DetectImageMediaType` via refactor or duplicate â€” do not import a new library)",
+                                                       "Streaming response parsing: reads `data: {...}` SSE lines, extracts `choices[0].delta.content` text chunks, yields them through the `IAsyncEnumerable\u003cstring\u003e` return (same interface shape as AnthropicDirectClient). The `[DONE]` sentinel ends the stream cleanly",
+                                                       "Chunk-boundary UTF-8 splits (a multi-byte character split across two HTTP chunks) do not corrupt the yielded text â€” use an incremental decoder, not a per-chunk Encoding.UTF8.GetString",
+                                                       "Malformed JSON lines are logged and skipped, not thrown â€” one bad line must not kill the stream",
+                                                       "Valid model values accepted: `glm-4.6v` (default, vision), `glm-4.5v` (fallback, vision). Text-only models (`glm-5.1`, `glm-5-turbo`, `glm-5`, `glm-4.5-air`, `glm-4.7-no-vision-variants`) must NOT be offered as choices because they silently break the [POINT:x,y:label:screenN] feature â€” Clicky requires vision",
+                                                       "Unit tests: text-only request translation, single-image request translation, multi-image multi-screen request translation, SSE chunk parsing fixture (realistic glm-4.6v response with a [POINT:...] tag mid-stream), UTF-8 chunk-boundary split test, malformed-chunk skip test",
+                                                       "End-to-end test with FakeHttpMessageHandler: canned OpenAI SSE input â†’ expected string deltas out through ILlmClient.SendAsync",
+                                                       "Build: 0 warnings. Tests: all pass",
+                                                       "Commit all changes with message: feat: US-020 - ZaiDirectClient for GLM-4.6V"
+                                                   ],
+                            "priority":  3,
+                            "passes":  true,
+                            "notes":  "This is the most algorithmically dense story. Budget time for the SSE chunk-boundary tests â€” getting them right is what separates a demo-quality integration from a shippable one. The Anthropic-shape system prompt (built by CompanionManager in US-010, includes the [POINT:x,y:label:screenN] tag instructions) passes through unchanged â€” GLM-4.6V is prompted in the same English, it just speaks OpenAI over the wire."
+                        },
+                        {
+                            "id":  "US-021",
+                            "title":  "Direct-to-provider audio clients (AssemblyAI + ElevenLabs, no worker)",
+                            "description":  "As a user with AssemblyAI and ElevenLabs API keys, I want Clicky to call those services directly with my keys, so I can run the app without any Cloudflare Worker.",
+                            "acceptanceCriteria":  [
+                                                       "`Clicky.Api.AssemblyAiStreamingTranscriber` is updated: the existing `FetchTokenAsync` that hits `{workerBaseUrl}/transcribe-token` is replaced with a direct call to `https://streaming.assemblyai.com/v3/token?expires_in_seconds=60` with header `Authorization: \u003cuserKey\u003e` (AssemblyAI\u0027s token endpoint uses the raw API key, NOT `Bearer`)",
+                                                       "Constructor: `AssemblyAiStreamingTranscriber(string apiKey, HttpClient? httpClient = null)` â€” proxyUrl parameter removed",
+                                                       "The WebSocket connection to `wss://streaming.assemblyai.com/v3/ws` and all session mechanics (keyterms, sample_rate=16000, encoding=pcm_s16le, format_turns=true, speech_model=u3-rt-pro, partial/final turn processing, error callback, ForceEndpoint grace period) are preserved from US-008 unchanged",
+                                                       "`Clicky.Api.ElevenLabsTtsClient` is updated: existing POST to `{workerBaseUrl}/tts` is replaced with a direct POST to `https://api.elevenlabs.io/v1/text-to-speech/{voiceId}/stream` with headers `xi-api-key: \u003cuserKey\u003e`, `Content-Type: application/json`, `Accept: audio/mpeg` and body `{text, model_id: \"eleven_flash_v2_5\", voice_settings: {stability: 0.5, similarity_boost: 0.75}}`",
+                                                       "Constructor: `ElevenLabsTtsClient(string apiKey, string voiceId, HttpClient? httpClient = null)`. The voice ID is now a constructor parameter (read from SettingsStore.ElevenLabsVoiceId by App.xaml.cs)",
+                                                       "MP3 decoding via NAudio Mp3FileReader and WaveOutEvent playback path from US-009 is preserved unchanged",
+                                                       "All existing US-008 and US-009 unit tests continue to pass after the refactor (session URI builder, keyterm serialization, partial/final dispatch, IsPlaying, StopPlayback, Dispose safety, cancellation)",
+                                                       "New tests: direct token fetch URL + header format, direct TTS POST URL + header format, voice ID parameter threading",
+                                                       "App.xaml.cs constructs both clients with keys + voice ID from SecretsStore + SettingsStore; CompanionManager receives them via constructor injection (matching the pattern from US-018/US-019)",
+                                                       "Build: 0 warnings. Tests: all pass",
+                                                       "Commit all changes with message: feat: US-021 - Direct AssemblyAI and ElevenLabs clients"
+                                                   ],
+                            "priority":  4,
+                            "passes":  true,
+                            "notes":  "AssemblyAI\u0027s token-fetch auth uses the raw key in the Authorization header, not `Bearer \u003ckey\u003e` â€” double-check this before coding. This is the last story that touches the Clicky.Api layer; after it, the worker is completely unused by the Windows client."
+                        },
+                        {
+                            "id":  "US-022",
+                            "title":  "SettingsWindow WPF UI with Test buttons",
+                            "description":  "As a first-time user, I want a friendly settings window where I can paste my API keys, pick my LLM provider and model, and verify each key works with a Test button before saving.",
+                            "acceptanceCriteria":  [
+                                                       "New `Clicky.App.SettingsWindow.xaml` â€” resizable, non-modal, dark theme matching CompanionPanelWindow, ~480Ã—640 DIP default size, centered on primary display",
+                                                       "Fields (top to bottom): **LLM Provider** (ComboBox: `Anthropic Claude`, `z.ai GLM`), **LLM Model** (ComboBox whose items change based on provider: Anthropic â†’ `claude-sonnet-4-6`, `claude-haiku-4-5`, `claude-opus-4-6`; z.ai â†’ `glm-4.6v`, `glm-4.5v`), **Anthropic API Key** (PasswordBox + Test button + `Get key â†’` link), **z.ai API Key** (PasswordBox + Test button + link), **AssemblyAI API Key** (PasswordBox + Test button + link), **ElevenLabs API Key** (PasswordBox + Test button + link), **ElevenLabs Voice ID** (TextBox, pre-filled with `kPzsL2i3teMYv0FxEYQ6`)",
+                                                       "`Get key â†’` links open the default browser to: Anthropic â†’ `https://console.anthropic.com/settings/keys`, z.ai â†’ `https://z.ai/manage-apikey/apikey-list`, AssemblyAI â†’ `https://www.assemblyai.com/app/account`, ElevenLabs â†’ `https://elevenlabs.io/app/settings/api-keys`",
+                                                       "Each Test button fires a one-shot auth probe against the corresponding service using the currently-entered key (not the saved one), shows a spinner during the probe, and then turns green (âœ“) or red (âœ—) with a tooltip containing the error message. Probes: Anthropic â†’ POST /v1/messages with `max_tokens: 1, model: claude-haiku-4-5, messages: [{role: user, content: \"hi\"}]`; z.ai â†’ POST /api/paas/v4/chat/completions with `max_tokens: 1, model: glm-4.5v, messages: [{role: user, content: \"hi\"}]`; AssemblyAI â†’ GET /v3/token?expires_in_seconds=60 (returns token on success, 401 on bad key); ElevenLabs â†’ GET /v1/user/subscription (free auth check, returns subscription info)",
+                                                       "Save button writes keys via SecretsStore, non-secret fields via SettingsStore, raises a `SettingsSaved` event, and closes the window. Save is enabled only when the required keys for the selected provider are entered (Anthropic provider â†’ Anthropic key required; z.ai provider â†’ z.ai key required; AssemblyAI + ElevenLabs keys always required because audio is mandatory)",
+                                                       "Quit button (secondary, less prominent) calls Application.Current.Shutdown â€” required for the first-run case where the user doesn\u0027t want to enter keys",
+                                                       "Help text at the bottom: small italic footnote explaining \"Your keys are encrypted with your Windows account and stored only on this PC. Clicky never uploads them anywhere.\"",
+                                                       "Window is reachable from the existing tray right-click menu via a new `Settings...` item (added between `Open` and `Quit`)",
+                                                       "When reopened after initial save, fields are pre-populated from SecretsStore/SettingsStore (passwords shown as placeholder `â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢` with a `Change` button that clears the field)",
+                                                       "Unit tests: ViewModel command enablement (Save disabled until required fields entered), model list updates when provider changes, SecretsStore persistence on Save",
+                                                       "Build: 0 warnings. Tests: all pass. Manual: open Settings from tray, fill fields, all four Test buttons work against real services with a real key",
+                                                       "Commit all changes with message: feat: US-022 - SettingsWindow UI with Test buttons"
+                                                   ],
+                            "priority":  5,
+                            "passes":  true,
+                            "notes":  "Copy matters here â€” this is the onboarding experience for everyone who installs Clicky. Use friendly, plain English. Avoid words like \u0027provider\u0027, \u0027endpoint\u0027, \u0027API key rejected (401)\u0027. Prefer \u0027Service\u0027, \u0027Couldn\u0027t reach Anthropic â€” check your key\u0027. Do not add import/export or encryption passphrase features in this story; scope-creep risk is high."
+                        },
+                        {
+                            "id":  "US-023",
+                            "title":  "First-run setup flow",
+                            "description":  "As a first-time user, I want Clicky to walk me through entering my API keys the first time I launch it, and to re-open the settings window on subsequent launches if I\u0027m missing a required key, so I never hit a confusing silent failure.",
+                            "acceptanceCriteria":  [
+                                                       "On App.OnStartup, after the existing SettingsStore + SecretsStore initialization (US-019), check: (a) are the currently-selected provider\u0027s LLM key and the two audio keys (AssemblyAI + ElevenLabs) all present in SecretsStore? (b) is SettingsStore.OnboardingComplete true?",
+                                                       "If either check fails â†’ open SettingsWindow (US-022) BEFORE the permissions panel from US-014 and block further app initialization until SettingsWindow raises SettingsSaved or the user quits",
+                                                       "SettingsWindow in first-run mode shows a friendly header: \"Welcome to Clicky â€” let\u0027s set up your API keys\" instead of the normal \"Settings\" header",
+                                                       "After successful save, SettingsStore.OnboardingComplete is set to true and the normal app init flow continues: construct tray icon â†’ overlay manager â†’ CompanionManager â†’ permissions panel (US-014) auto-opens if any OS permission is still missing",
+                                                       "On launches where both checks pass, the normal flow runs unchanged (tray icon appears silently in background, no window opens)",
+                                                       "If the user closes SettingsWindow via the X button (not Save, not Quit) during first-run, the app exits cleanly â€” never leave the app half-initialized",
+                                                       "Runtime detection: if the user deletes their key from SecretsStore externally (or DPAPI decryption fails due to a restored backup), the next push-to-talk attempt fails gracefully by surfacing the error to CompanionViewModel as a one-shot toast-style banner reading \"Your API key is missing or invalid. Open Settings to fix.\", AND re-opens SettingsWindow automatically",
+                                                       "Unit tests: first-run with no secrets opens SettingsWindow, returning user with complete secrets does not, partial config (LLM key present but AssemblyAI missing) opens SettingsWindow with a highlighted inline error on the missing field",
+                                                       "Manual test: delete `%APPDATA%\\Clicky\\secrets.bin`, launch app, verify SettingsWindow opens with welcome header",
+                                                       "Build: 0 warnings. Tests: all pass",
+                                                       "Commit all changes with message: feat: US-023 - First-run setup flow"
+                                                   ],
+                            "priority":  6,
+                            "passes":  true,
+                            "notes":  "The failure-mode path (key deleted or revoked mid-session) is the one most likely to cause support issues for other users. Spend time on it: make the error surfacing specific, actionable, and non-modal. Do NOT silently retry."
+                        },
+                        {
+                            "id":  "US-024",
+                            "title":  "Tray Model submenu for runtime LLM switching",
+                            "description":  "As a user, I want to switch between Claude and GLM from the tray menu without restarting Clicky, so I can compare providers or hot-swap if one service is down.",
+                            "acceptanceCriteria":  [
+                                                       "TrayIconManager\u0027s context menu gains a new `Model` submenu inserted between `Settings...` and `Quit`",
+                                                       "The submenu contains one radio-style item per available (provider, model) pair: Claude Sonnet 4.6, Claude Haiku 4.5, Claude Opus 4.6, GLM-4.6V, GLM-4.5V",
+                                                       "The currently-active model is marked with â— (bullet) or a check-mark icon",
+                                                       "Items whose required API key is NOT in SecretsStore are grayed out and show a tooltip: `Add your \u003cprovider\u003e key in Settings to enable this model`",
+                                                       "Clicking an enabled item triggers `CompanionManager.SwapLlmClientAsync(provider, model)`: (a) cancels any in-flight Claude/TTS task, (b) disposes the old ILlmClient, (c) constructs a new AnthropicDirectClient or ZaiDirectClient via the same factory App.xaml.cs uses at startup, (d) updates SettingsStore.LlmProvider + LlmModel, (e) updates CompanionViewModel.LlmModelDisplay so the panel footer reflects the change",
+                                                       "CompanionManager.SwapLlmClientAsync is safe to call while the CompanionManager is in any VoiceState â€” if currently Listening/Processing/Responding, the swap waits for or cancels the current turn before taking effect, and the next push-to-talk uses the new client",
+                                                       "ClickyAnalytics (US-016) fires a `model_switched` event with properties `{ from_provider, from_model, to_provider, to_model }` (respects the existing analyticsOptOut flag)",
+                                                       "Unit tests: SwapLlmClientAsync transitions, grayed-out item enablement logic based on SecretsStore contents, VoiceState restoration to Idle after swap",
+                                                       "Manual test: with a valid push-to-talk turn mid-stream, click a different model â€” verify the stream is cleanly cancelled and the next turn uses the new client",
+                                                       "Build: 0 warnings. Tests: all pass",
+                                                       "Commit all changes with message: feat: US-024 - Tray Model submenu for runtime LLM switching"
+                                                   ],
+                            "priority":  7,
+                            "passes":  true,
+                            "notes":  "The mid-turn swap is the tricky case. Look at how US-010\u0027s CompanionManager already cancels currentResponseTask on re-press; SwapLlmClientAsync can reuse the same cancellation plumbing."
+                        },
+                        {
+                            "id":  "US-025",
+                            "title":  "Shippable-product polish: README, installer notes, error copy, analytics events",
+                            "description":  "As a prospective user finding Clicky on GitHub, I want a README that makes the value proposition clear, a setup flow I can complete without reading docs, and error messages that tell me how to fix problems rather than surfacing stack traces.",
+                            "acceptanceCriteria":  [
+                                                       "windows/README.md `Using Clicky` section rewritten for end-users (not developers): what it does, what keys you need, links to sign up for each service, approximate cost expectations, how to install",
+                                                       "windows/README.md explicitly notes: `worker/` is legacy / optional shared-server mode used by the Mac reference implementation and not required for the Windows build",
+                                                       "Top-level README.md (repo root) updated so the Windows port is presented as a first-class product, not an afterthought, with a screenshot of SettingsWindow and a screenshot of the blue cursor in action",
+                                                       "All user-facing error copy audited: any `Exception.Message` directly surfaced to the UI must be replaced with a friendly `{what happened} + {what to do}` pair. Example: `Couldn\u0027t reach Anthropic â€” check your internet connection or your API key in Settings` instead of `The operation was canceled.`",
+                                                       "CompanionViewModel exposes a new `LastError` string + clear command that the panel shows as a dismissable inline banner",
+                                                       "ClickyAnalytics gets three new events: `onboarding_completed` (fired on first successful SettingsSaved), `settings_opened` (tray menu click), `provider_test_run` (properties: service, success, error_category). All respect analyticsOptOut",
+                                                       "Installer script (windows/scripts/clicky-installer.iss from US-017) updated: the `[Files]` section ensures appsettings.json is NOT shipped (we no longer need WorkerBaseUrl there), uninstall section optionally offers to delete `%APPDATA%\\Clicky\\` contents with an explicit opt-in checkbox",
+                                                       "Manual end-to-end test on a clean Windows 11 VM: run Setup_Clicky.exe, launch Clicky from Start Menu, complete SettingsWindow with real keys, grant permissions, perform one successful push-to-talk turn with Claude, switch to GLM via tray menu, perform one more successful turn. Document this in progress.txt",
+                                                       "Build: 0 warnings. Tests: all pass",
+                                                       "Commit all changes with message: feat: US-025 - Shippable polish for README installer copy analytics"
+                                                   ],
+                            "priority":  8,
+                            "passes":  true,
+                            "notes":  "This is the story that distinguishes a hobby project from a product you can point friends at. Don\u0027t rush it. The copy audit is the most labor-intensive piece â€” grep for `throw new`, `.Message`, `MessageBox.Show`, and every user-visible string in XAML files."
+                        },
+                        {
+                            "id":  "US-026",
+                            "title":  "Quit reliably terminates the process",
+                            "description":  "As a user, when I click Quit from the tray menu I want the app to actually exit â€” no lingering Clicky.App.exe in Task Manager, no orphaned WASAPI / WebSocket / HttpClient threads keeping the process alive.",
+                            "acceptanceCriteria":  [
+                                                       "Reproduce the bug first: launch Clicky, do at least one push-to-talk turn (so mic capture + transcription WebSocket + LLM stream + TTS playback have all run), then click tray â†’ Quit. Confirm Clicky.App.exe is still in Task Manager. Capture a managed-thread dump (procdump -ma, or debugger attach) BEFORE writing any fix so the culprit thread is identified, not guessed",
+                                                       "Root-cause the hang. Likely suspects, in order: (a) `CompanionManager.Dispose` at `windows/src/Clicky.Companion/CompanionManager.cs:502-514` cancels `_hookConsumerCts` but never awaits the fire-and-forget `ConsumeHotkeyTransitionsAsync` task started at line 110; (b) `MicrophoneCapture.Dispose` at `windows/src/Clicky.Audio/MicrophoneCapture.cs:150-155` may not join the NAudio WASAPI thread; (c) HTTP calls inside `AnthropicDirectClient`, `ZaiDirectClient`, `ElevenLabsTtsClient`, `AssemblyAiStreamingTranscriber` may be running without a shutdown CancellationToken and blocking the dispatcher. Document in progress.txt which one(s) were actually holding the process alive",
+                                                       "Fix the identified root cause(s). Required changes: store long-running background tasks as `Task` fields (not `_ = ...`) and `await` them with a 2-second timeout inside the owner\u0027s `Dispose`/`DisposeAsync`. Any new worker `Thread` must be `IsBackground = true`. Every outbound `HttpClient.SendAsync` / `ClientWebSocket.ReceiveAsync` on the shutdown path must accept a `CancellationToken` wired to a shutdown `CancellationTokenSource` owned by `App`",
+                                                       "`App.xaml.cs` gains a shutdown `CancellationTokenSource` created in `OnStartup`, cancelled at the top of `OnExit` before any Dispose calls, and passed into CompanionManager/clients through their existing constructors (or a new `SetShutdownToken` method if adding a ctor param ripples too widely)",
+                                                       "`App.OnExit` at `windows/src/Clicky.App/App.xaml.cs:427-459` is converted to dispose in a deterministic order: (1) cancel shutdown token, (2) await CompanionManager.DisposeAsync with 2s timeout, (3) dispose overlay manager, (4) dispose push-to-talk hook, (5) dispose tray icon. Add a final safety net: after `base.OnExit(e)`, if any foreground thread is still alive after 500ms, call `Environment.Exit(0)`. The safety net is belt-and-braces â€” it must NOT be used to paper over a hang the dispose chain should have prevented",
+                                                       "Unit test: a `FakeLlmClient` and `FakeTranscriber` that intentionally block forever on an `HttpClient`-like stream. `CompanionManager.DisposeAsync` must still return within 2 seconds by cancelling them. Same pattern for `MicrophoneCapture`",
+                                                       "Manual verification: after the fix, perform the original repro (one full push-to-talk turn, then Quit). Task Manager must show Clicky.App.exe gone within 1 second of the click. Repeat 3Ã— â€” all three must terminate cleanly",
+                                                       "Regression check: Quit from a cold state (app just started, no turn performed) must also work. Quit mid-turn (while TTS is speaking) must cancel playback AND exit within 1 second",
+                                                       "Build: 0 warnings. Tests: all pass",
+                                                       "Append diagnosis + fix summary to progress.txt, including the exact thread stack(s) that were blocking shutdown",
+                                                       "Commit all changes with message: feat: US-026 - Quit reliably terminates the process"
+                                                   ],
+                            "priority":  9,
+                            "passes":  true,
+                            "notes":  "Diagnose before fixing. `Environment.Exit(0)` is a hammer that will hide bugs â€” fix the actual blocker first, then add the safety net. The `ShutdownMode=\"OnExplicitShutdown\"` in App.xaml is correct for a tray app and must not be changed; any non-background foreground thread will prevent process exit under that mode, which is why hunting down the specific blocker matters."
+                        },
+                        {
+                            "id":  "US-027",
+                            "title":  "Show Clicky version in tray menu + Settings window",
+                            "description":  "As a user who just ran an auto-update, I want to see the current Clicky version in the tray and in Settings so I can verify the update actually installed without digging into Task Manager or the filesystem.",
+                            "acceptanceCriteria":  [
+                                                       "Add `\u003cVersion\u003e1.0.0\u003c/Version\u003e` to `windows/src/Clicky.App/Clicky.App.csproj` inside the existing `\u003cPropertyGroup\u003e`. This becomes the single source of truth that flows into `AssemblyInformationalVersion` at build time",
+                                                       "New helper `Clicky.App.VersionInfo.Current` returns the version string via `Assembly.GetExecutingAssembly().GetCustomAttribute\u003cAssemblyInformationalVersionAttribute\u003e()?.InformationalVersion ?? \"dev\"`. Strip any `+\u003ccommithash\u003e` suffix before returning",
+                                                       "Tray icon tooltip is updated in `TrayIconManager.cs` where the `NotifyIcon` is constructed: set `Text = $\"Clicky {VersionInfo.Current}\"` so hovering the tray icon shows the version",
+                                                       "Tray context menu gains a disabled info item `Version {x.y.z}` inserted just above the `Quit` item at `windows/src/Clicky.App/TrayIconManager.cs:89`. Use `IsEnabled = false` so it\u0027s visually greyed and non-clickable",
+                                                       "Settings window shows the version at the bottom of the main grid in `windows/src/Clicky.App/SettingsWindow.xaml` as a small muted TextBlock (e.g. `Foreground=\"#888\" FontSize=\"11\"`) reading `Clicky {x.y.z}`. Place it alongside or just above the existing DPAPI help footnote",
+                                                       "If `AutoUpdateService` is able to expose a `LatestKnownVersion` property without significant refactor, the Settings footer additionally reads `Clicky {current} â€” update available: {latest}` when latest \u003e current. If exposing that is non-trivial, skip it for this story and leave a TODO â€” do NOT rewrite the auto-update plumbing",
+                                                       "Unit test: `VersionInfo.Current` returns a non-empty string in a test run (validates the attribute is actually emitted by the csproj change)",
+                                                       "Manual verification: build the installer, install it, hover the tray icon â†’ tooltip shows `Clicky 1.0.0`. Right-click â†’ menu shows `Version 1.0.0` greyed above Quit. Open Settings â†’ footer shows `Clicky 1.0.0`. Bump the csproj version to 1.0.1, rebuild, reinstall â†’ all three surfaces show 1.0.1",
+                                                       "Build: 0 warnings. Tests: all pass",
+                                                       "Commit all changes with message: feat: US-027 - Show version in tray and settings"
+                                                   ],
+                            "priority":  10,
+                            "passes":  true,
+                            "notes":  "Tiny story on purpose â€” the goal is a reliable visual confirmation that updates landed, not a polished About dialog. Do not add an About window, changelog viewer, or update-check button in this story. Keep the diff under ~60 lines across 4 files."
+                        },
+                        {
+                            "id":  "US-028",
+                            "title":  "Fix DPI-scaling bug that breaks pointer accuracy on high-DPI displays",
+                            "description":  "As a user on a high-DPI Windows laptop, when I ask Clicky to point at something on screen I want the blue cursor to land on the actual target, not 20â€“50% off. On scaled displays (125%, 150%, 200%) the pointer currently lands far from the intended element, and the error grows with distance from the monitor origin.",
+                            "acceptanceCriteria":  [
+                                                       "Reproduce the bug on a 150% DPI display first. Ask Clicky to point at a well-known target (Windows taskbar clock, a specific file in the VS Code explorer). Document the pixel offset and its scaling behavior in progress.txt before fixing",
+                                                       "Root cause: physical pixels are being handed to WPF APIs that expect DIPs. Three files are implicated: `windows/src/Clicky.Capture/ScreenCapture.cs:425-437` returns monitor bounds from `GetMonitorInfo` in physical pixels; `windows/src/Clicky.Pointing/PointTagParser.cs:94-103` produces a `screenPoint` in physical pixels by scaling and offsetting with those bounds; `windows/src/Clicky.Overlay/OverlayWindow.cs:41-48` assigns those physical-pixel values directly to WPF `Window.Left/Top/Width/Height` which are always DIPs (the comment on line 41-43 asserting otherwise is wrong); `windows/src/Clicky.Overlay/BlueCursorControl.cs:197-198` then subtracts physical-pixel overlay bounds from a physical-pixel target to compute canvas-local coordinates, which WPF also interprets as DIPs",
+                                                       "Fix strategy: keep screenshotâ†’physical-pixel math in the capture/parser layer, and convert to DIPs exactly once at the WPF boundary. Introduce a `DpiHelper` (or similar) that calls `GetDpiForMonitor(MDT_EFFECTIVE_DPI)` per `HMONITOR` and returns a `(double ScaleX, double ScaleY)` tuple, plus a convenience `System.Windows.Point ToDips(System.Drawing.Point physical, HMONITOR monitor)`",
+                                                       "`OverlayWindow` constructor converts `monitorBounds` from physical pixels to DIPs before assigning `Left/Top/Width/Height`. Store both the original physical `MonitorBounds` (for matching against PointDirective.DisplayBounds) AND the new DIP bounds (for layout). The comment on line 41-43 is deleted and replaced with one that correctly describes WPF\u0027s DIP coordinate system",
+                                                       "`BlueCursorControl.FlyTo` converts `targetPoint` and the `GetCursorPos` result from physical pixels to DIPs before computing canvas-local coordinates. Uses the overlay\u0027s cached DPI scale to avoid re-querying the OS on every animation tick",
+                                                       "`PointTagParser.ConvertToScreenCoordinates` is NOT changed â€” it continues to return physical-pixel global coordinates. The DIP conversion happens at the overlay-layer boundary, giving a single conversion point that future code can trust",
+                                                       "Unit test: `DpiHelper` round-trip (physical â†’ DIP â†’ physical) is identity for a monitor at 100%, and scales correctly for 125% / 150% / 200%. Provide a fake monitor-DPI source so tests don\u0027t depend on the real display config",
+                                                       "Unit test: `PointTagParser` output is unchanged (no regression in the existing physical-pixel contract)",
+                                                       "Unit test: a test `OverlayWindow` (or extracted helper) given a physical-pixel target on a 150% monitor produces a DIP canvas-local point matching the expected value within 0.5 DIP",
+                                                       "Manual verification on a high-DPI laptop: hotkey â†’ \"point at the Windows clock\" â†’ the blue cursor must land on the clock, not beside it. Repeat on the far corner of the screen (where the DPI bug causes the largest offset) â€” must still land within ~20 px of the target. If multi-monitor is available, test the same on a secondary monitor at a different DPI",
+                                                       "Regression check on a 100% single-monitor setup: accuracy must be unchanged from before the fix",
+                                                       "Build: 0 warnings. Tests: all pass",
+                                                       "Append the reproduced offset values (before) and the post-fix measurements (after) to progress.txt",
+                                                       "Commit all changes with message: feat: US-028 - Fix DPI scaling for pointer accuracy on high-DPI displays"
+                                                   ],
+                            "priority":  11,
+                            "passes":  true,
+                            "notes":  "The secondary hypothesis â€” that the image dimensions sent to Claude (AnthropicDirectClient.cs:63-76) disagree with the resized JPEG dimensions â€” should only be investigated if DPI alone doesn\u0027t close the gap. Measure before and after. Do NOT change the coordinate contract of PointTagParser; keeping it in physical pixels means future code (e.g. a hypothetical Win32 SendInput click feature) still has the right reference frame."
+                        },
+                        {
+                            "id":  "US-029",
+                            "title":  "Stream TTS + overlap capture to cut perceived latency",
+                            "description":  "As a user, I want Clicky to start speaking almost as soon as I let go of the push-to-talk key, not after several seconds of silence. Today, TTS only starts playing after the whole ElevenLabs MP3 has been downloaded AND the entire LLM response has streamed â€” both are serialized pointlessly.",
+                            "acceptanceCriteria":  [
+                                                       "Measure current latency as a baseline before changing anything. Instrument `CompanionManager.SendTranscriptToClaudeWithScreenshot` at `windows/src/Clicky.Companion/CompanionManager.cs:318-396` to log (a) key-releaseâ†’first-LLM-token, (b) first-LLM-tokenâ†’first-TTS-byte, (c) first-TTS-byteâ†’first-audio-heard. Record the baseline numbers in progress.txt",
+                                                       "Change 1 â€” stream TTS audio instead of buffering the whole MP3. Update `windows/src/Clicky.Api/ElevenLabsTtsClient.cs:62-92` to consume the HTTP response as a `Stream` and feed it into NAudio via a buffered pipe (`MediaFoundationReader` over a `BufferedWaveProvider`, or a custom `Stream` wrapper that blocks `Read` until more bytes arrive). First audio sample must leave the speakers no later than ~300 ms after the first HTTP response byte arrives, not after the full MP3 is downloaded",
+                                                       "Change 2 â€” start TTS on sentence boundaries instead of waiting for the whole LLM response. In `CompanionManager` where the LLM `IAsyncEnumerable\u003cstring\u003e` is consumed, buffer tokens until the first sentence terminator (`.`, `!`, `?`, or two consecutive newlines), kick off an ElevenLabs TTS request for that chunk, continue buffering the next sentence, and queue subsequent TTS requests to play sequentially without gaps. The `[POINT:x,y:label:screenN]` tag must still be stripped before the text is spoken (`PointTagParser.Parse` already handles this â€” call it per-sentence)",
+                                                       "Change 3 â€” overlap screen capture with the hotkey press. Today capture runs after key release. Kick off `ScreenCapture.CaptureAllScreensAsJpegAsync` when the key is first pressed (inside the hotkey press handler in `CompanionManager`), store the `Task\u003cList\u003cCapturedScreen\u003e\u003e`, and `await` it at the point the LLM request is built. On key release the capture is usually already done, saving 300â€“1000 ms. Cancel the capture task if the press is shorter than ~100 ms (accidental tap)",
+                                                       "Change 4 â€” tighten the WGC first-frame timeout at `windows/src/Clicky.Capture/ScreenCapture.cs:171` from 2 seconds to 800 ms. On Windows 11, WGC first-frame is normally \u003c300 ms; the 2 s ceiling just prolongs failure fallback to GDI+",
+                                                       "Change 5 (optional, only if time permits) â€” pre-warm HTTPS connections to `api.anthropic.com`, `api.z.ai`, `api.elevenlabs.io`, and `streaming.assemblyai.com` on `App.OnStartup` with a throwaway HEAD or GET. Skip with a TODO if it adds complexity",
+                                                       "Cancellation: every new async path (pipelined TTS queue, capture-on-press, streamed audio reader) must honor `CompanionManager`\u0027s existing cancellation plumbing from US-010. A new push-to-talk must cleanly cancel any in-flight TTS playback and queued sentences, matching the existing behavior for full-response TTS",
+                                                       "Ordering guarantee: sentences must play in the order they were emitted by the LLM. Test with a mocked LLM that emits sentences at varying speeds and a mocked TTS client with variable latency â€” the audio queue must never reorder",
+                                                       "Unit tests: sentence-boundary tokenizer (handles `[POINT:...]` tag stripped mid-sentence, handles newlines, handles abbreviations like `Dr.` or `e.g.` gracefully â€” accept some false positives but document them), streaming MP3 reader starts playback before stream completes, pipelined TTS queue preserves order under varying latency, capture-on-press cancellation on short tap",
+                                                       "Manual measurement after the fix: the same three latency metrics from the baseline, with each change applied incrementally. Target: end-to-end key-releaseâ†’first-audio-heard under 1.5 seconds on a typical broadband connection (baseline today is likely 3â€“6 s). Document actual before/after numbers in progress.txt",
+                                                       "Regression check: pointing accuracy from US-028 must be unchanged â€” the capture-on-press change must still hand Claude the correct screenshot dimensions and `CapturedScreen.DisplayBounds`",
+                                                       "Build: 0 warnings. Tests: all pass",
+                                                       "Commit all changes with message: feat: US-029 - Stream TTS and overlap capture for perceived latency"
+                                                   ],
+                            "priority":  12,
+                            "passes":  true,
+                            "notes":  "Ship changes 1+2+3 as the core of this story â€” they compound. Change 4 is a trivial one-line win. Change 5 is optional. Sentence-boundary detection is a known tar pit; accept a simple `.!?` + newline heuristic, do not pull in a sentence-tokenizer library, and do not attempt to handle edge cases like `Dr. Smith` perfectly â€” if a false split causes a short extra TTS call, that is acceptable. Measure, don\u0027t guess: the baseline and post-fix numbers in progress.txt are the acceptance gate, not code review aesthetics."
+                        },
+                        {
+                            "id":  "US-030",
+                            "title":  "Higher-resolution screenshots for better pointer accuracy on all displays",
+                            "description":  "As a user on any display resolution, I want Clicky to send higher-resolution screenshots to the LLM so that the [POINT:x,y] coordinates it returns are more precise, and the blue cursor lands closer to the intended UI element.",
+                            "acceptanceCriteria":  [
+                                                       "Increase `MaxDimension` from 1280 to 2048 in `windows/src/Clicky.Capture/ScreenCapture.cs:20`. This halves the coordinate error on 2560px displays and reduces it by 3Ã— on 4K (3840px) displays â€” every pixel of LLM imprecision now maps to fewer physical pixels",
+                                                       "Lower `JpegQuality` from 80 to 75 in `windows/src/Clicky.Capture/ScreenCapture.cs:21` to partially offset the larger image payload. At 2048px the JPEG is about 40-60% larger at quality 75 vs 1280px at quality 80, which is acceptable for broadband connections and stays well within Claude and GLM-4.6V\u0027s image size limits",
+                                                       "Replace `(int)` truncation with `(int)Math.Round(...)` in `CalculateScaledSize` at `windows/src/Clicky.Capture/ScreenCapture.cs:377-378`. Current code `(int)(MaxDimension / aspect)` truncates fractional pixels â€” on ultrawide displays (e.g. 3440x1440, aspect 2.388) this causes a 1-pixel dimension mismatch between the reported `ScreenshotPixelWidth/Height` and the actual JPEG, which accumulates into a pointing offset at screen edges",
+                                                       "Fix off-by-one clamping in `PointTagParser.ConvertToScreenCoordinates` at `windows/src/Clicky.Pointing/PointTagParser.cs:89-90`. Change `Math.Min(directive.X, target.ScreenshotPixelWidth)` to `Math.Min(directive.X, target.ScreenshotPixelWidth - 1)` and same for Y â€” coordinates are 0-indexed so the max valid coordinate is `dimension - 1`, not `dimension`",
+                                                       "Update any test fixtures that assert `MaxDimension == 1280` to expect 2048. Grep for `1280` in `windows/tests/` to find them",
+                                                       "These changes must improve accuracy on ALL display configurations, not just high-DPI: (a) standard 1920Ã—1080 at 100% â€” screenshot is 1920Ã—1080 (no resize needed, within 2048), improving precision from 1.5:1 to 1:1 compared to the old 1280px cap; (b) 2560Ã—1440 at 100% â€” screenshot is 2048Ã—1152 (1.25:1 instead of 2:1); (c) 3840Ã—2160 at 150% â€” physical capture is 3840Ã—2160, resized to 2048Ã—1152 (1.875:1 instead of 3:1); (d) 3440Ã—1440 ultrawide â€” resized to 2048Ã—857 (1.68:1 instead of 2.69:1)",
+                                                       "Regression: existing US-028 DPI tests and US-029 capture-on-press tests must still pass. The `ScreenshotPixelWidth/Height` metadata stored in `CapturedScreen` must still match the actual JPEG dimensions exactly â€” verify with a unit test that captures a known-size bitmap and checks the metadata",
+                                                       "Build: 0 warnings. Tests: all pass",
+                                                       "Commit all changes with message: feat: US-030 - Higher-resolution screenshots for pointer accuracy"
+                                                   ],
+                            "priority":  13,
+                            "passes":  true,
+                            "notes":  "This is the single highest-impact change for pointing accuracy. At 1280px, Claude is routinely off by 10-20 screenshot pixels, which maps to 20-60 physical pixels depending on the display. At 2048px the same 10-20 pixel error maps to 12-37 physical pixels â€” a 40-50% improvement with zero changes to the LLM prompting. The trade-off is slightly larger API payloads (~150KB vs ~100KB per screenshot), which adds 50-100ms on broadband but is negligible compared to the 500-2000ms LLM TTFT. Do NOT go above 2048 â€” larger images don\u0027t measurably improve vision model coordinate accuracy but do increase cost and latency."
+                        },
+                        {
+                            "id":  "US-031",
+                            "title":  "Eager first-chunk TTS to cut time-to-first-audio",
+                            "description":  "As a user, I want to hear the beginning of Clicky\u0027s response as fast as possible after I release the push-to-talk key, instead of waiting for the LLM to produce a complete sentence ending with a period before TTS starts.",
+                            "acceptanceCriteria":  [
+                                                       "Add an eager first-chunk mode to `SentenceTokenizer` at `windows/src/Clicky.Companion/SentenceTokenizer.cs`. Add a private `bool _firstChunkEmitted = false` field. When `_firstChunkEmitted` is false and the buffer has accumulated at least 60 characters, `FindSentenceBoundary` additionally considers `,` (comma), `â€”` (em-dash, U+2014), `â€“` (en-dash, U+2013), `;` (semicolon), and `:` (colon) followed by a space as valid split points, in addition to the existing `.!?\\n\\n` boundaries",
+                                                       "After the first chunk is emitted via the eager path, set `_firstChunkEmitted = true` and revert to the standard `.!?\\n\\n` sentence-boundary logic for all subsequent chunks â€” this prevents choppy playback after the initial response",
+                                                       "The 60-character minimum prevents pathological splits on very short opening phrases like `yeah,` or `sure,` â€” these should buffer until a normal sentence boundary or the eager threshold is hit",
+                                                       "Example: Claude streams `you\u0027ll want to open the color inspector â€” it\u0027s right up in the top right area of the toolbar.` The old tokenizer waits for the final `.` (entire sentence). The new tokenizer emits `you\u0027ll want to open the color inspector` at the em-dash after ~45 tokens, then `it\u0027s right up in the top right area of the toolbar.` at the period. Estimated savings: 500-1500ms off first-audio latency depending on LLM token rate",
+                                                       "Edge case: if the first `.!?` arrives before the buffer hits 60 chars, the normal sentence boundary fires first and `_firstChunkEmitted` is set â€” no double-split risk",
+                                                       "Edge case: [POINT:...] tags must not be counted toward the 60-char threshold. Strip point tags from the length check (not from the actual text â€” stripping happens downstream in CompanionManager)",
+                                                       "Unit tests: (a) eager split on comma after 60+ chars, (b) eager split on em-dash, (c) no eager split when buffer \u003c 60 chars (waits for normal boundary), (d) normal `.!?` boundary still fires if it comes before 60 chars, (e) second sentence uses normal boundaries only (no mid-comma splits), (f) `[POINT:...]` tag not counted in threshold",
+                                                       "This improvement works identically on all hardware â€” it is pure text-processing logic with no OS, DPI, or device dependencies",
+                                                       "Build: 0 warnings. Tests: all pass",
+                                                       "Commit all changes with message: feat: US-031 - Eager first-chunk TTS splitting"
+                                                   ],
+                            "priority":  14,
+                            "passes":  true,
+                            "notes":  "This pairs with US-032 (streaming MP3 playback). Together they cut 800-2300ms from first-audio latency. Alone, this saves 500-1500ms because the TTS request fires earlier. Do NOT reduce the 60-char threshold below 50 â€” very short TTS chunks sound robotic and are wasteful (ElevenLabs has per-request overhead). Do NOT add clause-level splitting for sentences after the first â€” it makes the voice choppy. The first sentence is the only one where latency matters more than naturalness."
+                        },
+                        {
+                            "id":  "US-032",
+                            "title":  "True streaming MP3 playback for TTS",
+                            "description":  "As a user, I want Clicky to start playing the TTS audio as soon as the first MP3 frames arrive from ElevenLabs, instead of waiting for the entire MP3 file to download before playback begins.",
+                            "acceptanceCriteria":  [
+                                                       "Rewrite `PlayStreamingMp3Async` in `windows/src/Clicky.Api/ElevenLabsTtsClient.cs:98-157`. Currently the method downloads the entire MP3 into a `MemoryStream`, then creates an `Mp3FileReader` and plays. The new implementation must start playback after the first few MP3 frames are decoded, while the HTTP download continues in parallel",
+                                                       "Implementation approach: (a) create a `BufferedWaveProvider` at 44100 Hz stereo (or whatever format the first `Mp3Frame` reports) with a buffer of ~5 seconds; (b) start `WaveOutEvent`/`WasapiOut` playing from the `BufferedWaveProvider` immediately; (c) in a loop, read chunks from the HTTP response stream, decode MP3 frames using `Mp3Frame.LoadFromStream` + `IMp3FrameDecompressor` (NAudio\u0027s `AcmMp3FrameDecompressor`), and add decoded PCM to the `BufferedWaveProvider`; (d) when the HTTP stream ends, wait for the `BufferedWaveProvider` to drain (playback completes)",
+                                                       "The `BufferedWaveProvider.ReadFully` property must be set to `true` so it returns silence instead of stalling when the HTTP stream is temporarily slower than playback â€” this prevents audio glitches on slow connections",
+                                                       "Handle format detection: the first `Mp3Frame` determines the sample rate and channel count. Create the `BufferedWaveProvider` and `IMp3FrameDecompressor` after the first frame is decoded, not before",
+                                                       "Preserve the existing `StopPlayback()` semantics: calling `StopPlayback()` mid-stream must (a) stop the `WaveOutEvent`/`WasapiOut`, (b) cancel the HTTP download loop, and (c) dispose all resources. Use the existing `_lock` for thread safety",
+                                                       "Preserve the existing `IsPlaying` property: return true while the `WaveOutEvent` is in `PlaybackState.Playing`",
+                                                       "Preserve the WasapiOut path for specific output devices (`_outputDeviceId`): the `CreateWavePlayer` helper is unchanged, the only difference is what `IWaveProvider` is passed to `Init()` â€” `BufferedWaveProvider` instead of `Mp3FileReader`",
+                                                       "Estimated latency savings: 300-800ms per TTS sentence. The old path waited for the full MP3 download (typically 300-800ms for a 1-2 sentence chunk at ElevenLabs\u0027 output rate). The new path starts playback after ~2-3 MP3 frames (~50-100ms of audio data)",
+                                                       "This works on all Windows machines â€” NAudio\u0027s `Mp3Frame` and `AcmMp3FrameDecompressor` use the ACM codec that ships with every Windows installation since Vista. No additional codec or library is required",
+                                                       "Unit test: mock HTTP stream that feeds MP3 data in 1KB chunks with 50ms delays. Verify `IsPlaying` becomes true before all chunks are delivered (proving playback started during download). Use a real short MP3 fixture (generate one with NAudio or include a ~1s test file)",
+                                                       "Cancellation test: start streaming playback, cancel after 200ms â€” verify no resource leaks (all disposed within 1s)",
+                                                       "Build: 0 warnings. Tests: all pass",
+                                                       "Commit all changes with message: feat: US-032 - True streaming MP3 playback for TTS"
+                                                   ],
+                            "priority":  15,
+                            "passes":  true,
+                            "notes":  "The current `PlayStreamingMp3Async` already has the scaffolding for streaming (the `playbackStarted` flag, the `startPlaybackThreshold` constant) but the comment at line 126-128 says \u0027For simplicity we\u0027ll wait for the full download since NAudio\u0027s Mp3FileReader needs seekable streams.\u0027 The fix is to bypass `Mp3FileReader` entirely and decode frame-by-frame with `Mp3Frame` + `AcmMp3FrameDecompressor` into a `BufferedWaveProvider`. This is a well-documented NAudio pattern. Do NOT pull in MediaFoundation or any external codec â€” the built-in ACM MP3 decoder is universally available and sufficient."
+                        },
+                        {
+                            "id":  "US-033",
+                            "title":  "TLS warmup for ElevenLabs to eliminate first-request handshake delay",
+                            "description":  "As a user, I want the first TTS request to ElevenLabs to be as fast as subsequent ones, by pre-establishing the TLS connection at app startup instead of paying the handshake cost on the first push-to-talk turn.",
+                            "acceptanceCriteria":  [
+                                                       "Add a `WarmUpTlsConnectionIfNeeded` method to `ElevenLabsTtsClient` at `windows/src/Clicky.Api/ElevenLabsTtsClient.cs`, following the exact same pattern as `AnthropicDirectClient.WarmUpTlsConnectionIfNeeded` at `windows/src/Clicky.Api/AnthropicDirectClient.cs:182-204`",
+                                                       "Use a static lock + static bool flag (`_hasStartedTlsWarmup`) to ensure the warmup HEAD request fires exactly once across all `ElevenLabsTtsClient` instances, same as the Anthropic pattern",
+                                                       "The warmup fires `Task.Run(async () =\u003e { HEAD https://api.elevenlabs.io })` on construction. The HEAD request uses the existing `_httpClient` instance so the connection pool is shared with subsequent TTS requests. Set `ConnectionClose = false` to keep the connection alive",
+                                                       "Failures are silently swallowed (try/catch around the whole warmup) â€” this is purely an optimization, not a requirement. A failed warmup just means the first TTS call pays the full TLS handshake",
+                                                       "Estimated savings: 100-300ms on the first TTS request. Subsequent requests reuse the pooled connection regardless",
+                                                       "This works on all networks and all Windows configurations â€” it\u0027s a standard HTTP optimization with no OS-specific dependencies",
+                                                       "Unit test: construct `ElevenLabsTtsClient` with a `FakeHttpMessageHandler`, verify that a HEAD request to `https://api.elevenlabs.io` is made within 1 second of construction",
+                                                       "Build: 0 warnings. Tests: all pass",
+                                                       "Commit all changes with message: feat: US-033 - TLS warmup for ElevenLabs TTS"
+                                                   ],
+                            "priority":  16,
+                            "passes":  true,
+                            "notes":  "Smallest story in this batch â€” should be under 30 lines of code. The Anthropic client already does this (US-018 preserved it from the original ClaudeClient). Copy the pattern exactly. Do NOT add warmup for AssemblyAI â€” the transcriber\u0027s WebSocket connection is established per-session and the token-fetch HTTP call is lightweight enough that the TLS handshake doesn\u0027t dominate."
+                        },
+                        {
+                            "id":  "US-034",
+                            "title":  "Version bump to 1.1.0 for accuracy + latency improvements",
+                            "description":  "As a user, I want the version number to reflect that meaningful improvements to pointer accuracy and response latency have shipped, so I can confirm I\u0027m running the updated build.",
+                            "acceptanceCriteria":  [
+                                                       "Bump `\u003cVersion\u003e` from `1.0.0` to `1.1.0` in `windows/src/Clicky.App/Clicky.App.csproj`",
+                                                       "Verify that `VersionInfo.Current` (from US-027) returns `1.1.0` â€” run the existing unit test or add a quick assertion if one doesn\u0027t exist",
+                                                       "Verify tray tooltip shows `Clicky 1.1.0` (hover the tray icon), tray context menu shows `Version 1.1.0` (right-click), and Settings window footer shows `Clicky 1.1.0`",
+                                                       "If the Inno Setup installer script at `windows/scripts/clicky-installer.iss` has a hardcoded version string, update it to `1.1.0` as well",
+                                                       "This story must only be committed AFTER US-030, US-031, US-032, and US-033 have all passed â€” it is the final seal on the accuracy + latency improvement batch",
+                                                       "Build: 0 warnings. Tests: all pass",
+                                                       "Commit all changes with message: chore: US-034 - Bump version to 1.1.0"
+                                                   ],
+                            "priority":  17,
+                            "passes":  true,
+                            "notes":  "Tiny story â€” a single line change in the csproj plus verification. The version bump signals to users (especially those using auto-update from US-017) that the accuracy and latency improvements from US-030 through US-033 have landed. Do not bump to 2.0.0 â€” these are enhancements, not breaking changes."
+                        },
+                        {
+                            "id":  "US-035",
+                            "title":  "Diagnostic logging for the pointing/overlay pipeline",
+                            "description":  "As a developer, I want timestamped log entries at every stage of the screen-pointing pipeline so I can diagnose why the blue cursor doesn\u0027t appear or lands in the wrong place.",
+                            "acceptanceCriteria":  [
+                                                       "In `CompanionManager.SendTranscriptToClaudeWithScreenshot`, after screen capture completes: log each `CapturedScreen`\u0027s `DisplayBounds` (X, Y, Width, Height), `ScreenshotPixelWidthÃ—Height`, and `IsCursorScreen` via `DebugLog.Write`",
+                                                       "After `PointTagParser.Parse()` returns: log whether a directive was found, and if so log the raw X, Y, label, and screenNumber values. If no directive, log that too (helps distinguish \u0027Claude didn\u0027t point\u0027 from \u0027parse failed\u0027)",
+                                                       "After `PointTagParser.ConvertToScreenCoordinates()` returns: log the converted `screenPoint` (X, Y) and `displayBounds`, or log that conversion returned null with the reason (empty screens list, screen index out of bounds, etc.)",
+                                                       "After `_overlayManager.FlyTo()` is dispatched on the UI thread: log confirmation with the final screen point and bubble text",
+                                                       "Add an `Action\u003cstring\u003e? Logger` property to `OverlayWindowManager`. Inside `FlyTo()`, invoke the logger with: incoming `screenPoint`, `displayBounds`, overlay count, and which overlay was matched (index + bounds) or \u0027no match â€” fallback\u0027. Wire `Logger = DebugLog.Write` in `App.xaml.cs` after constructing the overlay manager",
+                                                       "All log lines use the `[POINT]` prefix for easy grep in debug.log",
+                                                       "Build: 0 warnings. Tests: all pass",
+                                                       "Commit all changes with message: feat: US-035 - Diagnostic logging for pointing/overlay pipeline"
+                                                   ],
+                            "priority":  18,
+                            "passes":  true,
+                            "notes":  "This is the highest priority fix â€” without logging we are flying blind. Keep log volume reasonable: one line per stage per response, not per-frame. DebugLog.Write is in Clicky.Companion; the Overlay project doesn\u0027t reference Companion, so use the injectable Action\u003cstring\u003e callback pattern for OverlayWindowManager."
+                        },
+                        {
+                            "id":  "US-036",
+                            "title":  "Hide overlay cursor before screen capture",
+                            "description":  "As a user, I want the blue cursor from my previous question to disappear before the next screenshot is taken, so Claude doesn\u0027t see and point at its own overlay artifact.",
+                            "acceptanceCriteria":  [
+                                                       "In `CompanionManager.HandlePressed()`, before the screen capture is kicked off (~line 174), hide any lingering overlay cursor by calling `BlueCursor.Hide()` on all overlays via the dispatcher",
+                                                       "The hide call is synchronous (`_dispatcher.Invoke`, not `InvokeAsync`) so the cursor is guaranteed gone before `CaptureAllScreensAsJpegAsync` starts",
+                                                       "Guard with null check: only hide if `_overlayManager` is not null",
+                                                       "Verify manually: trigger a POINT response, then within the 3-second linger window press push-to-talk again â€” the cursor should vanish instantly before the new capture starts",
+                                                       "Build: 0 warnings. Tests: all pass",
+                                                       "Commit all changes with message: fix: US-036 - Hide overlay cursor before screen capture"
+                                                   ],
+                            "priority":  19,
+                            "passes":  true,
+                            "notes":  "Small change, big impact. The overlay lingers for 3s + 0.5s fade. If the user asks a follow-up question during that window, the previous blue cursor appears in the screenshot. Claude can then misidentify it as a UI element and point at the wrong thing. The excludeHwnds parameter on CaptureAllScreensAsJpegAsync cannot help here â€” WGC monitor capture has no per-window exclusion API."
+                        },
+                        {
+                            "id":  "US-037",
+                            "title":  "Fix WGC capture size vs monitor bounds coordinate mismatch",
+                            "description":  "As a user on a high-DPI display, I want the blue cursor to point at the correct screen location, not offset due to a mismatch between WGC capture dimensions and monitor bounds used for coordinate conversion.",
+                            "acceptanceCriteria":  [
+                                                       "In `ScreenCapture.CaptureWithWgcAsync`, change `CalculateScaledSize` to use `monitor.Bounds.Width` and `monitor.Bounds.Height` instead of `itemSize.Width` and `itemSize.Height` â€” this ensures `ScreenshotPixelWidth/Height` in `CapturedScreen` is derived from the same source as `DisplayBounds`",
+                                                       "Keep using `itemSize` for the `Direct3D11CaptureFramePool.CreateFreeThreaded` call (the frame pool needs the actual WGC surface size, not the monitor bounds)",
+                                                       "If `itemSize.Width != monitor.Bounds.Width` or `itemSize.Height != monitor.Bounds.Height`, log a warning via `System.Diagnostics.Debug.WriteLine` with both values for diagnostics",
+                                                       "The GDI fallback path already uses `bounds.Width/Height` for both capture and `DisplayBounds` â€” verify it remains consistent (no change needed)",
+                                                       "The coordinate conversion in `PointTagParser.ConvertToScreenCoordinates` (`scaleX = DisplayBounds.Width / ScreenshotPixelWidth`) now uses values from the same source, eliminating the mismatch",
+                                                       "Build: 0 warnings. Tests: all pass",
+                                                       "Commit all changes with message: fix: US-037 - Fix WGC capture size vs monitor bounds mismatch"
+                                                   ],
+                            "priority":  20,
+                            "passes":  true,
+                            "notes":  "With PerMonitorV2 DPI awareness (confirmed in app.manifest), both WGC item.Size and GetMonitorInfo should return physical pixels. But GraphicsCaptureItem.Size can differ due to desktop composition, virtual desktops, or rounding. The fix makes the coordinate math self-consistent regardless of whether they match. This is the most likely root cause of pointer offset on high-DPI displays."
+                        },
+                        {
+                            "id":  "US-038",
+                            "title":  "Manual overlay test trigger (debug tray menu item)",
+                            "description":  "As a developer, I want a \u0027Test Overlay\u0027 option in the tray menu that flies the blue cursor to the center of my screen without needing Claude, so I can verify the overlay pipeline works end-to-end.",
+                            "acceptanceCriteria":  [
+                                                       "Add `TestFlyToCenter()` method to `OverlayWindowManager` that flies the cursor to the center of the primary monitor overlay with bubble text \u0027test overlay\u0027",
+                                                       "Add `TestOverlayAsync()` method to `CompanionManager` that: (1) captures all screens, (2) builds a fake response `[POINT:centerX,centerY:test target]` using the captured screen\u0027s center coordinates, (3) runs it through the full pipeline (Parse â†’ ConvertToScreenCoordinates â†’ FlyTo), (4) logs each step via DebugLog",
+                                                       "Add a \u0027Test Overlay\u0027 menu item to the tray context menu in `App.xaml.cs` (place it below \u0027Settings...\u0027 and above \u0027Quit\u0027). Clicking it calls `CompanionManager.TestOverlayAsync()`",
+                                                       "The test item is always visible (not gated behind #if DEBUG) â€” it\u0027s useful for end-user troubleshooting too",
+                                                       "Manual verification: right-click tray icon â†’ click \u0027Test Overlay\u0027 â†’ blue cursor should fly from current mouse position to center of screen with \u0027test target\u0027 bubble",
+                                                       "Build: 0 warnings. Tests: all pass",
+                                                       "Commit all changes with message: feat: US-038 - Manual overlay test trigger via tray menu"
+                                                   ],
+                            "priority":  21,
+                            "passes":  true,
+                            "notes":  "This is critical for iteration speed. Currently the only way to test the overlay is to talk to Claude and hope it generates a POINT tag. This test exercises the full pipeline (capture â†’ parse â†’ convert â†’ fly) in under a second. Depends on US-035 for logging visibility."
+                        },
+                        {
+                            "id":  "US-039",
+                            "title":  "Only send cursor screen to LLM (single-monitor capture filter)",
+                            "description":  "As a user with multiple monitors, I want Clicky to only send the screenshot of the monitor my cursor is on to the LLM, so the vision model doesn\u0027t get confused by multiple images and returns more accurate coordinates.",
+                            "acceptanceCriteria":  [
+                                                       "In `CompanionManager.SendTranscriptToClaudeWithScreenshot`, after capturing all screens and logging them, filter the `screens` list to only the screen where `IsCursorScreen == true`",
+                                                       "If no cursor screen is found (edge case), fall back to using all captured screens as before",
+                                                       "The label sent to the LLM for a single cursor screen should be `user\u0027s screen (cursor is here)` â€” not `screen 1 of 2` â€” since the model only sees one image. Override the label by re-using `ScreenCapture.BuildLabel(1, 0, true)` when filtering to a single screen",
+                                                       "The `screens` variable used downstream for `PointTagParser.ConvertToScreenCoordinates` must be the same filtered list (single screen), so coordinate conversion maps to the correct display bounds",
+                                                       "Verify via `%APPDATA%\\Clicky\\debug.log`: after the `[POINT] capture:` lines (which still log all monitors), a new log line `[POINT] filter: sending 1 screen to LLM (cursor screen only)` confirms the filter is active",
+                                                       "Build: 0 warnings. Tests: all pass",
+                                                       "Commit all changes with message: feat: US-039 - Only send cursor screen to LLM"
+                                                   ],
+                            "priority":  22,
+                            "passes":  true,
+                            "notes":  "The Mac version sends all screens and it works because Claude is good at multi-image reasoning. GLM-4v via z.ai is not â€” debug logs show it picks coordinates from the wrong image or gets confused by the multi-screen labels. Filtering to one screen eliminates this ambiguity entirely. The capture still enumerates all monitors (needed for sorting and cursor detection) but only the cursor screen\u0027s image is sent to the LLM."
+                        },
+                        {
+                            "id":  "US-040",
+                            "title":  "Send full-resolution screenshots (remove 1280px downscale)",
+                            "description":  "As a user, I want Clicky to send my screen to the LLM at full native resolution instead of downscaling to 1280px, so the vision model can see fine UI details (small icons, tab buttons, text) and return more accurate pointing coordinates.",
+                            "acceptanceCriteria":  [
+                                                       "In `ScreenCapture.cs`, change `MaxDimension` from `1280` to `3840` â€” this preserves native resolution for 1080p and 1440p monitors while still capping 4K displays to avoid excessively large payloads",
+                                                       "The `CalculateScaledSize` method is unchanged â€” it already handles any `MaxDimension` value correctly",
+                                                       "Both WGC and GDI capture paths continue to work (the scaling logic is downstream of capture and works for any dimension)",
+                                                       "The coordinate conversion in `PointTagParser.ConvertToScreenCoordinates` continues to work because it uses `ScreenshotPixelWidth/Height` and `DisplayBounds` which are always self-consistent",
+                                                       "For a 1920x1080 monitor, the screenshot sent to the LLM should now be 1920x1080 (not 1280x720). Verify via debug log: `[POINT] capture:` line should show `screenshot=1920x1080`",
+                                                       "Estimated payload increase: ~2-3x larger JPEG base64. Acceptable trade-off for accuracy.",
+                                                       "Build: 0 warnings. Tests: all pass",
+                                                       "Commit all changes with message: feat: US-040 - Send full-resolution screenshots to LLM"
+                                                   ],
+                            "priority":  23,
+                            "passes":  true,
+                            "notes":  "At 1280px max edge, a 1920x1080 monitor is downscaled to 1280x720. Small UI elements like the browser + tab button, toolbar icons, and menu items lose detail. The vision model (GLM-4v) struggles to distinguish nearby elements at this resolution. Sending native res gives the model the same visual fidelity a human would have. The Mac version also uses 1280 but works because Claude\u0027s vision is more capable. This is the simplest change with the highest expected impact for weaker vision models."
+                        },
+                        {
+                            "id":  "US-041",
+                            "title":  "Draw coordinate grid overlay on screenshots for LLM spatial anchoring",
+                            "description":  "As a user, I want Clicky to draw a subtle coordinate grid on screenshots before sending them to the LLM, so the vision model has visual spatial anchors and can return more precise pixel coordinates.",
+                            "acceptanceCriteria":  [
+                                                       "New static method `ScreenCapture.DrawCoordinateGrid(Bitmap bitmap)` draws a grid overlay on a GDI+ bitmap in-place",
+                                                       "Grid lines every 200 pixels (both horizontal and vertical), drawn in semi-transparent gray (e.g. `Color.FromArgb(80, 180, 180, 180)`) with 1px pen width",
+                                                       "At each grid intersection, draw the coordinate label (e.g. `200,400`) in a small readable font (9pt, sans-serif), white text on a small dark semi-transparent background rectangle for contrast",
+                                                       "Labels are positioned slightly offset from the intersection point so they don\u0027t overlap with the crosshair",
+                                                       "In the GDI capture path (`CaptureWithGdi`): call `DrawCoordinateGrid(fullBitmap)` after `CopyFromScreen` but before the resize step â€” the grid is drawn at native resolution and gets resized with the image",
+                                                       "In the WGC capture path (`CaptureSingleFrameAsync`): after converting the `SoftwareBitmap` to JPEG, the grid cannot easily be drawn on WinRT bitmaps. Instead, add an alternative: decode the JPEG back to a GDI+ `Bitmap`, draw the grid, re-encode to JPEG. OR: convert the `SoftwareBitmap` to a GDI+ `Bitmap` before encoding, draw the grid, then encode. Choose whichever is simpler.",
+                                                       "The grid must NOT be drawn when capturing for `DumpToTempAsync` test output â€” add an optional `bool drawGrid = false` parameter to the internal capture methods, and only pass `true` from the production pipeline in `CompanionManager`",
+                                                       "Verify visually: use tray menu \u0027Test Overlay\u0027 â†’ check `%TEMP%\\clicky-capture\\` screenshots to confirm grid is visible, readable, and not too intrusive",
+                                                       "Build: 0 warnings. Tests: all pass",
+                                                       "Commit all changes with message: feat: US-041 - Coordinate grid overlay on screenshots"
+                                                   ],
+                            "priority":  24,
+                            "passes":  true,
+                            "notes":  "Vision models that aren\u0027t specifically trained for pixel-coordinate tasks (like GLM-4v) benefit significantly from visual coordinate anchors. The grid gives the model reference points it can count from rather than guessing absolute positions. 200px spacing gives ~10 reference points across a 1920px screen â€” enough granularity without visual clutter. The grid should be subtle enough not to obscure UI elements but visible enough for the model to read. This is a well-known technique from computer-use and GUI-agent research."
+                        },
+                        {
+                            "id":  "US-042",
+                            "title":  "Deterministic end-to-end pointing fixture tests with labeled boxes",
+                            "description":  "As a developer, I want a deterministic test harness that renders synthetic screenshots with obvious labeled boxes like box A, box B, and box C, then runs fake `[POINT:x,y:label:screenN]` responses through the real Windows pointing pipeline, so regressions in screenshot-space to display-space mapping are caught in CI without requiring manual testing.",
+                            "acceptanceCriteria":  [
+                                                       "Add a new test file under `windows/tests/Clicky.Tests/` that builds synthetic JPEG screenshots in memory containing multiple clearly labeled colored boxes (for example `box a`, `box b`, `box c`) at known screenshot-space coordinates",
+                                                       "The tests must exercise the real Windows parser and conversion path â€” `PointTagParser.Parse()` followed by `PointTagParser.ConvertToScreenCoordinatesDetailed()` â€” rather than duplicating the math inline in the test",
+                                                       "For each synthetic fixture, the final mapped `ScreenPoint` must be asserted to land inside the expected display-space box bounds, not merely equal one hardcoded center pixel, so the tests tolerate harmless rounding but fail on meaningful misalignment",
+                                                       "Cover at least these monitor/layout cases: single monitor at 100% scaling, single monitor at high DPI (150% or equivalent), a secondary monitor with a non-zero or negative virtual-desktop origin, and an explicit `:screen2` directive that proves the correct display is selected",
+                                                       "Also assert the screenshot metadata contract remains valid: `CapturedScreen.ScreenshotPixelWidth/Height` must match the actual encoded JPEG dimensions exactly, because any drift there corrupts the coordinate space the LLM is told to use",
+                                                       "The suite must be self-contained and require no live desktop, no real monitor, no API keys, and no manual interaction â€” it must run inside the normal `dotnet test` flow",
+                                                       "Build: 0 warnings. Tests: all pass",
+                                                       "Commit all changes with message: test: US-042 - Deterministic end-to-end pointing fixture tests"
+                                                   ],
+                            "priority":  25,
+                            "passes":  true,
+                            "notes":  "This is the safe automation layer for the pointing pipeline. It does not prove that WPF physically drew the cursor on the right pixel of a real monitor, but it does prove that the screenshot-space, display-space, multi-monitor-selection, and metadata contracts are stable. Keep the fixtures obvious and labeled so future debugging artifacts are easy to reason about."
+                        },
+                        {
+                            "id":  "US-043",
+                            "title":  "One-command desktop pointing smoke harness with artifact capture",
+                            "description":  "As a developer, I want a one-command local smoke harness that exercises the live Windows overlay against a real desktop target and saves artifacts automatically, so I can verify that saying things like 'show me where box A is' lands on the correct on-screen element without manually stitching together logs and screenshots.",
+                            "acceptanceCriteria":  [
+                                                       "Add a local-only smoke-test workflow, script, or tray-triggered diagnostic path that presents a deterministic on-screen fixture with clearly labeled target boxes and then drives the existing capture → parse → convert → fly pipeline against that fixture",
+                                                       "The harness must save or surface the same core evidence automatically for each run: the raw screenshot sent to the model or fake-point path, an annotated screenshot showing the chosen pixel, and the corresponding `%APPDATA%\\Clicky\\debug.log` entries for parse/conversion/overlay dispatch",
+                                                       "The workflow must let a developer verify two separate questions quickly: (1) did the chosen screenshot-space point land inside the intended box in the captured image, and (2) did the live blue cursor land on the same box on the real screen",
+                                                       "The harness must support the monitor cases most likely to break Windows coordinate math: 100% DPI, high-DPI single monitor, and mixed/secondary monitor setups when available",
+                                                       "Keep this explicitly outside normal CI if it depends on a real desktop compositor or visible WPF windows; the goal is a reliable local verification tool, not a flaky headless UI test",
+                                                       "Document the invocation path in `progress.txt` or a nearby developer note so future debugging sessions can use it without rediscovering the workflow",
+                                                       "Build: 0 warnings. Tests and smoke path both pass",
+                                                       "Commit all changes with message: test: US-043 - Desktop pointing smoke harness with artifacts"
+                                                   ],
+                            "priority":  26,
+                            "passes":  true,
+                            "notes":  "US-042 covers the math in a hermetic environment; this story covers the last mile on a real Windows desktop. Keep the scope pragmatic: artifact-driven verification is more valuable than trying to fully automate a fragile visual assertion against the compositor."
+                        },
+                        {
+                            "id":  "US-044",
+                            "title":  "Reliable end-to-end test coverage for the full Clicky turn",
+                            "description":  "As a developer, I want proper end-to-end tests that exercise a realistic full Clicky turn and fail for real regressions instead of test flakiness, so I can trust changes to capture, transcription, LLM streaming, TTS, and pointing before shipping.",
+                            "acceptanceCriteria":  [
+                                                       "Add an explicit test pyramid for the Windows app: fast unit tests, deterministic end-to-end integration tests that run in normal `dotnet test`, and a separate desktop-only smoke test path for compositor-dependent validation",
+                                                       "Create at least one deterministic full-turn end-to-end test that wires together the real `CompanionManager` orchestration with fake implementations of the external boundaries (`ILlmClient`, transcription input, TTS client, screen capture provider, overlay dispatcher as needed) so the test covers the actual application flow rather than isolated helper methods",
+                                                       "The deterministic end-to-end test must verify the core turn sequence in order: push-to-talk start, transcript accumulation/finalization, screenshot capture, LLM streaming response consumption, `[POINT:x,y:label:screenN]` parsing when present, overlay dispatch, TTS kickoff, and return to `Idle` state",
+                                                       "The end-to-end suite must assert observable outcomes, not just absence of exceptions: emitted response text, final voice state transitions, whether overlay dispatch was requested, whether TTS was started, and whether user-facing error state is set correctly on failure paths",
+                                                       "Cover at least these failure cases with deterministic tests: missing or invalid key path re-opens Settings / surfaces actionable error, malformed point tag does not crash the turn, LLM stream cancellation during a model swap or re-press returns the app to a clean state, and TTS/transcription failures surface friendly errors without wedging the session",
+                                                       "Any tests that require a real Windows desktop, WPF compositor, tray icon, or visible overlay must remain outside the default CI path and be invoked through the local smoke harness from `US-043`; `dotnet test` must stay reliable on a normal Windows test host",
+                                                       "Document which tests are CI-safe versus desktop-only, how to run both, and what evidence a developer should inspect when a desktop smoke test fails",
+                                                       "Build: 0 warnings. `dotnet test` passes reliably across repeated runs. Desktop smoke verification path documented and working",
+                                                       "Commit all changes with message: test: US-044 - Reliable end-to-end coverage for full Clicky turn"
+                                                   ],
+                            "priority":  27,
+                            "passes":  true,
+                            "notes":  "This story is about trustworthiness, not just more tests. Prefer a small number of high-signal end-to-end tests over broad but brittle UI automation. Keep real-desktop assertions in the local smoke layer, and keep CI on deterministic seams you control."
+                        },
+                        {
+                            "id":  "US-045",
+                            "title":  "Reset Windows pointing architecture by deleting failed layered implementations",
+                            "description":  "As a user who has seen repeated wrong pointing on maps and slow visible cursor timing, I want the Windows pointing stack reset to a small, understandable baseline before any new solution is attempted, so future work is not built on verifier/locator/grid/debug layers that already failed in real use.",
+                            "acceptanceCriteria":  [
+                                                       "Remove the failed point-location layers from `windows/src/Clicky.Companion/CompanionManager.cs`: no second-pass verifier, no fast point-locator side request, no duplicate/fallback point dispatch races, no prompt-only coordinate correction scaffolding, and no hidden LLM call whose only job is to reinterpret the same screenshot",
+                                                       "Remove or quarantine tests that encode the failed behavior as success, especially tests that assert a second LLM call corrects a bad coordinate, or that treat synthetic labeled boxes as proof of real-world semantic pointing accuracy",
+                                                       "Keep only the proven coordinate contract and last-mile renderer baseline: `PointTagParser` parses `[POINT:x,y:label:screenN]`, converts screenshot-space pixels to physical screen coordinates using `CapturedScreen` metadata, and the overlay can fly to an explicit physical screen point",
+                                                       "Keep artifact/debug plumbing that helps diagnose a single explicit point (`raw`, `annotated`, metadata, and `[POINT]` log lines), but simplify it so there is one source of truth for capture -> model response -> parsed directive -> converted screen point -> overlay dispatch timing",
+                                                       "Do not delete the tray desktop smoke fixture or deterministic overlay/DPI tests; they remain useful for validating explicit coordinates and compositor last mile, not semantic AI localization",
+                                                       "Restore the normal spoken-response path to one LLM request for the assistant answer; any `[POINT]` tag in that response may be parsed for baseline dispatch, but no additional AI coordinate call runs in this story",
+                                                       "Add a regression test proving a pointing turn performs exactly one LLM request and does not wait on any verifier/locator before TTS can proceed",
+                                                       "Add a short architecture note in `progress.txt` explaining what was removed and why: semantic target localization is unsolved, explicit coordinate conversion is separate and retained",
+                                                       "Build: `dotnet build windows\\Clicky.sln -c Release` succeeds. Tests: `dotnet test windows\\Clicky.sln -c Release` succeeds",
+                                                       "Commit all changes with message: `refactor: US-045 - Reset Windows pointing architecture`"
+                                                   ],
+                            "priority":  28,
+                            "passes":  true,
+                            "notes":  "This is intentionally a cleanup/reset story, not a fix story. The current production behavior is wrong for Egypt/Algeria and slow. Do not preserve failed abstractions because they have tests. Preserve only the explicit coordinate parser/converter/overlay baseline and the artifact evidence needed for the rebuild."
+                        },
+                        {
+                            "id":  "US-046",
+                            "title":  "Measure Windows turn latency and provider timing before redesigning pointing",
+                            "description":  "As a developer rebuilding pointing from scratch, I want hard timing evidence for each stage of a Windows turn, so we know whether slowness comes from capture, transcription, LLM streaming, TTS, image payload size, provider/model choice, or point handling.",
+                            "acceptanceCriteria":  [
+                                                       "Add structured timing spans to the normal turn path: capture start/end, transcript final available, LLM request start, first LLM token, full LLM response end, first TTS enqueue, first TTS audio playback start if observable, TTS complete, point parse, overlay dispatch",
+                                                       "Record image payload evidence per turn: selected provider/model, number of screenshots sent, dimensions, encoded byte size, whether grid/debug annotations were drawn, and whether cursor-screen filtering was applied",
+                                                       "Write a compact per-turn timeline to `%APPDATA%\\Clicky\\debug.log` with a stable prefix such as `[TURN]` and include a correlation id so capture/point/TTS logs can be grouped",
+                                                       "Add a developer-only diagnostic method or tray item that performs a text-only LLM turn, an image LLM turn, and a TTS-only turn with the current configured provider(s), then logs comparable timings without requiring speech input",
+                                                       "Do not add any new pointing correction logic in this story",
+                                                       "Unit tests cover timing record formatting with fake clocks/fake providers; tests must not call real APIs",
+                                                       "Manual run instructions are appended to `progress.txt`, including exactly what log lines to inspect before blaming Windows overlay or model vision",
+                                                       "Build: `dotnet build windows\\Clicky.sln -c Release` succeeds. Tests: `dotnet test windows\\Clicky.sln -c Release` succeeds",
+                                                       "Commit all changes with message: `perf: US-046 - Instrument Windows turn latency`"
+                                                   ],
+                            "priority":  29,
+                            "passes":  true,
+                            "notes":  "The user reports this became very slow after layered point fixes. This story must produce timing evidence before the next implementation guesses. Keep normal CI deterministic; real provider timing is manual/local only."
+                        },
+                        {
+                            "id":  "US-047",
+                            "title":  "Design and document a fresh Windows pointing protocol",
+                            "description":  "As a developer, I want a written design for how Windows pointing should work before code is rebuilt, so the implementation has clear contracts for semantic target selection, response speech, timing, fallback behavior, and artifact-based validation.",
+                            "acceptanceCriteria":  [
+                                                       "Create `windows/docs/pointing-redesign.md` describing the desired end-to-end protocol from user request -> screenshot capture -> model prompt -> response text -> point decision -> coordinate conversion -> overlay dispatch",
+                                                       "Explicitly separate three concerns: semantic localization by a vision model, coordinate conversion from screenshot pixels to screen pixels, and visual overlay rendering. The doc must state which layer owns each failure mode",
+                                                       "Compare at least three candidate protocols with tradeoffs: one-pass answer-with-POINT, two-phase point-first-then-answer, and structured JSON/tool-like response where speech text and point intent are separate fields",
+                                                       "Define the target behavior for timing: if the user asks to show/point/click/find something, the cursor should appear as soon as a point decision is available and should not wait for long spoken prose or TTS completion",
+                                                       "Define accuracy rules for hard semantic cases like world maps: point inside the visible country/region polygon or return no point; never point to a neighboring country, ocean, label-only guess, or unrelated semantic region",
+                                                       "Define provider/model evaluation criteria and note whether Claude, GLM, or another configured model is acceptable for pixel-level semantic localization on Windows screenshots",
+                                                       "Define the minimal implementation surface for the next story and explicitly list code that should remain out of scope until the protocol is proven",
+                                                       "No production code changes except adding docs/tests that validate documented constants if useful",
+                                                       "Commit all changes with message: `docs: US-047 - Design Windows pointing protocol`"
+                                                   ],
+                            "priority":  30,
+                            "passes":  true,
+                            "notes":  "This story exists because repeated coding without a design produced garbage layers. Do the design work explicitly. It is acceptable for the conclusion to say the current provider cannot reliably do dense map pointing and must return `[POINT:none]` for those cases."
+                        },
+                        {
+                            "id":  "US-048",
+                            "title":  "Build a semantic pointing evaluation harness with real screenshot fixtures",
+                            "description":  "As a developer, I want repeatable semantic pointing evaluations against real screenshots, including maps and real app UIs, so we stop mistaking synthetic box tests for proof that Clicky can point at Egypt, Algeria, or After Effects controls.",
+                            "acceptanceCriteria":  [
+                                                       "Create a fixture directory under `windows/tests/Clicky.Tests/Fixtures/pointing/` or an equivalent test-data location with curated screenshots and expected target regions, not just point centers",
+                                                       "Include at least these fixture categories: world map Egypt, world map Algeria, map with nearby-country distractors, a dense app UI/settings panel, and a simple labeled UI target",
+                                                       "Expected answers are polygons or bounding boxes representing acceptable target regions; a model point passes only if it lands inside the allowed region and outside known distractor regions such as Libya for Egypt or ocean for Algeria",
+                                                       "Add a test harness that can evaluate recorded/canned model outputs against fixtures in CI without calling real APIs",
+                                                       "Add an optional local script or tray diagnostic that can run the current configured LLM against the fixture screenshots and save a CSV/JSON report with provider, model, target, returned tag, pass/fail, latency, and raw response",
+                                                       "The harness must support `[POINT:none]` as a valid expected outcome for ambiguous or occluded targets",
+                                                       "Document how to add a new fixture from a failed user report: save raw screenshot, define allowed region, define distractors, add expected target text, run local evaluation",
+                                                       "Do not ship any new pointing behavior in this story; this is the measurement gate for the rebuild",
+                                                       "Build: `dotnet build windows\\Clicky.sln -c Release` succeeds. Tests: `dotnet test windows\\Clicky.sln -c Release` succeeds",
+                                                       "Commit all changes with message: `test: US-048 - Semantic pointing evaluation harness`"
+                                                   ],
+                            "priority":  31,
+                            "passes":  true,
+                            "notes":  "The Algeria/Egypt failures prove synthetic boxes are insufficient. The harness should make wrong-but-plausible neighboring map points fail loudly."
+                        },
+                        {
+                            "id":  "US-049",
+                            "title":  "Implement the new Windows pointing protocol behind a feature flag",
+                            "description":  "As a user, I want Clicky to point only when it has a reliable semantic coordinate and to do so quickly, using the protocol selected by the redesign instead of the old layered verifier/locator stack.",
+                            "acceptanceCriteria":  [
+                                                       "Implement the protocol selected in `windows/docs/pointing-redesign.md` behind a feature flag or internal switch so it can be compared against the baseline without deleting evidence",
+                                                       "The implementation must use a structured internal result such as `{ spokenText, pointIntent }` rather than making downstream code scrape multiple competing point sources",
+                                                       "Point dispatch must be possible before TTS completion for pointing/navigation requests, and tests must prove it with a blocked fake TTS client",
+                                                       "If the model returns a coordinate outside the accepted confidence/protocol rules, Clicky must skip the cursor and explain verbally when appropriate rather than showing a wrong pointer",
+                                                       "Integrate with the semantic evaluation harness from US-048 and require passing the simple UI fixture plus no wrong-country/water points for Egypt and Algeria before enabling by default",
+                                                       "Keep `PointTagParser` conversion contract unchanged unless the redesign document proves it wrong with tests",
+                                                       "Add focused tests for cancellation, one-turn concurrency, and no duplicate overlay dispatch",
+                                                       "Build: `dotnet build windows\\Clicky.sln -c Release` succeeds. Tests: `dotnet test windows\\Clicky.sln -c Release` succeeds",
+                                                       "Commit all changes with message: `feat: US-049 - Implement redesigned Windows pointing protocol`"
+                                                   ],
+                            "priority":  32,
+                            "passes":  true,
+                            "notes":  "Do not reintroduce ad hoc verifier/fallback layers. If the semantic evaluator says maps are unreliable for the chosen provider, the correct product behavior is no visible pointer for those targets until a better model/protocol is chosen."
+                        },
+                        {
+                            "id":  "US-050",
+                            "title":  "Enable redesigned pointing by default and verify real desktop behavior",
+                            "description":  "As a user, I want the rebuilt pointing system enabled in the packaged Windows app only after it is demonstrably faster and more accurate on real desktop scenarios.",
+                            "acceptanceCriteria":  [
+                                                       "Enable the redesigned pointing protocol by default only after US-049 passes the semantic fixture gate",
+                                                       "Run real desktop verification for at least these prompts: `show me Egypt`, `show me Algeria`, one dense app/settings target, and one normal UI button/menu target",
+                                                       "For each manual verification, save `%APPDATA%\\Clicky\\point-debug` artifacts and a `[TURN]` timeline from `%APPDATA%\\Clicky\\debug.log`, then append a concise result summary to `progress.txt`",
+                                                       "Acceptance for map prompts: cursor lands inside the country region, or Clicky intentionally returns no point. Neighboring country/ocean points are failures",
+                                                       "Acceptance for speed: visible cursor dispatch should happen before or during the spoken answer for pointing requests, not after speech has effectively finished. Record actual timing from `[TURN]` logs",
+                                                       "Remove the temporary feature flag if the redesigned path is stable; otherwise keep the flag but default to the safer no-wrong-pointer behavior",
+                                                       "Bump app version and rebuild root `Clicky.App.exe` with `powershell -ExecutionPolicy Bypass -File .\\publish-dev.ps1`",
+                                                       "Verify root exe with `Get-Item .\\Clicky.App.exe | Select-Object FullName,Length,LastWriteTime,@{Name='ProductVersion';Expression={$_.VersionInfo.ProductVersion}},@{Name='FileVersion';Expression={$_.VersionInfo.FileVersion}}`",
+                                                       "Build: `dotnet build windows\\Clicky.sln -c Release` succeeds. Tests: `dotnet test windows\\Clicky.sln -c Release` succeeds",
+                                                       "Commit all changes with message: `feat: US-050 - Enable redesigned pointing by default`"
+                                                   ],
+                            "priority":  33,
+                            "passes":  true,
+                            "notes":  "This is the shipping gate. Do not claim fixed based only on deterministic smoke boxes. Wrong visible pointers are worse than no pointer."
+                        }
+                    ]
 }

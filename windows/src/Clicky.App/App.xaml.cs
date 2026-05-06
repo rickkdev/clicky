@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -15,6 +16,8 @@ namespace Clicky.App;
 
 public partial class App : Application
 {
+    internal const bool UseRedesignedPointingProtocolByDefault = true;
+
     private static Mutex? _singleInstanceMutex;
     private TrayIconManager? _trayIconManager;
     private CompanionPanelWindow? _companionPanel;
@@ -26,6 +29,7 @@ public partial class App : Application
     private AutoUpdateService? _autoUpdateService;
     private SettingsStore? _settingsStore;
     private SecretsStore? _secretsStore;
+    private PointingSmokeWindow? _pointingSmokeWindow;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -35,6 +39,11 @@ public partial class App : Application
         _singleInstanceMutex = new Mutex(true, "Global\\ClickyAppSingleInstance", out bool createdNew);
         if (!createdNew)
         {
+            MessageBox.Show(
+                "Clicky is already running in your system tray.",
+                "Clicky",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
             Shutdown();
             return;
         }
@@ -46,6 +55,10 @@ public partial class App : Application
         // Initialize settings and secrets stores under %APPDATA%\Clicky.
         _settingsStore = new SettingsStore();
         _secretsStore = new SecretsStore();
+
+        // Dev-mode: seed secrets from environment variables so developers
+        // don't have to re-enter keys after every rebuild/wipe.
+        SeedSecretsFromEnvironment(_secretsStore);
 
         // Migrate US-014 registry values to SettingsStore on first run.
         MigrateRegistrySettings(_settingsStore);
@@ -100,6 +113,9 @@ public partial class App : Application
         _trayIconManager.TrayIconClicked += OnTrayIconClicked;
         _trayIconManager.SettingsClicked += OnSettingsClicked;
         _trayIconManager.ModelSelected += OnModelSelected;
+        _trayIconManager.OverlayTestRequested += OnOverlayTestRequested;
+        _trayIconManager.DesktopSmokeTestRequested += OnDesktopSmokeTestRequested;
+        _trayIconManager.ProviderTimingDiagnosticsRequested += OnProviderTimingDiagnosticsRequested;
 
         // Register for auto-start on first launch (mirrors SMAppService.mainApp.register).
         AutoStartRegistration.EnsureRegistered();
@@ -132,6 +148,10 @@ public partial class App : Application
             {
                 _companionPanel.ShowForOnboarding();
             }
+            else
+            {
+                _companionPanel!.ShowPanel();
+            }
         }, DispatcherPriority.Loaded);
 
         // Install the global push-to-talk hook on the dispatcher thread.
@@ -140,6 +160,7 @@ public partial class App : Application
 
         // Create transparent overlay windows for each monitor (US-011).
         _overlayManager = new OverlayWindowManager();
+        _overlayManager.Logger = DebugLog.Write;
         _overlayManager.Start();
 
         // Build and start the CompanionManager with current keys/config.
@@ -184,9 +205,34 @@ public partial class App : Application
             ttsClient,
             Dispatcher,
             _overlayManager,
-            microphoneDeviceId: _settingsStore!.MicrophoneDeviceId);
+            microphoneDeviceId: _settingsStore!.MicrophoneDeviceId,
+            prepareForCaptureAsync: HideClickyUiForCaptureAsync,
+            llmProvider: _settingsStore.LlmProvider,
+            llmModel: _settingsStore.LlmModel,
+            useRedesignedPointingProtocol: UseRedesignedPointingProtocolByDefault);
         _companionManager.OpenSettingsRequested += OnPipelineKeyError;
         _companionManager.Start();
+    }
+
+    private async Task HideClickyUiForCaptureAsync()
+    {
+        await Dispatcher.InvokeAsync(() =>
+        {
+            var hidAny = false;
+
+            if (_companionPanel?.Visibility == Visibility.Visible)
+            {
+                _companionPanel.Hide();
+                hidAny = true;
+            }
+
+            _trayIconManager?.HideOpenPopups();
+
+            if (hidAny)
+            {
+                DebugLog.Write("[POINT] capture-prep: hid visible Clicky companion panel before screenshot");
+            }
+        });
     }
 
     private ILlmClient BuildLlmClient()
@@ -270,7 +316,7 @@ public partial class App : Application
 
         // Build new LLM client and swap it into the running CompanionManager.
         var newClient = BuildLlmClient();
-        await _companionManager.SwapLlmClientAsync(newClient);
+        await _companionManager.SwapLlmClientAsync(newClient, e.Provider, e.Model);
 
         // Update the ViewModel display.
         if (_companionViewModel is not null)
@@ -350,6 +396,34 @@ public partial class App : Application
         OpenSettingsWindow(isFirstRun: false);
     }
 
+    private void OnOverlayTestRequested(object? sender, OverlayTestRequestedEventArgs e)
+    {
+        _overlayManager?.TestFlyToPreset(e.PresetId);
+    }
+
+    private void OnDesktopSmokeTestRequested(object? sender, System.EventArgs e)
+    {
+        if (_companionManager is null)
+            return;
+
+        if (_pointingSmokeWindow is null)
+        {
+            _pointingSmokeWindow = new PointingSmokeWindow(_companionManager);
+            _pointingSmokeWindow.Closed += (_, _) => _pointingSmokeWindow = null;
+        }
+
+        _pointingSmokeWindow.Show();
+        _pointingSmokeWindow.Activate();
+    }
+
+    private void OnProviderTimingDiagnosticsRequested(object? sender, System.EventArgs e)
+    {
+        if (_companionManager is null)
+            return;
+
+        _ = Task.Run(() => _companionManager.RunProviderTimingDiagnosticsAsync());
+    }
+
     private void OpenSettingsWindow(bool isFirstRun)
     {
         if (_settingsStore is null || _secretsStore is null) return;
@@ -405,6 +479,50 @@ public partial class App : Application
                 _companionViewModel.HasCompletedOnboarding = true;
             }
         });
+    }
+
+    /// <summary>
+    /// Seeds API keys from a <c>.env</c> file in the exe's directory (or repo root)
+    /// and/or system environment variables. The .env file is gitignored so keys
+    /// never leak into source control or AI context. Keys already in secrets.bin
+    /// are not overwritten.
+    /// </summary>
+    private static void SeedSecretsFromEnvironment(SecretsStore secrets)
+    {
+        // Load .env file next to the exe (repo root for published builds).
+        var envFile = Path.Combine(AppContext.BaseDirectory, ".env");
+        var envVars = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        if (File.Exists(envFile))
+        {
+            foreach (var line in File.ReadAllLines(envFile))
+            {
+                var trimmed = line.Trim();
+                if (trimmed.Length == 0 || trimmed.StartsWith('#')) continue;
+                var eqIdx = trimmed.IndexOf('=');
+                if (eqIdx <= 0) continue;
+                var key = trimmed[..eqIdx].Trim();
+                var val = trimmed[(eqIdx + 1)..].Trim();
+                envVars[key] = val;
+            }
+        }
+
+        static void Seed(SecretsStore s, string envVar, string secretKey,
+            Dictionary<string, string> fileVars)
+        {
+            if (s.Exists(secretKey)) return;
+            // .env file takes precedence, fall back to system env var.
+            if (!fileVars.TryGetValue(envVar, out var value) || string.IsNullOrWhiteSpace(value))
+                value = Environment.GetEnvironmentVariable(envVar);
+            if (!string.IsNullOrWhiteSpace(value))
+                s.Write(secretKey, value);
+        }
+
+        Seed(secrets, "CLICKY_ANTHROPIC_KEY", SecretsStore.AnthropicApiKey, envVars);
+        Seed(secrets, "CLICKY_OPENAI_KEY", SecretsStore.OpenAiApiKey, envVars);
+        Seed(secrets, "CLICKY_ZAI_KEY", SecretsStore.ZaiApiKey, envVars);
+        Seed(secrets, "CLICKY_ASSEMBLYAI_KEY", SecretsStore.AssemblyAiApiKey, envVars);
+        Seed(secrets, "CLICKY_ELEVENLABS_KEY", SecretsStore.ElevenLabsApiKey, envVars);
     }
 
     /// <summary>
@@ -472,14 +590,21 @@ public partial class App : Application
             _trayIconManager.TrayIconClicked -= OnTrayIconClicked;
             _trayIconManager.SettingsClicked -= OnSettingsClicked;
             _trayIconManager.ModelSelected -= OnModelSelected;
+            _trayIconManager.OverlayTestRequested -= OnOverlayTestRequested;
+            _trayIconManager.DesktopSmokeTestRequested -= OnDesktopSmokeTestRequested;
+            _trayIconManager.ProviderTimingDiagnosticsRequested -= OnProviderTimingDiagnosticsRequested;
             _trayIconManager.Dispose();
             _trayIconManager = null;
         }
+        _pointingSmokeWindow?.Close();
+        _pointingSmokeWindow = null;
         _companionPanel?.Close();
 
-        // Release single-instance mutex so a new launch can acquire it.
-        _singleInstanceMutex?.ReleaseMutex();
+        // Dispose the mutex (releases ownership automatically).
+        // Do NOT call ReleaseMutex() — OnExit may run on a different thread
+        // than OnStartup, causing an ApplicationException.
         _singleInstanceMutex?.Dispose();
+        _singleInstanceMutex = null;
 
         base.OnExit(e);
 

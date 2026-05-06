@@ -173,6 +173,29 @@ public class PointTagParserTests
     }
 
     [Fact]
+    public void ConvertToScreenCoordinatesDetailed_ReturnsIntermediateValues()
+    {
+        var screens = new List<CapturedScreen>
+        {
+            MakeScreen(isCursor: true, displayBounds: new Rectangle(100, 200, 1920, 1080),
+                        ssWidth: 1280, ssHeight: 720)
+        };
+
+        var directive = new PointDirective { X = 640, Y = 360, Label = "center" };
+        var result = PointTagParser.ConvertToScreenCoordinatesDetailed(directive, screens);
+
+        Assert.NotNull(result);
+        Assert.Equal(640, result!.ClampedX);
+        Assert.Equal(360, result.ClampedY);
+        Assert.Equal(1.5, result.ScaleX, precision: 3);
+        Assert.Equal(1.5, result.ScaleY, precision: 3);
+        Assert.Equal(960.0, result.DisplayLocalPoint.X, precision: 1);
+        Assert.Equal(540.0, result.DisplayLocalPoint.Y, precision: 1);
+        Assert.Equal(1060.0, result.ScreenPoint.X, precision: 1);
+        Assert.Equal(740.0, result.ScreenPoint.Y, precision: 1);
+    }
+
+    [Fact]
     public void ConvertToScreenCoordinates_EmptyScreens_ReturnsNull()
     {
         var directive = new PointDirective { X = 100, Y = 100, Label = "test" };
@@ -198,6 +221,66 @@ public class PointTagParserTests
         // Falls back to cursor screen
         Assert.Equal(960.0, result!.Value.ScreenPoint.X, precision: 1);
         Assert.Equal(540.0, result.Value.ScreenPoint.Y, precision: 1);
+    }
+
+    [Fact]
+    public void BuildPointDirectiveForScreenPoint_SingleScreen_MapsPhysicalPointToScreenshotPoint()
+    {
+        var screens = new List<CapturedScreen>
+        {
+            MakeScreen(isCursor: true, displayBounds: new Rectangle(0, 0, 1920, 1080),
+                        ssWidth: 960, ssHeight: 540),
+        };
+
+        var directive = Clicky.Companion.CompanionManager.BuildPointDirectiveForScreenPoint(
+            new System.Windows.Point(480, 270),
+            "box A",
+            screens);
+
+        Assert.NotNull(directive);
+        Assert.Equal(240, directive!.X);
+        Assert.Equal(135, directive.Y);
+        Assert.Equal("box A", directive.Label);
+        Assert.Equal(1, directive.ScreenNumber);
+    }
+
+    [Fact]
+    public void BuildPointDirectiveForScreenPoint_NegativeOriginScreen_UsesExplicitScreenNumber()
+    {
+        var screens = new List<CapturedScreen>
+        {
+            MakeScreen(isCursor: false, displayBounds: new Rectangle(0, 0, 1920, 1080),
+                        ssWidth: 1920, ssHeight: 1080),
+            MakeScreen(isCursor: true, displayBounds: new Rectangle(-1280, 0, 1280, 720),
+                        ssWidth: 640, ssHeight: 360),
+        };
+
+        var directive = Clicky.Companion.CompanionManager.BuildPointDirectiveForScreenPoint(
+            new System.Windows.Point(-640, 360),
+            "box B",
+            screens);
+
+        Assert.NotNull(directive);
+        Assert.Equal(320, directive!.X);
+        Assert.Equal(180, directive.Y);
+        Assert.Equal(2, directive.ScreenNumber);
+    }
+
+    [Fact]
+    public void BuildPointDirectiveForScreenPoint_OutsideCapturedScreens_ReturnsNull()
+    {
+        var screens = new List<CapturedScreen>
+        {
+            MakeScreen(isCursor: true, displayBounds: new Rectangle(0, 0, 1920, 1080),
+                        ssWidth: 1920, ssHeight: 1080),
+        };
+
+        var directive = Clicky.Companion.CompanionManager.BuildPointDirectiveForScreenPoint(
+            new System.Windows.Point(3000, 2000),
+            "outside",
+            screens);
+
+        Assert.Null(directive);
     }
 
     // ── StripPointTags backward-compat tests (delegating to PointTagParser) ──

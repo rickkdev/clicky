@@ -16,6 +16,14 @@ coding-plans/
 windows/publish/
 windows/installer/
 
+# Local dev secrets (never commit)
+.env
+dev.env
+
+# Build output committed for convenience — ignore PDBs
+*.pdb
+Clicky.App.exe
+
 # Ralph runtime state
 .last-branch
 prompt.md

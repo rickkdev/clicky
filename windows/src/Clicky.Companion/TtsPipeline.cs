@@ -15,10 +15,12 @@ internal sealed class TtsPipeline : IAsyncDisposable
     private readonly Channel<string> _sentenceChannel;
     private readonly CancellationTokenSource _pipelineCts;
     private readonly Task _consumerTask;
+    private readonly Action<string>? _onSpeakStarted;
 
-    public TtsPipeline(ElevenLabsTtsClient ttsClient, CancellationToken externalCt)
+    public TtsPipeline(ElevenLabsTtsClient ttsClient, CancellationToken externalCt, Action<string>? onSpeakStarted = null)
     {
         _ttsClient = ttsClient;
+        _onSpeakStarted = onSpeakStarted;
         _sentenceChannel = Channel.CreateUnbounded<string>(new UnboundedChannelOptions
         {
             SingleReader = true,
@@ -65,6 +67,7 @@ internal sealed class TtsPipeline : IAsyncDisposable
         await foreach (var sentence in _sentenceChannel.Reader.ReadAllAsync(ct).ConfigureAwait(false))
         {
             ct.ThrowIfCancellationRequested();
+            _onSpeakStarted?.Invoke(sentence);
             await _ttsClient.SpeakAsync(sentence, ct).ConfigureAwait(false);
         }
     }

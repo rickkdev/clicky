@@ -36,6 +36,19 @@ public sealed class ModelSelectedEventArgs : EventArgs
 }
 
 /// <summary>
+/// Event args for a local overlay calibration request from the tray menu.
+/// </summary>
+public sealed class OverlayTestRequestedEventArgs : EventArgs
+{
+    public string PresetId { get; }
+
+    public OverlayTestRequestedEventArgs(string presetId)
+    {
+        PresetId = presetId;
+    }
+}
+
+/// <summary>
 /// Manages the system tray icon, context menu, and left-click events.
 /// Mirrors the Mac MenuBarPanelManager status item behavior.
 /// </summary>
@@ -56,6 +69,15 @@ public sealed class TrayIconManager : IDisposable
 
     /// <summary>Raised when the user clicks a model in the Model submenu.</summary>
     public event EventHandler<ModelSelectedEventArgs>? ModelSelected;
+
+    /// <summary>Raised when the user clicks 'Test Overlay' in the context menu.</summary>
+    public event EventHandler<OverlayTestRequestedEventArgs>? OverlayTestRequested;
+
+    /// <summary>Raised when the user opens the desktop pointing smoke fixture.</summary>
+    public event EventHandler? DesktopSmokeTestRequested;
+
+    /// <summary>Raised when the user runs provider timing diagnostics.</summary>
+    public event EventHandler? ProviderTimingDiagnosticsRequested;
 
     public TrayIconManager()
     {
@@ -86,6 +108,12 @@ public sealed class TrayIconManager : IDisposable
 
         _modelSubmenu = new MenuItem { Header = "Model" };
 
+        var testOverlayItem = BuildOverlayTestSubmenu();
+        var desktopSmokeItem = new MenuItem { Header = "Desktop Smoke Test" };
+        desktopSmokeItem.Click += (_, _) => DesktopSmokeTestRequested?.Invoke(this, EventArgs.Empty);
+        var diagnosticsItem = new MenuItem { Header = "Provider Timing Diagnostics" };
+        diagnosticsItem.Click += (_, _) => ProviderTimingDiagnosticsRequested?.Invoke(this, EventArgs.Empty);
+
         var versionItem = new MenuItem
         {
             Header = $"Version {VersionInfo.Current}",
@@ -98,11 +126,47 @@ public sealed class TrayIconManager : IDisposable
         menu.Items.Add(openItem);
         menu.Items.Add(settingsItem);
         menu.Items.Add(_modelSubmenu);
+        menu.Items.Add(testOverlayItem);
+        menu.Items.Add(desktopSmokeItem);
+        menu.Items.Add(diagnosticsItem);
         menu.Items.Add(new Separator());
         menu.Items.Add(versionItem);
         menu.Items.Add(quitItem);
 
         return menu;
+    }
+
+    private MenuItem BuildOverlayTestSubmenu()
+    {
+        var parent = new MenuItem { Header = "Test Overlay" };
+
+        AddOverlayTestItem(parent, "Center", "center");
+        AddOverlayTestItem(parent, "Top Left", "top-left");
+        AddOverlayTestItem(parent, "Top Right", "top-right");
+        AddOverlayTestItem(parent, "Bottom Left", "bottom-left");
+        AddOverlayTestItem(parent, "Bottom Right", "bottom-right");
+        AddOverlayTestItem(parent, "Upper Mid", "upper-mid");
+        AddOverlayTestItem(parent, "Lower Mid", "lower-mid");
+        AddOverlayTestItem(parent, "Left Mid", "left-mid");
+        AddOverlayTestItem(parent, "Right Mid", "right-mid");
+        AddOverlayTestItem(parent, "Mouse Position", "mouse");
+
+        return parent;
+    }
+
+    private void AddOverlayTestItem(MenuItem parent, string header, string presetId)
+    {
+        var item = new MenuItem { Header = header, Tag = presetId };
+        item.Click += OnOverlayTestItemClicked;
+        parent.Items.Add(item);
+    }
+
+    private void OnOverlayTestItemClicked(object sender, RoutedEventArgs e)
+    {
+        if (sender is MenuItem { Tag: string presetId })
+        {
+            OverlayTestRequested?.Invoke(this, new OverlayTestRequestedEventArgs(presetId));
+        }
     }
 
     /// <summary>
@@ -139,6 +203,14 @@ public sealed class TrayIconManager : IDisposable
         if (sender is MenuItem { Tag: ModelMenuEntry entry })
         {
             ModelSelected?.Invoke(this, new ModelSelectedEventArgs(entry.Provider, entry.Model));
+        }
+    }
+
+    public void HideOpenPopups()
+    {
+        if (_trayIcon.ContextMenu is { } menu)
+        {
+            menu.IsOpen = false;
         }
     }
 

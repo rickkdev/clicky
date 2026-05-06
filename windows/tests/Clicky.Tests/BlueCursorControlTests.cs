@@ -88,6 +88,43 @@ public class BlueCursorControlTests
     // ── Bézier evaluation ────────────────────────────────────────────
 
     [Fact]
+    public void PointingDestination_AppliesMacStyleOffset()
+    {
+        var destination = BlueCursorControl.ComputePointingDestination(
+            new Point(100, 200),
+            overlayWidth: 500,
+            overlayHeight: 400);
+
+        Assert.Equal(108.0, destination.X, 6);
+        Assert.Equal(212.0, destination.Y, 6);
+    }
+
+    [Fact]
+    public void PointingDestination_ClampsToOverlayPadding()
+    {
+        var destination = BlueCursorControl.ComputePointingDestination(
+            new Point(495, 395),
+            overlayWidth: 500,
+            overlayHeight: 400);
+
+        Assert.Equal(480.0, destination.X, 6);
+        Assert.Equal(380.0, destination.Y, 6);
+    }
+
+    [Fact]
+    public void PointingDestination_PinpointMode_RemovesArtOffset()
+    {
+        var destination = BlueCursorControl.ComputePointingDestination(
+            new Point(100, 200),
+            overlayWidth: 500,
+            overlayHeight: 400,
+            pinpointMode: true);
+
+        Assert.Equal(100.0, destination.X, 6);
+        Assert.Equal(200.0, destination.Y, 6);
+    }
+
+    [Fact]
     public void Bezier_AtZero_ReturnsP0()
     {
         // Requires STA thread for WPF object construction
@@ -191,6 +228,24 @@ public class BlueCursorControlTests
     public void TriangleSize_Is16()
     {
         Assert.Equal(16.0, BlueCursorControl.TriangleSize);
+    }
+
+    [Fact]
+    public void FollowScale_IsSmallerThanPointingCursor()
+    {
+        Assert.Equal(0.85, BlueCursorControl.FollowScale);
+    }
+
+    [Fact]
+    public void FollowPosition_ClampsToOverlayPadding()
+    {
+        var destination = BlueCursorControl.ClampFollowPosition(
+            new Point(495, 395),
+            overlayWidth: 500,
+            overlayHeight: 400);
+
+        Assert.Equal(480.0, destination.X, 6);
+        Assert.Equal(380.0, destination.Y, 6);
     }
 
     [Fact]
