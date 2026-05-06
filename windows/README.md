@@ -1,86 +1,109 @@
 # Clicky for Windows
 
 Clicky is an AI buddy that lives in your system tray. Hold a keyboard shortcut,
-talk, and Clicky sees your screen, answers out loud, and can even point at
-things with a little blue cursor. It's like having a knowledgeable friend
-sitting next to you.
+talk, and Clicky sees your screen, answers out loud, and can point at things
+with a little blue cursor.
 
-## What you need
+## What You Need
 
-Clicky runs entirely on your machine using your own API keys. Nothing is
-shared, nothing is uploaded to Clicky's servers. You'll need accounts (and
-keys) for three services:
+Clicky runs entirely on your machine. Nothing is uploaded to Clicky's servers.
+The Windows LLM path uses your local Codex/ChatGPT sign-in through
+`codex app-server`; speech still uses your own API keys.
 
-| Service | What it does | Get a key |
-|---------|-------------|-----------|
-| [Anthropic](https://console.anthropic.com/settings/keys) **or** [z.ai](https://z.ai/manage-apikey/apikey-list) | Powers the AI (Claude or GLM) | ~$0.01–0.05 per conversation turn |
-| [AssemblyAI](https://www.assemblyai.com/app/account) | Turns your voice into text in real time | Free tier available |
-| [ElevenLabs](https://elevenlabs.io/app/settings/api-keys) | Speaks Clicky's replies out loud | Free tier available |
+| Service | What it does | Setup |
+|---------|-------------|-------|
+| Codex CLI | Powers the AI through local Codex/ChatGPT sign-in | Install Codex and sign in with ChatGPT/Codex |
+| AssemblyAI | Turns your voice into text in real time | API key required |
+| ElevenLabs | Speaks Clicky's replies out loud | API key required |
 
-You can use Claude (Anthropic) or GLM (z.ai) as the AI brain, or both — switch
-between them any time from the tray menu without restarting.
+Clicky Settings currently exposes `OpenAI Codex OAuth` as the only LLM service.
+It does not require an OpenAI API key.
 
 ## Installing
 
-1. Download the latest `Setup_Clicky_x.x.x.exe` from [Releases](https://github.com/julianjear/makesomething-mac-app/releases)
-2. Run the installer — it takes about 10 seconds
-3. Clicky opens automatically and walks you through entering your API keys
-4. Grant microphone and screen capture permissions when prompted
-5. Hold **Ctrl+Alt** and talk — Clicky is listening
+1. Install the Codex CLI and run `codex` once to sign in with ChatGPT/Codex.
+2. Download the latest `Setup_Clicky_x.x.x.exe` from Releases.
+3. Run the installer.
+4. Enter your AssemblyAI and ElevenLabs API keys in Clicky Settings.
+5. Grant microphone and screen capture permissions when prompted.
+6. Hold **Ctrl+Alt** and talk.
 
-Your API keys are encrypted with your Windows account credentials (DPAPI) and
-stored only on your PC. Clicky never sends them anywhere.
+Your speech API keys are encrypted with your Windows account credentials
+(DPAPI) and stored only on your PC.
 
-## Switching AI models at runtime
+## Switching AI Models
 
-Right-click the Clicky tray icon → **Model** to switch between:
+Right-click the Clicky tray icon, then use **Model** to switch between Codex
+models available to your signed-in account, including:
 
-- Claude Sonnet 4.6, Haiku 4.5, Opus 4.6 (Anthropic)
-- GLM-4.6V, GLM-4.5V (z.ai)
+- GPT-5.5 (Codex OAuth)
+- GPT-5.4 (Codex OAuth)
+- GPT-5.4 Mini (Codex OAuth)
+- GPT-5.3 Codex
+- GPT-5.3 Codex Spark
 
-The switch takes effect immediately — no restart needed.
+The switch takes effect immediately.
 
-## System requirements
+## System Requirements
 
 - Windows 10 version 1903 or later (Windows 11 recommended)
-- .NET 8 Runtime (the installer will prompt you if it's missing)
+- .NET 8 Runtime for installed builds, or .NET 8 SDK for local development
+- Codex CLI available on `PATH`
 - A working microphone
 
-## About the `worker/` directory
+## About the `worker/` Directory
 
-The `worker/` directory in the repo contains a Cloudflare Worker proxy used by
-the Mac reference implementation. The Windows build talks directly to each
-service's API — the worker is not used and does not need to be deployed.
+The `worker/` directory contains a Cloudflare Worker proxy used by the Mac
+reference implementation. The Windows build does not use the worker. It talks
+to the local Codex app-server for LLM calls and directly to AssemblyAI and
+ElevenLabs for speech.
 
-## Building from source
-
-If you want to hack on Clicky yourself:
+## Building From Source
 
 ### Prerequisites
 
 - [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
-- (Optional) [Inno Setup 6](https://jrsoftware.org/isinfo.php) for building the installer
+- [Codex CLI](https://developers.openai.com/codex), signed in with ChatGPT/Codex
+- Optional: [Inno Setup 6](https://jrsoftware.org/isinfo.php) for building the installer
 
-### Build and test
+### Run Locally
+
+From the repository root:
 
 ```powershell
-dotnet build windows/Clicky.sln
-dotnet test windows/Clicky.sln
+.\run.cmd
 ```
 
-### Publish a release
+Equivalent command:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File windows/scripts/release.ps1
+dotnet run --project windows\src\Clicky.App\Clicky.App.csproj -c Release
+```
+
+### Build and Test
+
+```powershell
+dotnet build windows\Clicky.sln
+dotnet test windows\Clicky.sln
+```
+
+### Publish a Local Single-File Build
+
+```powershell
+.\publish-dev.ps1
 ```
 
 Output:
-- **Published files:** `windows/publish/win-x64/`
-- **Installer:** `windows/installer/Setup_Clicky_0.1.0.exe`
 
-## Project layout
+- `Clicky.App.exe` in the repository root
+- Release build artifacts under `windows\src\Clicky.App\bin\Release\`
 
-```
+Unsigned local single-file builds may be blocked by Windows Smart App Control.
+For development, prefer `.\run.cmd`.
+
+## Project Layout
+
+```text
 windows/
   Clicky.sln
   src/
@@ -90,8 +113,8 @@ windows/
     Clicky.Capture/      # Multi-monitor screenshot capture
     Clicky.Hotkey/       # Global keyboard hook (Ctrl+Alt chord)
     Clicky.Overlay/      # Transparent click-through cursor overlay
-    Clicky.Api/          # Anthropic, z.ai, AssemblyAI, ElevenLabs clients
-    Clicky.Pointing/     # [POINT:x,y:label] tag parser
+    Clicky.Api/          # Codex app-server, AssemblyAI, ElevenLabs clients
+    Clicky.Pointing/     # Pointing parser and evaluation helpers
   tests/
     Clicky.Tests/
 ```

@@ -35,8 +35,8 @@ public class SettingsStoreTests : IDisposable
     {
         var store = new SettingsStore(Path.Combine(_tempDir, "nonexistent", "settings.json"));
 
-        Assert.Equal("anthropic", store.LlmProvider);
-        Assert.Equal("claude-sonnet-4-6", store.LlmModel);
+        Assert.Equal("codex", store.LlmProvider);
+        Assert.Equal("gpt-5.5", store.LlmModel);
         Assert.Equal("pNInz6obpgDQGcFmaJgB", store.ElevenLabsVoiceId);
         Assert.False(store.OnboardingComplete);
         Assert.False(store.AnalyticsOptOut);
@@ -148,8 +148,8 @@ public class SettingsStoreTests : IDisposable
 
         var store = new SettingsStore(_tempFile);
 
-        Assert.Equal("anthropic", store.LlmProvider);
-        Assert.Equal("claude-sonnet-4-6", store.LlmModel);
+        Assert.Equal("codex", store.LlmProvider);
+        Assert.Equal("gpt-5.5", store.LlmModel);
         Assert.False(store.OnboardingComplete);
     }
 

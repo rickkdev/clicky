@@ -194,13 +194,13 @@
             <Border Height="0.5" Background="{StaticResource BorderSubtle}" Margin="0,0,0,20" />
 
             <!-- API KEYS header -->
-            <TextBlock Text="API KEYS"
+            <TextBlock Text="AUDIO API KEYS"
                        FontSize="10" FontWeight="SemiBold"
                        Foreground="{StaticResource TextTertiary}"
                        Margin="0,0,0,12" />
 
             <!-- Anthropic API Key -->
-            <Grid Margin="0,0,0,4">
+            <Grid Margin="0,0,0,4" Visibility="Collapsed">
                 <TextBlock Text="Anthropic"
                            FontSize="13" FontWeight="Medium"
                            Foreground="{StaticResource TextSecondary}"
@@ -210,7 +210,7 @@
                         HorizontalAlignment="Right"
                         Click="AnthropicLink_Click" />
             </Grid>
-            <Grid Margin="0,0,0,12">
+            <Grid Margin="0,0,0,12" Visibility="Collapsed">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
@@ -248,10 +248,10 @@
             <TextBlock Text="{Binding AnthropicKeyError}"
                        FontSize="11" Foreground="{StaticResource Failure}"
                        Margin="0,0,0,4"
-                       Visibility="{Binding AnthropicKeyError, Converter={StaticResource NullToCollapsed}}" />
+                       Visibility="Collapsed" />
 
             <!-- z.ai API Key -->
-            <Grid Margin="0,0,0,4">
+            <Grid Margin="0,0,0,4" Visibility="Collapsed">
                 <TextBlock Text="z.ai"
                            FontSize="13" FontWeight="Medium"
                            Foreground="{StaticResource TextSecondary}"
@@ -261,7 +261,7 @@
                         HorizontalAlignment="Right"
                         Click="ZaiLink_Click" />
             </Grid>
-            <Grid Margin="0,0,0,12">
+            <Grid Margin="0,0,0,12" Visibility="Collapsed">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
@@ -297,7 +297,7 @@
             <TextBlock Text="{Binding ZaiKeyError}"
                        FontSize="11" Foreground="{StaticResource Failure}"
                        Margin="0,0,0,4"
-                       Visibility="{Binding ZaiKeyError, Converter={StaticResource NullToCollapsed}}" />
+                       Visibility="Collapsed" />
 
             <!-- AssemblyAI API Key -->
             <Grid Margin="0,0,0,4">

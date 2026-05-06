@@ -13,19 +13,26 @@ This is the open-source version of Clicky for those that want to hack on it, bui
 
 | Platform | Status | Details |
 |----------|--------|---------|
-| **Windows** | Shipping | Bring-your-own-keys, runs entirely on your machine. See [windows/README.md](windows/README.md) |
+| **Windows** | Shipping | Uses local Codex/ChatGPT sign-in for the LLM, plus bring-your-own speech keys. See [windows/README.md](windows/README.md) |
 | **macOS** | Shipping | Uses a Cloudflare Worker proxy for API keys. See setup below |
 
 ### Windows — quick start
 
-1. Download the installer from [Releases](https://github.com/julianjear/makesomething-mac-app/releases)
-2. Run it, paste your API keys (Anthropic or z.ai + AssemblyAI + ElevenLabs)
-3. Hold **Ctrl+Alt** and talk
+1. Install the [Codex CLI](https://developers.openai.com/codex) and sign in with ChatGPT/Codex.
+2. Enter your AssemblyAI and ElevenLabs keys in Clicky Settings.
+3. Hold **Ctrl+Alt** and talk.
 
-Keys are encrypted with Windows DPAPI and never leave your machine. You can
-switch between Claude and GLM at runtime from the tray menu. See
-[windows/README.md](windows/README.md) for full details, building from source,
-and system requirements.
+Speech keys are encrypted with Windows DPAPI and never leave your machine.
+Clicky's Windows LLM path talks to the local `codex app-server`, so it can use
+your Codex/ChatGPT sign-in instead of an OpenAI API key. See
+[windows/README.md](windows/README.md) for full details, local development, and
+system requirements.
+
+To run locally from source:
+
+```powershell
+.\run.cmd
+```
 
 ### macOS — quick start
 
@@ -145,10 +152,10 @@ The app will appear in your menu bar (not the dock). Click the icon to open the 
 
 If you want the full technical breakdown, read `CLAUDE.md`. But here's the short version:
 
-**Menu bar / system tray app** with a control panel and a full-screen transparent cursor overlay. Push-to-talk streams audio to AssemblyAI for real-time transcription, sends the transcript + screenshots to an LLM (Claude or GLM) via streaming, and plays the response through ElevenLabs TTS. The LLM can embed `[POINT:x,y:label:screenN]` tags in its responses to make the blue cursor fly to specific UI elements across multiple monitors.
+**Menu bar / system tray app** with a control panel and a full-screen transparent cursor overlay. Push-to-talk streams audio to AssemblyAI for real-time transcription, sends the transcript + screenshots to an LLM via local Codex app-server on Windows or the Mac proxy path on macOS, and plays the response through ElevenLabs TTS. The LLM can embed `[POINT:x,y:label:screenN]` tags in its responses to make the blue cursor fly to specific UI elements across multiple monitors.
 
 - **Mac:** APIs proxied through a Cloudflare Worker (`worker/`)
-- **Windows:** Direct-to-provider with encrypted local key storage (no worker needed)
+- **Windows:** Local Codex app-server for the LLM, direct AssemblyAI/ElevenLabs clients with encrypted local key storage (no worker needed)
 
 ## Project structure
 
