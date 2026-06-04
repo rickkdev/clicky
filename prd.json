@@ -34,8 +34,8 @@
         "Add a validation script that checks plugin.yaml, protocol schema JSON, and all protocol examples."
       ],
       "priority": 2,
-      "passes": false,
-      "notes": "This folder is the plugin boundary. It should be installable into ~/.hermes/plugins/hermes-clicky-plugin without copying random repo-root files."
+      "passes": true,
+      "notes": "Completed in hermes-clicky-plugin/: package skeleton includes manifest, README, register(ctx), schemas, handlers, bridge client, protocol assets, demos, validation script, and tests. plugin.yaml declares windows/macos support separately plus unsupported-platform behavior. Handlers return deterministic bridge_unavailable/capability responses without launching native runtime unless CLICKY_BRIDGE_COMMAND is configured."
     },
     {
       "id": "US-003",

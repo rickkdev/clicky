@@ -7,3 +7,13 @@ provides_tools:
   - observe_clicky_screen
   - explain_clicky_screen
   - point_clicky_target
+platforms:
+  windows:
+    supported: true
+    native_bridge: ../windows/src/Clicky.Bridge/
+  macos:
+    supported: true
+    native_bridge: ../mac/
+  unsupported:
+    supported: false
+    message: "Clicky Hermes plugin V1 supports windows and macos only."

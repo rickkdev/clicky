@@ -13,6 +13,9 @@ def _json(data: dict[str, Any]) -> str:
     return json.dumps(data, ensure_ascii=False)
 
 
+SUPPORTED_PLATFORMS = ("windows", "macos")
+
+
 def _platform_name(requested: str | None = None) -> str:
     if requested and requested != "auto":
         return requested
@@ -22,6 +25,28 @@ def _platform_name(requested: str | None = None) -> str:
     if sys == "windows":
         return "windows"
     return sys or "unknown"
+
+
+def _unsupported_platform(platform_name: str) -> dict[str, Any]:
+    return {
+        "protocolVersion": "clicky.hermes.v1",
+        "ok": False,
+        "status": "unsupported_platform",
+        "platform": platform_name,
+        "supportedPlatforms": list(SUPPORTED_PLATFORMS),
+        "capabilities": {
+            "observeScreen": {"enabled": False, "reason": "unsupported_platform"},
+            "explainScreen": {"enabled": False, "reason": "unsupported_platform"},
+            "pointToTarget": {"enabled": False, "reason": "unsupported_platform"},
+            "overlay": {"enabled": False, "reason": "unsupported_platform"},
+            "osControl": {"enabled": False, "reason": "phase_2_not_implemented"},
+        },
+        "error": {
+            "code": "unsupported_platform",
+            "message": "Clicky Hermes plugin V1 supports windows and macos only.",
+            "retryable": False,
+        },
+    }
 
 
 def _bridge_or_error(method: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -46,8 +71,10 @@ def _bridge_or_error(method: str, params: dict[str, Any]) -> dict[str, Any]:
 def get_clicky_capabilities(args: dict, **kwargs) -> str:
     requested_platform = args.get("platform", "auto")
     platform_name = _platform_name(requested_platform)
+    if platform_name not in SUPPORTED_PLATFORMS:
+        return _json(_unsupported_platform(platform_name))
 
-    bridge_result = _bridge_or_error("clicky.getCapabilities", {"platform": requested_platform})
+    bridge_result = _bridge_or_error("clicky.getCapabilities", {"platform": platform_name})
     if bridge_result.get("ok") is not False:
         return _json(bridge_result)
 
