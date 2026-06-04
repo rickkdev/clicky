@@ -230,7 +230,7 @@ public class PointingEndToEndTests
         Assert.InRange(overlayLocalDipY, boxLocalTopDip, boxLocalBottomDip);
     }
 
-    private static System.Drawing.Point ToDrawingPoint(System.Windows.Point point)
+    private static System.Drawing.Point ToDrawingPoint(PointCoordinates point)
     {
         return new System.Drawing.Point(
             (int)Math.Round(point.X),

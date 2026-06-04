@@ -165,8 +165,8 @@
         "End with a concrete proposed native integration roadmap."
       ],
       "priority": 10,
-      "passes": false,
-      "notes": "Architecture/product deliverable. Decide later whether to split repos or make Clicky native Hermes functionality based on plugin evidence."
+      "passes": true,
+      "notes": "Completed in hermes-clicky-plugin/docs/native-hermes-integration-recommendation.md with native integration recommendation covering architecture, reliability, latency evidence from the demo workflow, available Windows [TURN] diagnostics instrumentation, semantic pointing fixture accuracy evidence, native-vs-Hermes ownership, privacy/permission/model-cost/support risks, and a staged native integration roadmap. Added tests/test_native_integration_recommendation.py to keep US-010 evidence covered."
     },
     {
       "id": "US-011",
