@@ -98,8 +98,8 @@
         "The plugin does not expose provider-specific model payloads to Hermes."
       ],
       "priority": 6,
-      "passes": false,
-      "notes": "Lower-risk assistive mode. Keep voice out of V1."
+      "passes": true,
+      "notes": "Completed with windows/src/Clicky.Bridge/: clicky.explainScreen routes to WindowsExplainScreenService, requires non-empty task text, captures screen context through the existing Windows capture seam, and calls a semantic IWindowsExplanationProvider seam that returns concise explanation text plus optional regions. Standalone stdio bridge uses deterministic CLICKY_BRIDGE_EXPLANATION_RESPONSE and never launches the tray app, overlay, speech, or TTS. Hermes protocol/tooling accepts optional observationId and screenId references and does not expose provider-specific raw model payloads. Tests cover task validation, screen context/reference passing, regions, provider payload hiding, and screen_capture permission_denied. Manual smoke documented in windows/docs/hermes-bridge-explain-smoke.md."
     },
     {
       "id": "US-007",

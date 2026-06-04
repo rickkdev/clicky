@@ -118,7 +118,12 @@ def explain_clicky_screen(args: dict, **kwargs) -> str:
     task = str(args.get("task", "")).strip()
     if not task:
         return _json({"protocolVersion": "clicky.hermes.v1", "ok": False, "status": "invalid_request", "error": {"code": "missing_task", "message": "task is required", "retryable": False}})
-    result = _bridge_or_error("clicky.explainScreen", {"task": task, "screenId": args.get("screenId")})
+    params = {"task": task}
+    if args.get("observationId"):
+        params["observationId"] = args.get("observationId")
+    if args.get("screenId"):
+        params["screenId"] = args.get("screenId")
+    result = _bridge_or_error("clicky.explainScreen", params)
     return _json(result)
 
 

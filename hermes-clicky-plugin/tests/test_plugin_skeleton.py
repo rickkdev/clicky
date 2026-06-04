@@ -98,6 +98,29 @@ class PluginSkeletonTests(unittest.TestCase):
         self.assertIn("macos", result["supportedPlatforms"])
         self.assertEqual(result["error"]["code"], "unsupported_platform")
 
+    def test_explain_tool_passes_optional_observation_references_to_bridge(self):
+        plugin = load_plugin_package()
+        captured = {}
+
+        def fake_bridge(method, params):
+            captured["method"] = method
+            captured["params"] = params
+            return {"protocolVersion": "clicky.hermes.v1", "ok": True, "status": "explained", "explanation": "done"}
+
+        plugin.tools._bridge_or_error = fake_bridge
+
+        result = json.loads(plugin.tools.explain_clicky_screen({
+            "task": "explain the dialog",
+            "observationId": "obs-123",
+            "screenId": "display-1",
+        }))
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(captured["method"], "clicky.explainScreen")
+        self.assertEqual(captured["params"]["task"], "explain the dialog")
+        self.assertEqual(captured["params"]["observationId"], "obs-123")
+        self.assertEqual(captured["params"]["screenId"], "display-1")
+
     def test_tool_handlers_do_not_make_ad_hoc_subprocess_calls(self):
         tools_text = (ROOT / "tools.py").read_text(encoding="utf-8")
         self.assertNotIn("subprocess", tools_text)

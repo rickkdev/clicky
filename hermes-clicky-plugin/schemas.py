@@ -57,9 +57,13 @@ EXPLAIN_CLICKY_SCREEN = {
                 "type": "string",
                 "description": "What the user wants explained about the visible screen.",
             },
+            "observationId": {
+                "type": "string",
+                "description": "Optional observation id returned by observe_clicky_screen.",
+            },
             "screenId": {
                 "type": "string",
-                "description": "Optional screen observation id from observe_clicky_screen.",
+                "description": "Optional display/screen id within an observation.",
             },
         },
         "required": ["task"],

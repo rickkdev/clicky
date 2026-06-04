@@ -88,14 +88,24 @@ request:
 {
   "protocolVersion": "clicky.hermes.v1",
   "method": "explainScreen",
-  "task": "explain what controls are visible"
+  "task": "explain what controls are visible",
+  "observationId": "optional-observeScreen-id",
+  "screenId": "optional-display-id"
 }
 ```
 
 response includes:
 
-- `explanation`
-- optional `regions[]` with labels, coordinates, and confidence
+- `status: explained`
+- concise `explanation`
+- optional `regions[]` with labels, normalized/physical coordinates, and confidence
+
+Windows bridge notes:
+
+- captures screen context through the existing capture seam unless a future native host supplies an observation cache.
+- standalone stdio explanation uses a deterministic `CLICKY_BRIDGE_EXPLANATION_RESPONSE` seam; it does not launch the tray app.
+- explanation-only does not render overlays and does not touch speech/TTS.
+- provider/model-specific raw payloads stay behind the bridge and are not part of this protocol.
 
 ### pointToTarget
 

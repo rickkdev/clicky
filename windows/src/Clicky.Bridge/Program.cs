@@ -42,6 +42,7 @@ static async Task<JsonRpcResponse> HandleAsync(JsonRpcRequest request, JsonSeria
             },
             "clicky.getCapabilities" => await GetCapabilitiesAsync(request.Params, jsonOptions),
             "clicky.observeScreen" => await ObserveAsync(request.Params, jsonOptions),
+            "clicky.explainScreen" => await ExplainScreenAsync(request.Params, jsonOptions),
             "clicky.pointToTarget" => await PointToTargetAsync(request.Params, jsonOptions),
             _ => throw new BridgeProtocolException(new BridgeProtocolError("method_not_found", $"unknown method: {request.Method}", false)),
         };
@@ -67,7 +68,7 @@ static async Task<object> GetCapabilitiesAsync(JsonElement? parameters, JsonSeri
         capabilities = new
         {
             observeScreen = new { enabled = available, reason = available ? null : "screen_capture_unavailable" },
-            explainScreen = new { enabled = false, reason = "not_implemented" },
+            explainScreen = new { enabled = available && HasExplanationResponseConfig(), reason = available ? (HasExplanationResponseConfig() ? null : "missing_explanation_response_config") : "screen_capture_unavailable" },
             pointToTarget = new { enabled = available && HasPointingResponseConfig(), reason = available ? (HasPointingResponseConfig() ? null : "missing_pointing_response_config") : "screen_capture_unavailable" },
             overlay = new { enabled = false, reason = "standalone_bridge_overlay_not_available" },
             osControl = new { enabled = false, reason = "phase_2_not_implemented" },
@@ -82,6 +83,20 @@ static async Task<object> ObserveAsync(JsonElement? parameters, JsonSerializerOp
         : new ObserveScreenRequest();
     var service = new WindowsObserveService(new WindowsScreenCaptureProvider());
     return await service.ObserveScreenAsync(request);
+}
+
+static async Task<object> ExplainScreenAsync(JsonElement? parameters, JsonSerializerOptions jsonOptions)
+{
+    var request = parameters.HasValue
+        ? parameters.Value.Deserialize<ExplainScreenRequest>(jsonOptions)
+        : null;
+    if (request is null)
+        throw new BridgeProtocolException(new BridgeProtocolError("invalid_request", "explainScreen params are required", false));
+
+    var service = new WindowsExplainScreenService(
+        new WindowsScreenCaptureProvider(),
+        new EnvironmentExplanationProvider(jsonOptions));
+    return await service.ExplainScreenAsync(request);
 }
 
 static async Task<object> PointToTargetAsync(JsonElement? parameters, JsonSerializerOptions jsonOptions)
@@ -99,8 +114,38 @@ static async Task<object> PointToTargetAsync(JsonElement? parameters, JsonSerial
     return await service.PointToTargetAsync(request);
 }
 
+static bool HasExplanationResponseConfig()
+    => !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("CLICKY_BRIDGE_EXPLANATION_RESPONSE"));
+
 static bool HasPointingResponseConfig()
     => !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("CLICKY_BRIDGE_POINTING_RESPONSE"));
+
+public sealed class EnvironmentExplanationProvider(JsonSerializerOptions jsonOptions) : IWindowsExplanationProvider
+{
+    public Task<ExplanationResult> ExplainAsync(
+        ExplainScreenRequest request,
+        IReadOnlyList<Clicky.Capture.CapturedScreen> screens,
+        CancellationToken cancellationToken)
+    {
+        var response = Environment.GetEnvironmentVariable("CLICKY_BRIDGE_EXPLANATION_RESPONSE");
+        if (string.IsNullOrWhiteSpace(response))
+        {
+            throw new BridgeProtocolException(new BridgeProtocolError(
+                "bridge_unavailable",
+                "CLICKY_BRIDGE_EXPLANATION_RESPONSE is required for standalone bridge explanation. The tray-owned real model/speech/TTS path is not launched implicitly.",
+                false));
+        }
+
+        var trimmed = response.Trim();
+        if (trimmed.StartsWith("{"))
+        {
+            return Task.FromResult(JsonSerializer.Deserialize<ExplanationResult>(trimmed, jsonOptions)
+                ?? throw new BridgeProtocolException(new BridgeProtocolError("invalid_explanation_response", "CLICKY_BRIDGE_EXPLANATION_RESPONSE could not be parsed.", false)));
+        }
+
+        return Task.FromResult(ExplanationResult.Text(trimmed));
+    }
+}
 
 public sealed class EnvironmentPointingTurnProvider : IWindowsPointingTurnProvider
 {

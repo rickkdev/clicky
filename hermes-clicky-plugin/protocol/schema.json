@@ -501,6 +501,9 @@
           "type": "string",
           "minLength": 1
         },
+        "observationId": {
+          "type": "string"
+        },
         "screenId": {
           "type": "string"
         }

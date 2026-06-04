@@ -59,6 +59,7 @@ examples:
 
 - `protocol/examples/capabilities.windows.json`
 - `protocol/examples/observe.metadata-only.json`
+- `protocol/examples/explain.success.json`
 - `protocol/examples/point.success.json`
 - `protocol/examples/point.low-confidence.json`
 
