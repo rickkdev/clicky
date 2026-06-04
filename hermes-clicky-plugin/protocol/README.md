@@ -22,6 +22,8 @@ canonical schema:
 - never fabricate coordinates for uncertain targets.
 - screenshots are metadata-only by default.
 - image bytes or image file paths are only returned when requested by `imageMode`.
+- Windows `metadataOnly` returns display/image/cursor metadata and must not write screenshot files.
+- Windows real-capture smoke checks live in `windows/docs/hermes-bridge-observe-smoke.md`; normal CI should use fake capture-provider tests.
 - os control is not part of v1.
 
 ## methods

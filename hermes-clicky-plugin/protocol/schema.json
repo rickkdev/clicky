@@ -469,6 +469,16 @@
         },
         "includeCursorScreenOnly": {
           "type": "boolean"
+        },
+        "outputDirectory": {
+          "type": "string"
+        },
+        "debugWriteScreenshots": {
+          "type": "boolean"
+        },
+        "maxBase64Bytes": {
+          "type": "integer",
+          "minimum": 1
         }
       },
       "additionalProperties": false

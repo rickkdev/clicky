@@ -21,6 +21,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Clicky.Pointing", "src\Clic
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Clicky.Tests", "tests\Clicky.Tests\Clicky.Tests.csproj", "{A1B2C3D4-0009-0009-0009-000000000009}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Clicky.Bridge", "src\Clicky.Bridge\Clicky.Bridge.csproj", "{A1B2C3D4-0010-0010-0010-000000000010}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Clicky.Bridge.Tests", "tests\Clicky.Bridge.Tests\Clicky.Bridge.Tests.csproj", "{A1B2C3D4-0011-0011-0011-000000000011}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -63,6 +67,14 @@ Global
 		{A1B2C3D4-0009-0009-0009-000000000009}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A1B2C3D4-0009-0009-0009-000000000009}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A1B2C3D4-0009-0009-0009-000000000009}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A1B2C3D4-0010-0010-0010-000000000010}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1B2C3D4-0010-0010-0010-000000000010}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1B2C3D4-0010-0010-0010-000000000010}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1B2C3D4-0010-0010-0010-000000000010}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A1B2C3D4-0011-0011-0011-000000000011}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1B2C3D4-0011-0011-0011-000000000011}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1B2C3D4-0011-0011-0011-000000000011}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1B2C3D4-0011-0011-0011-000000000011}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolution = FALSE

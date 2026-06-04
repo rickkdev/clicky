@@ -14,10 +14,19 @@
         "width": 2560,
         "height": 1440
       },
-      "scale": 1.5,
+      "scale": 1.0,
+      "coordinateScale": {
+        "scaleX": 1.0,
+        "scaleY": 1.0
+      },
       "isCursorScreen": true
     }
   ],
+  "cursor": {
+    "screenId": "display_1",
+    "isOnScreen": true,
+    "position": null
+  },
   "images": [
     {
       "mode": "metadataOnly",

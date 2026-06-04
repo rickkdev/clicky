@@ -106,6 +106,10 @@ def observe_clicky_screen(args: dict, **kwargs) -> str:
         "imageMode": image_mode,
         "includeCursorScreenOnly": bool(args.get("includeCursorScreenOnly", True)),
     }
+    if args.get("outputDirectory"):
+        params["outputDirectory"] = args.get("outputDirectory")
+    if args.get("maxBase64Bytes"):
+        params["maxBase64Bytes"] = int(args.get("maxBase64Bytes"))
     result = _bridge_or_error("clicky.observeScreen", params)
     return _json(result)
 

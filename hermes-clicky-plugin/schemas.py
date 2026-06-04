@@ -33,6 +33,16 @@ OBSERVE_CLICKY_SCREEN = {
                 "description": "If true, observe only the display containing the cursor.",
                 "default": True,
             },
+            "outputDirectory": {
+                "type": "string",
+                "description": "Optional directory for imageMode=file screenshots. Ignored for metadataOnly.",
+            },
+            "maxBase64Bytes": {
+                "type": "integer",
+                "description": "Maximum screenshot byte size allowed for imageMode=base64. Larger images return metadata without bytes.",
+                "minimum": 1,
+                "default": 1000000,
+            },
         },
     },
 }

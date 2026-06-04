@@ -66,8 +66,8 @@
         "The bridge does not write screenshots to disk unless imageMode=file or an explicit debug flag is enabled."
       ],
       "priority": 4,
-      "passes": false,
-      "notes": "Follow existing Windows fake provider/capture seams. Keep compositor-dependent validation out of normal CI."
+      "passes": true,
+      "notes": "Completed with windows/src/Clicky.Bridge/: JSON-RPC stdio bridge host routes clicky.observeScreen to WindowsObserveService and WindowsScreenCaptureProvider, which wraps existing Clicky.Capture ScreenCapture/ScreenCapturePermissions. Added deterministic Clicky.Bridge.Tests fake-provider coverage for metadataOnly default/no disk write, display bounds/dimensions/scale/screen ids/cursor metadata, cursor-screen filtering, file output only when requested, bounded base64, and structured permission_denied errors. Real compositor validation documented in windows/docs/hermes-bridge-observe-smoke.md; normal CI should use fake providers."
     },
     {
       "id": "US-005",
