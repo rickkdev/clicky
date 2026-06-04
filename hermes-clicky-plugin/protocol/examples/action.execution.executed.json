@@ -1,0 +1,14 @@
+{
+  "protocolVersion": "clicky.hermes.v1",
+  "ok": true,
+  "status": "executed",
+  "proposalId": "proposal-open-notepad",
+  "actionType": "openApplication",
+  "result": {
+    "method": "openApplication",
+    "started": true
+  },
+  "startedAt": "2026-06-04T18:00:00Z",
+  "completedAt": "2026-06-04T18:00:01Z",
+  "forwardedToExecutor": true
+}

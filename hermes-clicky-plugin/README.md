@@ -72,6 +72,7 @@ examples:
 - `protocol/examples/confirmation.cancelled.json`
 - `protocol/examples/confirmation.approved-rechecked.json`
 - `protocol/examples/confirmation.stale.json`
+- `protocol/examples/action.execution.executed.json`
 
 validate:
 
@@ -153,4 +154,4 @@ Full demo notes and failure cases: `examples/demo_workflow.md`.
 - confirmation UX is structured Hermes-facing state in `confirmation_state.py`; it builds concise redacted confirmation requests and handles approve/cancel/explain/stale responses without dialogs or execution.
 - approved confirmations perform a fresh safety recheck before returning forwarding semantics; blocked rechecks set `forwardToExecutor=false`.
 - blocked safety decisions set `forwardToExecutor=false` and can append inert audit records, but they do not write logs or call an executor.
-- os control execution is still phase 2 and absent. no click/type/open-app/hotkey/focus execution in this package.
+- phase 2 os control execution is Windows-native only in `../windows/src/Clicky.Bridge/` for US-015. this package defines schema/docs only and does not execute click/type/open-app/hotkey/focus actions directly.

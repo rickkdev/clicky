@@ -937,3 +937,39 @@ Branch: ralph/windows-port (continues from the completed Windows port — see ar
   - Approval must never imply execution. Treat `forwardToExecutor` as gate data only, and only set it after a fresh safety recheck returns `allow`.
   - Redaction belongs at confirmation-request construction because this is the user-facing copy boundary; never pass `inputPreview` or raw rationale into confirmation copy.
 ---
+
+## 2026-06-04 20:45 CEST - US-015
+- Implemented the Windows basic action executor behind the native bridge only. Added `clicky.executeAction` routing in `windows/src/Clicky.Bridge/` without adding Hermes plugin Python execution, tray auto-launch, macOS execution, or autopilot loops.
+- Added `WindowsActionExecutionService` gate enforcement: missing/mismatched permission decisions, blocked safety decisions, and unapproved confirmation-required actions return structured `blocked` results and are not forwarded to the executor.
+- Added `IWindowsActionExecutor` plus `WindowsActionExecutor` methods for `click`, `doubleClick`, `typeText`, `hotkey`, `openApplication`, and `focusWindow`. Real execution is Windows-only: SendInput for coordinate clicks/text/hotkeys, Process.Start for app launch, and foreground-window APIs for focus.
+- Added structured execution request/result models with `protocolVersion`, `ok`, `status`, `proposalId`, `actionType`, `result`, `reason`, `startedAt`, `completedAt`, and `forwardedToExecutor`. Typed text is redacted from results.
+- Extended Hermes-facing protocol schema/docs/examples for `executeAction` request/result shapes while keeping plugin code non-executing.
+- Added deterministic fake-executor tests covering missing permission, blocked safety, unapproved confirmation, all six action routes, structured result shape, and cancellation.
+- Added opt-in manual Windows smoke checklist at `windows/docs/hermes-bridge-action-executor-smoke.md` for Notepad-only real desktop execution.
+- Validation:
+  - RED: `python3 -m unittest hermes-clicky-plugin/tests/test_protocol_contract.py -v` failed on missing `actionExecutionRequest` / `actionExecutionResult` before schema implementation.
+  - GREEN: `python3 -m unittest hermes-clicky-plugin/tests/test_protocol_contract.py -v` => 10 passed.
+  - `python3 hermes-clicky-plugin/scripts/validate_protocol.py` => ok.
+  - `python3 -m unittest discover -s hermes-clicky-plugin/tests -q` => 67 passed.
+  - RED attempt for Windows tests initially blocked because `dotnet` was absent on this macOS host; installed Homebrew `dotnet@8` and reran.
+  - `DOTNET_ROOT=/opt/homebrew/opt/dotnet@8/libexec /opt/homebrew/opt/dotnet@8/libexec/dotnet test windows/tests/Clicky.Bridge.Tests/Clicky.Bridge.Tests.csproj /p:EnableWindowsTargeting=true --filter WindowsActionExecutionServiceTests -v minimal` => 10 passed.
+  - `DOTNET_ROOT=/opt/homebrew/opt/dotnet@8/libexec /opt/homebrew/opt/dotnet@8/libexec/dotnet test windows/tests/Clicky.Bridge.Tests/Clicky.Bridge.Tests.csproj /p:EnableWindowsTargeting=true -v minimal` => 30 passed.
+  - `DOTNET_ROOT=/opt/homebrew/opt/dotnet@8/libexec /opt/homebrew/opt/dotnet@8/libexec/dotnet build windows/src/Clicky.Bridge/Clicky.Bridge.csproj /p:EnableWindowsTargeting=true -c Release -v minimal` => passed, 0 warnings, 0 errors.
+- Files changed:
+  - NEW: `windows/src/Clicky.Bridge/ActionModels.cs`
+  - NEW: `windows/src/Clicky.Bridge/WindowsActionExecutionService.cs`
+  - NEW: `windows/src/Clicky.Bridge/WindowsActionExecutor.cs`
+  - MODIFIED: `windows/src/Clicky.Bridge/Program.cs`
+  - NEW: `windows/tests/Clicky.Bridge.Tests/WindowsActionExecutionServiceTests.cs`
+  - NEW: `windows/docs/hermes-bridge-action-executor-smoke.md`
+  - MODIFIED: `hermes-clicky-plugin/protocol/schema.json`
+  - MODIFIED: `hermes-clicky-plugin/protocol/README.md`
+  - MODIFIED: `hermes-clicky-plugin/README.md`
+  - MODIFIED: `hermes-clicky-plugin/tests/test_protocol_contract.py`
+  - NEW: `hermes-clicky-plugin/protocol/examples/action.execution.executed.json`
+  - MODIFIED: `prd.json`
+- **Learnings for future iterations:**
+  - Keep execution gates in a separate service from the OS executor. This makes permission/safety/confirmation refusal deterministic and testable without touching the real desktop.
+  - Native execution results must report what happened without echoing raw typed text; use counts/redaction flags for `typeText`.
+  - On this macOS validation host, use Homebrew `dotnet@8` via `/opt/homebrew/opt/dotnet@8/libexec/dotnet` plus `/p:EnableWindowsTargeting=true` for Windows bridge tests/builds.
+---

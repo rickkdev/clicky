@@ -38,6 +38,12 @@
       "$ref": "#/$defs/confirmationResponse"
     },
     {
+      "$ref": "#/$defs/actionExecutionRequest"
+    },
+    {
+      "$ref": "#/$defs/actionExecutionResult"
+    },
+    {
       "$ref": "#/$defs/errorResponse"
     }
   ],
@@ -1040,6 +1046,100 @@
             }
           },
           "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "actionExecutionRequest": {
+      "type": "object",
+      "description": "gated Windows action execution request; executor must refuse requests that have not passed permission, safety, and confirmation layers",
+      "required": [
+        "protocolVersion",
+        "method",
+        "proposal",
+        "permissionDecision",
+        "safetyDecision"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": "clicky.hermes.v1"
+        },
+        "method": {
+          "const": "executeAction"
+        },
+        "proposal": {
+          "$ref": "#/$defs/actionProposal"
+        },
+        "permissionDecision": {
+          "$ref": "#/$defs/permissionDecision"
+        },
+        "safetyDecision": {
+          "$ref": "#/$defs/safetyDecision"
+        },
+        "confirmationResponse": {
+          "$ref": "#/$defs/confirmationResponse"
+        }
+      },
+      "additionalProperties": false
+    },
+    "actionExecutionResult": {
+      "type": "object",
+      "description": "structured provider-neutral execution result from the native Windows executor",
+      "required": [
+        "protocolVersion",
+        "ok",
+        "status",
+        "proposalId",
+        "actionType",
+        "startedAt",
+        "completedAt",
+        "forwardedToExecutor"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": "clicky.hermes.v1"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "executed",
+            "blocked",
+            "cancelled",
+            "error"
+          ]
+        },
+        "proposalId": {
+          "type": "string"
+        },
+        "actionType": {
+          "type": "string",
+          "enum": [
+            "click",
+            "doubleClick",
+            "typeText",
+            "hotkey",
+            "openApplication",
+            "focusWindow"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "reason": {
+          "type": "string"
+        },
+        "startedAt": {
+          "type": "string"
+        },
+        "completedAt": {
+          "type": "string"
+        },
+        "forwardedToExecutor": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false

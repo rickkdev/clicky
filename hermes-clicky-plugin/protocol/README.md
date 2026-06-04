@@ -37,6 +37,9 @@ canonical schema:
 - confirmation copy must be concise and must not expose raw rationale, input previews, credentials, or internal reasoning.
 - approved confirmations are safety-rechecked immediately before a future executor could receive them; if the recheck blocks, `forwardToExecutor=false`.
 - cancelled and stale confirmations produce inert audit events only.
+- `executeAction` is Windows-native only in US-015 and returns structured execution results.
+- execution requests must include the original proposal plus permission, safety, and, when required, confirmation gate results.
+- execution results are provider-neutral and must not include raw typed credential text or native UI framework internals.
 
 ## methods
 
@@ -242,7 +245,39 @@ Rules:
 - stale proposals are rejected by expiry or proposal id mismatch.
 - approved proposals are rechecked by `safety_policy.py` immediately before forwarding semantics are returned.
 - even after approval, `forwardToExecutor=true` only when the fresh safety decision is `allow`.
-- no executor is called; this is state for a future execution layer only.
+- no executor is called from the Hermes-facing confirmation helper; native execution is a separate gated bridge call.
+
+### executeAction
+
+`executeAction` is the Windows-native execution request/result contract for approved desktop actions. It supports:
+
+- `click`
+- `doubleClick`
+- `typeText`
+- `hotkey`
+- `openApplication`
+- `focusWindow`
+
+request rules:
+
+- include the original `actionProposal`.
+- include a matching `permissionDecision`.
+- include a matching `safetyDecision` with `decision: allow` and `forwardToExecutor: true`.
+- include an approved `confirmationResponse` when permission or proposal state requires confirmation.
+- blocked, missing, mismatched, stale, cancelled, or unapproved gates return `status: blocked` and are not forwarded to the executor.
+
+execution result fields:
+
+- `protocolVersion`
+- `ok`
+- `status`: `executed`, `blocked`, `cancelled`, or `error`
+- `proposalId`
+- `actionType`
+- `result`
+- `reason`
+- `startedAt`
+- `completedAt`
+- `forwardedToExecutor`
 
 ## examples
 
@@ -260,6 +295,7 @@ Rules:
 - `examples/confirmation.cancelled.json`
 - `examples/confirmation.approved-rechecked.json`
 - `examples/confirmation.stale.json`
+- `examples/action.execution.executed.json`
 
 validate:
 

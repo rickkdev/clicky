@@ -44,6 +44,7 @@ static async Task<JsonRpcResponse> HandleAsync(JsonRpcRequest request, JsonSeria
             "clicky.observeScreen" => await ObserveAsync(request.Params, jsonOptions),
             "clicky.explainScreen" => await ExplainScreenAsync(request.Params, jsonOptions),
             "clicky.pointToTarget" => await PointToTargetAsync(request.Params, jsonOptions),
+            "clicky.executeAction" => await ExecuteActionAsync(request.Params, jsonOptions),
             _ => throw new BridgeProtocolException(new BridgeProtocolError("method_not_found", $"unknown method: {request.Method}", false)),
         };
 
@@ -71,8 +72,13 @@ static async Task<object> GetCapabilitiesAsync(JsonElement? parameters, JsonSeri
             explainScreen = new { enabled = available && HasExplanationResponseConfig(), reason = available ? (HasExplanationResponseConfig() ? null : "missing_explanation_response_config") : "screen_capture_unavailable" },
             pointToTarget = new { enabled = available && HasPointingResponseConfig(), reason = available ? (HasPointingResponseConfig() ? null : "missing_pointing_response_config") : "screen_capture_unavailable" },
             overlay = new { enabled = true, reason = (string?)null },
-            osControl = new { enabled = false, reason = "phase_2_not_implemented" },
-        }
+            osControl = new { enabled = true, reason = "gated_by_permission_safety_confirmation" },
+        },
+        activePermissionTier = ActivePermissionTier(),
+        defaultPermissionTier = "confirmBeforeAction",
+        availablePermissionTiers = new[] { "observe", "point", "confirmBeforeAction", "scopedAutopilot", "fullControl" },
+        permissionTierChange = "explicit_user_setting_or_command_required",
+        fullControlPolicy = "external_user_configuration_only"
     };
 }
 
@@ -112,6 +118,26 @@ static async Task<object> PointToTargetAsync(JsonElement? parameters, JsonSerial
         new EnvironmentPointingTurnProvider(),
         new WindowsPointOverlayRenderer());
     return await service.PointToTargetAsync(request);
+}
+
+static async Task<object> ExecuteActionAsync(JsonElement? parameters, JsonSerializerOptions jsonOptions)
+{
+    var request = parameters.HasValue
+        ? parameters.Value.Deserialize<WindowsActionExecutionRequest>(jsonOptions)
+        : null;
+    if (request is null)
+        throw new BridgeProtocolException(new BridgeProtocolError("invalid_request", "executeAction params are required", false));
+
+    var service = new WindowsActionExecutionService(new WindowsActionExecutor());
+    return await service.ExecuteActionAsync(request);
+}
+
+static string ActivePermissionTier()
+{
+    var configured = Environment.GetEnvironmentVariable("CLICKY_PERMISSION_TIER")?.Trim();
+    return configured is "observe" or "point" or "confirmBeforeAction" or "scopedAutopilot" or "fullControl"
+        ? configured
+        : "confirmBeforeAction";
 }
 
 static bool HasExplanationResponseConfig()

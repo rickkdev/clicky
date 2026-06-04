@@ -268,8 +268,8 @@
         "Add a manual Windows smoke checklist for real desktop execution."
       ],
       "priority": 15,
-      "passes": false,
-      "notes": "Keep compositor and real desktop validation in manual smoke fixtures, not default CI. Phase 2: do not start until plugin V1 observe/explain/point is working and demoed."
+      "passes": true,
+      "notes": "Completed with Windows-native action execution under windows/src/Clicky.Bridge/: added gated executeAction support for click, doubleClick, typeText, hotkey, openApplication, and focusWindow. WindowsActionExecutionService refuses missing/mismatched permission decisions, blocked safety decisions, and unapproved confirmations before forwarding to IWindowsActionExecutor. WindowsActionExecutor uses SendInput for coordinate click/type/hotkey, Process.Start for openApplication, and foreground-window APIs for focusWindow; deterministic tests use fake executor seams and do not touch the desktop. Execution results are structured/provider-neutral and redact typed text. Manual opt-in smoke checklist added at windows/docs/hermes-bridge-action-executor-smoke.md."
     },
     {
       "id": "US-016",

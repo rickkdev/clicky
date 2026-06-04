@@ -109,6 +109,21 @@ class ProtocolContractTests(unittest.TestCase):
         self.assertEqual(blocked["proposals"][0]["riskLevel"], "blocked")
         self.assertTrue(blocked["proposals"][0]["requiresConfirmation"])
 
+    def test_action_execution_result_shape_is_structured_and_gated(self):
+        self.assertIn("actionExecutionRequest", DEFS)
+        self.assertIn("actionExecutionResult", DEFS)
+        request = DEFS["actionExecutionRequest"]
+        result = DEFS["actionExecutionResult"]
+        for field in ["proposal", "permissionDecision", "safetyDecision"]:
+            self.assertIn(field, request["required"])
+        self.assertIn("confirmationResponse", request["properties"])
+        self.assertEqual(set(result["properties"]["status"]["enum"]), {"executed", "blocked", "cancelled", "error"})
+        for field in ["protocolVersion", "ok", "status", "proposalId", "actionType", "startedAt", "completedAt", "forwardedToExecutor"]:
+            self.assertIn(field, result["required"])
+        forbidden = json.dumps(result).lower()
+        self.assertNotIn("wpf", forbidden)
+        self.assertNotIn("win32", forbidden)
+
     def test_protocol_does_not_leak_native_or_provider_internals(self):
         doc_path = ROOT / "protocol" / "README.md"
         doc_text = doc_path.read_text(encoding="utf-8") if doc_path.exists() else ""
