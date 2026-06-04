@@ -82,7 +82,22 @@ plugin side:
 native side:
 
 - windows: `../windows/src/Clicky.Bridge/`
-- macos: capability adapter first; observe/explain/point bridge comes in the next story.
+- macos: `../mac/hermes-clicky-bridge/clicky_macos_bridge.py`
+
+## macOS bridge
+
+Configure Hermes to use the macOS stdio bridge:
+
+```bash
+export CLICKY_BRIDGE_COMMAND="python3 /Users/rick81/clicky/mac/hermes-clicky-bridge/clicky_macos_bridge.py"
+```
+
+The macOS bridge supports `getCapabilities`, `observeScreen`, `explainScreen`, and `pointToTarget` through the shared protocol. It does not launch the tray app and does not execute OS control. Explanation and pointing use deterministic env seams until the native model host is wired:
+
+- `CLICKY_MAC_BRIDGE_EXPLANATION_RESPONSE`
+- `CLICKY_MAC_BRIDGE_POINT_RESPONSE`
+
+Manual smoke checklist: `../mac/docs/hermes-bridge-macos-smoke.md`.
 
 ## macOS permissions
 
