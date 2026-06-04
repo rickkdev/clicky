@@ -98,6 +98,11 @@ class PluginSkeletonTests(unittest.TestCase):
         self.assertIn("macos", result["supportedPlatforms"])
         self.assertEqual(result["error"]["code"], "unsupported_platform")
 
+    def test_tool_handlers_do_not_make_ad_hoc_subprocess_calls(self):
+        tools_text = (ROOT / "tools.py").read_text(encoding="utf-8")
+        self.assertNotIn("subprocess", tools_text)
+        self.assertIn("ClickyBridgeClient", tools_text)
+
 
 if __name__ == "__main__":
     unittest.main()

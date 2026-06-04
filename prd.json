@@ -50,8 +50,8 @@
         "The Hermes plugin talks to the bridge only through hermes-clicky-plugin/bridge_client.py; no ad hoc subprocess calls in tool handlers."
       ],
       "priority": 3,
-      "passes": false,
-      "notes": "Prefer a debuggable local process boundary over direct library embedding. Windows bridge host should live under windows/src/Clicky.Bridge/ when implemented."
+      "passes": true,
+      "notes": "Completed with platform-neutral JSON-RPC stdio contract under hermes-clicky-plugin/: ClickyBridgeClient sends JSON-RPC requests only from bridge_client.py, parses results, preserves structured errors including code/message/retryable/permission, and handles timeout/empty/invalid JSON. Added deterministic scripts/fake_bridge.py router for rpc.health, clicky.getCapabilities, clicky.observeScreen, clicky.explainScreen, clicky.pointToTarget, and unknown-method errors. Documented why localhost/WebSocket are deferred. Native Windows/macOS capture/pointing intentionally not implemented in US-003."
     },
     {
       "id": "US-004",

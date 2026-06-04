@@ -15,14 +15,18 @@ from typing import Any
 
 
 class ClickyBridgeError(RuntimeError):
-    def __init__(self, code: str, message: str, retryable: bool = False):
+    def __init__(self, code: str, message: str, retryable: bool = False, permission: str | None = None):
         super().__init__(message)
         self.code = code
         self.message = message
         self.retryable = retryable
+        self.permission = permission
 
     def to_dict(self) -> dict[str, Any]:
-        return {"code": self.code, "message": self.message, "retryable": self.retryable}
+        data = {"code": self.code, "message": self.message, "retryable": self.retryable}
+        if self.permission is not None:
+            data["permission"] = self.permission
+        return data
 
 
 @dataclass(frozen=True)
@@ -90,6 +94,7 @@ class ClickyBridgeClient:
                 str(err.get("code", "bridge_error")),
                 str(err.get("message", "Clicky bridge returned an error")),
                 bool(err.get("retryable", False)),
+                permission=err.get("permission"),
             )
 
         result = response.get("result")

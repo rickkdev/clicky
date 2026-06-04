@@ -17,6 +17,12 @@ class ProtocolContractTests(unittest.TestCase):
         self.assertIn("protocolVersion", text)
         self.assertIn("JSON-RPC over stdio", text)
 
+    def test_stdio_transport_documents_why_network_transports_are_deferred(self):
+        text = (ROOT / "protocol" / "README.md").read_text(encoding="utf-8")
+        self.assertIn("localhost", text)
+        self.assertIn("WebSocket", text)
+        self.assertIn("deferred", text)
+
     def test_schema_defines_requests_and_responses_for_all_methods(self):
         for name in [
             "getCapabilitiesRequest",

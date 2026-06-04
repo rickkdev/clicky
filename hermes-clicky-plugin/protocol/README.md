@@ -4,6 +4,8 @@ protocolVersion: `clicky.hermes.v1`
 
 transport for the first native bridge: JSON-RPC over stdio.
 
+localhost and WebSocket transports are deferred. stdio is easier to spawn from Hermes, test with deterministic fixtures, log in-process, and shut down without choosing ports, opening firewall prompts, or leaving network listeners behind. network transports can come later if the native runtime needs long-lived streaming or remote control.
+
 this protocol is the only contract Hermes should rely on. it describes semantic screen observation, screen explanation, pointing, and capability reporting. it does not expose native UI framework classes, screenshot implementation details, or model-provider payloads.
 
 canonical schema:

@@ -45,9 +45,9 @@ restart hermes. the plugin should register these tools:
 
 ## current state
 
-this is a contract-first skeleton. until the native json-rpc bridge exists, tool calls return structured `bridge_unavailable` responses instead of pretending to work.
+this is a contract-first skeleton with a deterministic stdio fake bridge at `scripts/fake_bridge.py`. without `CLICKY_BRIDGE_COMMAND`, tool calls return structured `bridge_unavailable` responses instead of pretending to work.
 
-that is intentional. fake success would be poison here.
+that is intentional. fake success from the real plugin path would be poison here.
 
 ## protocol
 
@@ -71,6 +71,8 @@ python3 scripts/validate_protocol.py
 ## bridge plan
 
 transport: json-rpc over stdio.
+
+localhost/WebSocket are deferred: stdio avoids ports, firewall prompts, auth/listener lifecycle, and nondeterministic network cleanup while the bridge contract is still changing.
 
 plugin side:
 
