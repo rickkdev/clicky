@@ -39,7 +39,14 @@ def validate_plugin_yaml() -> None:
 
 
 def validate_python_syntax() -> None:
-    for path in [ROOT / "__init__.py", ROOT / "schemas.py", ROOT / "tools.py", ROOT / "bridge_client.py", ROOT / "permission_policy.py"]:
+    for path in [
+        ROOT / "__init__.py",
+        ROOT / "schemas.py",
+        ROOT / "tools.py",
+        ROOT / "bridge_client.py",
+        ROOT / "permission_policy.py",
+        ROOT / "safety_policy.py",
+    ]:
         try:
             ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         except SyntaxError as exc:
@@ -146,6 +153,8 @@ def validate_protocol_json() -> None:
         "actionProposalsResponse",
         "permissionTier",
         "permissionDecision",
+        "riskFlag",
+        "safetyDecision",
     ]:
         if name not in defs:
             fail(f"protocol/schema.json missing {name}")

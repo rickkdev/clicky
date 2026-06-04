@@ -145,4 +145,6 @@ Full demo notes and failure cases: `examples/demo_workflow.md`.
 - action proposal examples are inert protocol data only; default `actionMode` / active permission tier is `confirmBeforeAction`.
 - permission tiers are protocol/policy semantics only: `observe`, `point`, `confirmBeforeAction`, `scopedAutopilot`, `fullControl`.
 - changing permission tier requires an explicit user-facing setting or command; plugin requests cannot silently enable `fullControl`.
+- safety policy is a separate inert layer in `safety_policy.py`; it flags destructive actions, payments, purchases, sending messages/emails, credential entry, permission prompts, and low-confidence targets.
+- blocked safety decisions set `forwardToExecutor=false` and can append inert audit records, but they do not write logs or call an executor.
 - os control execution is still phase 2 and absent. no click/type/open-app/hotkey/focus execution in this package.

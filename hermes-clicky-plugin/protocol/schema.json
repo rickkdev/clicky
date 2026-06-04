@@ -750,6 +750,12 @@
           "items": {
             "$ref": "#/$defs/permissionDecision"
           }
+        },
+        "safetyDecisions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/safetyDecision"
+          }
         }
       },
       "additionalProperties": false
@@ -803,6 +809,70 @@
           "minLength": 1
         },
         "requiresExplicitUserSetting": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "riskFlag": {
+      "type": "string",
+      "enum": [
+        "destructive",
+        "payment",
+        "purchase",
+        "send_message",
+        "credential_entry",
+        "permission_prompt",
+        "low_confidence",
+        "blocked_risk"
+      ]
+    },
+    "safetyDecision": {
+      "type": "object",
+      "description": "inert safety policy decision for a proposed future action; never an execution result",
+      "required": [
+        "proposalId",
+        "decision",
+        "reason",
+        "riskFlags",
+        "forwardToExecutor"
+      ],
+      "properties": {
+        "proposalId": {
+          "type": "string"
+        },
+        "actionType": {
+          "type": "string",
+          "enum": [
+            "click",
+            "doubleClick",
+            "typeText",
+            "hotkey",
+            "openApplication",
+            "focusWindow",
+            "waitForScreenChange",
+            "stop"
+          ]
+        },
+        "decision": {
+          "type": "string",
+          "enum": [
+            "allow",
+            "requireConfirmation",
+            "block"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "riskFlags": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/riskFlag"
+          }
+        },
+        "forwardToExecutor": {
           "type": "boolean"
         }
       },

@@ -30,6 +30,9 @@ canonical schema:
 - active permission tier is reported by `getCapabilities`.
 - changing permission tier requires an explicit user-facing setting or command; a plugin request cannot silently enable `fullControl`.
 - permission-tier evaluation returns policy data (`allow`, `requireConfirmation`, `block`) only. it never executes desktop actions.
+- safety-policy evaluation is separate from permission tiers: tiers answer whether the selected trust level allows an action class; safety policy answers whether this specific proposal is safe.
+- safety decisions include `decision`, user-readable `reason`, `riskFlags`, and `forwardToExecutor`.
+- blocked safety decisions set `forwardToExecutor=false` and produce inert blocked audit records; no executor exists in this phase.
 
 ## methods
 
@@ -193,8 +196,21 @@ response rules:
 
 - `actionMode` defaults to `confirmBeforeAction`.
 - `permissionDecisions[]` can attach inert allow/requireConfirmation/block decisions to proposals.
+- `safetyDecisions[]` can attach inert allow/requireConfirmation/block decisions with risk flags to proposals.
 - blocked actions are represented as proposals with `riskLevel: blocked` and `status: blocked`; they still do not execute.
+- blocked safety decisions set `forwardToExecutor=false` so a future execution pipeline cannot receive them.
 - no native ui-framework fields, platform api payloads, provider payloads, or executor-specific fields are part of the proposal contract.
+
+safety risk flags:
+
+- `destructive`
+- `payment`
+- `purchase`
+- `send_message`
+- `credential_entry`
+- `permission_prompt`
+- `low_confidence`
+- `blocked_risk`
 
 ## examples
 

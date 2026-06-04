@@ -234,8 +234,8 @@
         "Add tests for each risk category."
       ],
       "priority": 13,
-      "passes": false,
-      "notes": "Keep the first policy conservative and explicit. Phase 2: do not start until plugin V1 observe/explain/point is working and demoed."
+      "passes": true,
+      "notes": "Completed in hermes-clicky-plugin/: added safety_policy.py as a deterministic inert safety layer for action proposals. It returns structured safety decisions with allow/requireConfirmation/block, user-readable reason, riskFlags, and forwardToExecutor. It flags destructive actions, payments, purchases, sending messages/emails, credential entry, permission prompts, low-confidence targets, and explicit blocked risk. Blocked actions set forwardToExecutor=false and can append inert blocked audit records; no executor, OS control, screen capture, native automation, tray launch, clicks, typing, hotkeys, app launch, or focus control was added. Added protocol schema safetyDecision/riskFlag shape and tests for each risk category."
     },
     {
       "id": "US-014",
