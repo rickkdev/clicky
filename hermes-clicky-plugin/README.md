@@ -25,7 +25,7 @@ v1 non-goals:
 - cloudflare worker routing
 - click/type/open-app os control
 - action execution
-- scoped autopilot
+- scoped autopilot engine
 - rewriting clicky as native hermes code
 
 ## install locally
@@ -66,6 +66,8 @@ examples:
 - `protocol/examples/action.low-risk-click.json`
 - `protocol/examples/action.high-risk-destructive.json`
 - `protocol/examples/action.blocked.json`
+- `protocol/examples/permission.observe-blocks-action.json`
+- `protocol/examples/permission.full-control-capability.json`
 
 validate:
 
@@ -140,5 +142,7 @@ Full demo notes and failure cases: `examples/demo_workflow.md`.
 - default `imageMode` is `metadataOnly`.
 - low-confidence pointing returns `low_confidence`, not made-up coordinates.
 - visual pointing results are not executable action proposals.
-- action proposal examples are inert protocol data only; default `actionMode` is `confirmBeforeAction`.
-- os control is phase 2. no click/type/open-app execution in v1.
+- action proposal examples are inert protocol data only; default `actionMode` / active permission tier is `confirmBeforeAction`.
+- permission tiers are protocol/policy semantics only: `observe`, `point`, `confirmBeforeAction`, `scopedAutopilot`, `fullControl`.
+- changing permission tier requires an explicit user-facing setting or command; plugin requests cannot silently enable `fullControl`.
+- os control execution is still phase 2 and absent. no click/type/open-app/hotkey/focus execution in this package.

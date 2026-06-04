@@ -1,4 +1,5 @@
 {
+  "protocolVersion": "clicky.hermes.v1",
   "ok": true,
   "status": "ready",
   "platform": "windows",
@@ -21,11 +22,10 @@
     },
     "osControl": {
       "enabled": false,
-      "reason": "phase_2_not_implemented"
+      "reason": "executor_not_implemented"
     }
   },
-  "protocolVersion": "clicky.hermes.v1",
-  "activePermissionTier": "confirmBeforeAction",
+  "activePermissionTier": "fullControl",
   "defaultPermissionTier": "confirmBeforeAction",
   "availablePermissionTiers": [
     "observe",

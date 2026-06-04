@@ -8,6 +8,7 @@ from typing import Any
 
 from . import macos_capabilities
 from .bridge_client import ClickyBridgeClient, ClickyBridgeError
+from .permission_policy import permission_capability_fields, resolve_active_permission_tier
 
 
 def _json(data: dict[str, Any]) -> str:
@@ -42,6 +43,7 @@ def _unsupported_platform(platform_name: str) -> dict[str, Any]:
             "overlay": {"enabled": False, "reason": "unsupported_platform"},
             "osControl": {"enabled": False, "reason": "phase_2_not_implemented"},
         },
+        **permission_capability_fields(),
         "error": {
             "code": "unsupported_platform",
             "message": "Clicky Hermes plugin V1 supports windows and macos only.",
@@ -77,10 +79,13 @@ def get_clicky_capabilities(args: dict, **kwargs) -> str:
 
     bridge_result = _bridge_or_error("clicky.getCapabilities", {"platform": platform_name})
     if bridge_result.get("ok") is not False:
+        bridge_result.update(permission_capability_fields(resolve_active_permission_tier()))
         return _json(bridge_result)
 
     if platform_name == "macos":
-        return _json(macos_capabilities.build_macos_capabilities())
+        result = macos_capabilities.build_macos_capabilities()
+        result.update(permission_capability_fields(resolve_active_permission_tier()))
+        return _json(result)
 
     # deterministic skeleton response until the native bridge exists
     return _json({
@@ -100,6 +105,7 @@ def get_clicky_capabilities(args: dict, **kwargs) -> str:
             "overlay": {"enabled": False, "reason": "native_bridge_unavailable"},
             "osControl": {"enabled": False, "reason": "phase_2_not_implemented"},
         },
+        **permission_capability_fields(resolve_active_permission_tier()),
         "bridge": bridge_result["error"],
     })
 

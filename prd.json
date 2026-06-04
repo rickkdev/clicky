@@ -217,8 +217,8 @@
         "Add tests that verify each tier allows and blocks the expected action classes."
       ],
       "priority": 12,
-      "passes": false,
-      "notes": "Default to confirmBeforeAction when action execution is introduced. Phase 2: do not start until plugin V1 observe/explain/point is working and demoed."
+      "passes": true,
+      "notes": "Completed in hermes-clicky-plugin/: added permission tier protocol/policy semantics for observe, point, confirmBeforeAction, scopedAutopilot, and fullControl. getCapabilities now reports active/default/available tiers and explicit tier-change requirements. Added inert permissionDecision shape and deterministic permission_policy.evaluate_permission_for_action; it returns allow/requireConfirmation/block data only and never executes OS control. fullControl can only come from explicit external/user configuration (CLICKY_PERMISSION_TIER), not a plugin request. Added tests covering each tier and action class plus protocol examples. No native executor, click/type/hotkey/open-app/focus control, tray launch, or autopilot engine was added."
     },
     {
       "id": "US-013",

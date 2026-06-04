@@ -1,0 +1,32 @@
+{
+  "protocolVersion": "clicky.hermes.v1",
+  "ok": true,
+  "status": "blocked",
+  "actionMode": "confirmBeforeAction",
+  "permissionTier": "observe",
+  "proposals": [
+    {
+      "id": "proposal-observe-click",
+      "actionType": "click",
+      "targetLabel": "continue button",
+      "coordinates": {
+        "x": 500,
+        "y": 420,
+        "screen": "display-1"
+      },
+      "confidence": 0.91,
+      "riskLevel": "low",
+      "requiresConfirmation": true,
+      "rationale": "clicking would be OS control, which observe tier forbids"
+    }
+  ],
+  "permissionDecisions": [
+    {
+      "decision": "block",
+      "permissionTier": "observe",
+      "actionType": "click",
+      "reason": "observe tier allows screen observation only"
+    }
+  ],
+  "summary": "observe tier can reason about the proposed click but cannot execute it"
+}

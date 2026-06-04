@@ -28,5 +28,14 @@
       "requiresConfirmation": true,
       "rationale": "The target is a visible navigation tab and the proposed click is non-destructive, but the default mode still requires user confirmation."
     }
+  ],
+  "permissionTier": "confirmBeforeAction",
+  "permissionDecisions": [
+    {
+      "decision": "requireConfirmation",
+      "permissionTier": "confirmBeforeAction",
+      "actionType": "click",
+      "reason": "confirmBeforeAction requires user confirmation before any OS action"
+    }
   ]
 }

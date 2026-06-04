@@ -110,7 +110,10 @@
         "ok",
         "status",
         "platform",
-        "capabilities"
+        "capabilities",
+        "activePermissionTier",
+        "availablePermissionTiers",
+        "permissionTierChange"
       ],
       "properties": {
         "ok": {
@@ -155,6 +158,27 @@
         },
         "protocolVersion": {
           "const": "clicky.hermes.v1"
+        },
+        "activePermissionTier": {
+          "$ref": "#/$defs/permissionTier"
+        },
+        "defaultPermissionTier": {
+          "$ref": "#/$defs/permissionTier"
+        },
+        "availablePermissionTiers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/permissionTier"
+          },
+          "minItems": 5
+        },
+        "permissionTierChange": {
+          "type": "string",
+          "const": "explicit_user_setting_or_command_required"
+        },
+        "fullControlPolicy": {
+          "type": "string",
+          "const": "external_user_configuration_only"
         }
       },
       "additionalProperties": true
@@ -700,7 +724,9 @@
         "actionMode": {
           "type": "string",
           "enum": [
-            "confirmBeforeAction"
+            "confirmBeforeAction",
+            "scopedAutopilot",
+            "fullControl"
           ],
           "default": "confirmBeforeAction"
         },
@@ -715,6 +741,69 @@
         },
         "error": {
           "$ref": "#/$defs/error"
+        },
+        "permissionTier": {
+          "$ref": "#/$defs/permissionTier"
+        },
+        "permissionDecisions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/permissionDecision"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "permissionTier": {
+      "type": "string",
+      "enum": [
+        "observe",
+        "point",
+        "confirmBeforeAction",
+        "scopedAutopilot",
+        "fullControl"
+      ]
+    },
+    "permissionDecision": {
+      "type": "object",
+      "description": "inert policy decision for a proposed future action; never an execution result",
+      "required": [
+        "decision",
+        "permissionTier",
+        "actionType",
+        "reason"
+      ],
+      "properties": {
+        "decision": {
+          "type": "string",
+          "enum": [
+            "allow",
+            "requireConfirmation",
+            "block"
+          ]
+        },
+        "permissionTier": {
+          "$ref": "#/$defs/permissionTier"
+        },
+        "actionType": {
+          "type": "string",
+          "enum": [
+            "click",
+            "doubleClick",
+            "typeText",
+            "hotkey",
+            "openApplication",
+            "focusWindow",
+            "waitForScreenChange",
+            "stop"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requiresExplicitUserSetting": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false

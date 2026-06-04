@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 PROTOCOL_VERSION = "clicky.hermes.v1"
+PERMISSION_TIERS = ["observe", "point", "confirmBeforeAction", "scopedAutopilot", "fullControl"]
 
 
 def protocol_error(code: str, message: str, *, retryable: bool = False, permission: str | None = None) -> dict[str, Any]:
@@ -49,6 +50,11 @@ def get_capabilities(params: dict[str, Any]) -> dict[str, Any]:
             "overlay": {"enabled": True},
             "osControl": {"enabled": False, "reason": "phase_2_not_implemented"},
         },
+        "activePermissionTier": "confirmBeforeAction",
+        "defaultPermissionTier": "confirmBeforeAction",
+        "availablePermissionTiers": PERMISSION_TIERS,
+        "permissionTierChange": "explicit_user_setting_or_command_required",
+        "fullControlPolicy": "external_user_configuration_only",
     }
 
 

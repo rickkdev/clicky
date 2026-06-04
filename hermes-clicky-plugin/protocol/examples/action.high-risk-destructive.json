@@ -28,5 +28,14 @@
       "requiresConfirmation": true,
       "rationale": "The visible control appears destructive and could permanently remove data, so it must require explicit confirmation before any future executor may run it."
     }
+  ],
+  "permissionTier": "confirmBeforeAction",
+  "permissionDecisions": [
+    {
+      "decision": "requireConfirmation",
+      "permissionTier": "confirmBeforeAction",
+      "actionType": "click",
+      "reason": "confirmBeforeAction requires user confirmation before any OS action"
+    }
   ]
 }

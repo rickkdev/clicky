@@ -26,7 +26,10 @@ canonical schema:
 - Windows real-capture smoke checks live in `windows/docs/hermes-bridge-observe-smoke.md`; normal CI should use fake capture-provider tests.
 - visual pointing results are guidance only; they are not executable action proposals.
 - action proposals are inert data structures only. no bridge or plugin code may click, type, press hotkeys, open apps, focus windows, or execute os control from this protocol.
-- default action mode is `confirmBeforeAction`.
+- default action mode / permission tier is `confirmBeforeAction`.
+- active permission tier is reported by `getCapabilities`.
+- changing permission tier requires an explicit user-facing setting or command; a plugin request cannot silently enable `fullControl`.
+- permission-tier evaluation returns policy data (`allow`, `requireConfirmation`, `block`) only. it never executes desktop actions.
 
 ## methods
 
@@ -56,7 +59,12 @@ response shape:
     "pointToTarget": { "enabled": true },
     "overlay": { "enabled": true },
     "osControl": { "enabled": false, "reason": "phase_2_not_implemented" }
-  }
+  },
+  "activePermissionTier": "confirmBeforeAction",
+  "defaultPermissionTier": "confirmBeforeAction",
+  "availablePermissionTiers": ["observe", "point", "confirmBeforeAction", "scopedAutopilot", "fullControl"],
+  "permissionTierChange": "explicit_user_setting_or_command_required",
+  "fullControlPolicy": "external_user_configuration_only"
 }
 ```
 
@@ -173,10 +181,18 @@ each proposal includes:
 - `requiresConfirmation`
 - `rationale`
 
+permission tiers:
+
+- `observe`: screen observation/explanation only; all OS action classes are blocked.
+- `point`: visual pointing/overlay guidance only; all OS action classes are blocked.
+- `confirmBeforeAction`: default; every non-blocked OS action requires explicit confirmation.
+- `scopedAutopilot`: represents a future bounded task mode; low-risk navigation/control classes may be allowed inside scope, while text/app/hotkey/risky actions require confirmation.
+- `fullControl`: represented for explicit user configuration only; it is never enabled by a plugin request and is not the default.
+
 response rules:
 
 - `actionMode` defaults to `confirmBeforeAction`.
-- all current proposal examples set `requiresConfirmation: true`.
+- `permissionDecisions[]` can attach inert allow/requireConfirmation/block decisions to proposals.
 - blocked actions are represented as proposals with `riskLevel: blocked` and `status: blocked`; they still do not execute.
 - no native ui-framework fields, platform api payloads, provider payloads, or executor-specific fields are part of the proposal contract.
 
@@ -190,6 +206,8 @@ response rules:
 - `examples/action.low-risk-click.json`
 - `examples/action.high-risk-destructive.json`
 - `examples/action.blocked.json`
+- `examples/permission.observe-blocks-action.json`
+- `examples/permission.full-control-capability.json`
 
 validate:
 

@@ -858,3 +858,35 @@ Branch: ralph/windows-port (continues from the completed Windows port — see ar
   - Keep action proposal protocol separate from point/overlay responses. Pointing tells the user where something is; proposals describe a possible future action and must remain inert until later permission, policy, confirmation, audit, and executor stories exist.
   - The protocol validation script intentionally uses a local dependency-free schema subset because this plugin does not currently vendor `jsonschema`. If schema complexity grows, either vendor a pinned validator or keep examples constrained to the supported subset.
 ---
+
+## 2026-06-04 - US-012
+- Added permission-tier protocol semantics for future OS control: `observe`, `point`, `confirmBeforeAction`, `scopedAutopilot`, and `fullControl`.
+- Added `hermes-clicky-plugin/permission_policy.py` with deterministic policy helpers: `resolve_active_permission_tier`, `permission_capability_fields`, and `evaluate_permission_for_action`. These return allow/block/requireConfirmation data only; they do not execute OS actions.
+- `get_clicky_capabilities` now reports `activePermissionTier`, `defaultPermissionTier`, `availablePermissionTiers`, `permissionTierChange`, and `fullControlPolicy` for bridge, macOS fallback, Windows bridge-unavailable, and unsupported-platform responses.
+- Extended `protocol/schema.json` with `permissionTier` and `permissionDecision`, added permission decisions to action proposal responses, and updated protocol examples/docs.
+- Added examples for observe-tier blocked action and explicit full-control capability reporting.
+- Added tests verifying fullControl cannot be silently enabled by plugin request, can only come from external/user config, every tier allows/blocks expected action classes, blocked risk remains blocked, and policy output is inert data only.
+- Validation passed:
+  - `python3 hermes-clicky-plugin/scripts/validate_protocol.py`
+  - `python3 -m unittest discover -s hermes-clicky-plugin/tests -q`
+- Files changed:
+  - NEW: `hermes-clicky-plugin/permission_policy.py`
+  - NEW: `hermes-clicky-plugin/tests/test_permission_tiers.py`
+  - NEW: `hermes-clicky-plugin/protocol/examples/permission.observe-blocks-action.json`
+  - NEW: `hermes-clicky-plugin/protocol/examples/permission.full-control-capability.json`
+  - MODIFIED: `hermes-clicky-plugin/tools.py`
+  - MODIFIED: `hermes-clicky-plugin/protocol/schema.json`
+  - MODIFIED: `hermes-clicky-plugin/protocol/README.md`
+  - MODIFIED: `hermes-clicky-plugin/README.md`
+  - MODIFIED: `hermes-clicky-plugin/protocol/examples/capabilities.windows.json`
+  - MODIFIED: `hermes-clicky-plugin/protocol/examples/action.low-risk-click.json`
+  - MODIFIED: `hermes-clicky-plugin/protocol/examples/action.high-risk-destructive.json`
+  - MODIFIED: `hermes-clicky-plugin/protocol/examples/action.blocked.json`
+  - MODIFIED: `hermes-clicky-plugin/scripts/fake_bridge.py`
+  - MODIFIED: `hermes-clicky-plugin/scripts/validate_protocol.py`
+  - MODIFIED: `prd.json`
+- **Learnings for future iterations:**
+  - Permission-tier work should stay Hermes-facing and protocol-only until executor stories begin; policy helpers should return structured data, never invoke bridge/native OS control.
+  - `fullControl` must be sourced from explicit external/user configuration (`CLICKY_PERMISSION_TIER` in this deterministic plugin seam), not from tool args or plugin requests.
+  - Keep `phase 2` wording in README because existing macOS capability tests assert that phrase.
+---
