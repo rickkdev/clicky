@@ -25,7 +25,7 @@ Branch: ralph/windows-port (continues from the completed Windows port — see ar
 - Runtime model switching happens via a tray `Model` submenu that calls `CompanionManager.SwapLlmClientAsync(provider, model)`.
 
 ### GLM / OpenAI-compat translation rules
-- z.ai OpenAI-compat endpoint: `https://api.z.ai/api/paas/v4/chat/completions`. Auth: `Authorization: Bearer <ZAI_API_KEY>`.
+- z.ai OpenAI-compat endpoint: `https://api.z.ai/api/paas/v4/chat/completions`. Auth: `Authorization: Bearer ***
 - Request translation (Anthropic → OpenAI chat-completions): `system` prompt → `messages[0] = {role:"system", content: systemPrompt}`; text content blocks → `{type:"text", text}`; image content blocks → `{type:"image_url", image_url:{url:"data:<media_type>;base64,<base64>"}}`; `max_tokens`/`temperature`/`stream:true` preserved.
 - Response translation (OpenAI SSE → string deltas): read `data: {...}` lines, extract `choices[0].delta.content`, yield as strings. `[DONE]` sentinel ends the stream. Skip malformed JSON lines, don't throw. Use an incremental UTF-8 decoder so multi-byte chars split across HTTP chunks don't corrupt.
 - System prompt (built in CompanionManager from US-010, includes `[POINT:x,y:label:screenN]` instructions) passes through unchanged — GLM-4.6V is prompted in the same English, it just speaks OpenAI over the wire.
@@ -38,7 +38,7 @@ Branch: ralph/windows-port (continues from the completed Windows port — see ar
 
 ### Test API endpoints (for SettingsWindow Test buttons, US-022)
 - **Anthropic**: `POST https://api.anthropic.com/v1/messages` with `{"model":"claude-haiku-4-5","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}`. ~$0.0001 per probe. Headers: `x-api-key`, `anthropic-version: 2023-06-01`.
-- **z.ai**: `POST https://api.z.ai/api/paas/v4/chat/completions` with `{"model":"glm-4.5v","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}`. Headers: `Authorization: Bearer <key>`.
+- **z.ai**: `POST https://api.z.ai/api/paas/v4/chat/completions` with `{"model":"glm-4.5v","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}`. Headers: `Authorization: Bearer ***
 - **AssemblyAI**: `GET https://streaming.assemblyai.com/v3/token?expires_in_seconds=60`. Headers: `Authorization: <rawKey>` (no Bearer). Returns a JWT on success, 401 on bad key.
 - **ElevenLabs**: `GET https://api.elevenlabs.io/v1/user/subscription`. Headers: `xi-api-key: <key>`. Returns subscription info on success, 401 on bad key. **This is the free auth check — do not run an actual TTS synthesis just to test the key.**
 
@@ -144,7 +144,7 @@ Branch: ralph/windows-port (continues from the completed Windows port — see ar
 ---
 
 ## 2026-04-11 - US-020
-- Created `Clicky.Api.ZaiDirectClient : ILlmClient` that POSTs to `https://api.z.ai/api/paas/v4/chat/completions` with `Authorization: Bearer <key>` and `Accept: text/event-stream`
+- Created `Clicky.Api.ZaiDirectClient : ILlmClient` that POSTs to `https://api.z.ai/api/paas/v4/chat/completions` with `Authorization: Bearer *** and `Accept: text/event-stream`
 - Constructor: `ZaiDirectClient(string apiKey, string model = "glm-4.6v", HttpClient? httpClient = null)`
 - Translates Anthropic-shape inputs into OpenAI chat-completions format: system prompt as `messages[0]`, history as alternating user/assistant, images as `image_url` with `data:` URI, labels as text blocks
 - Reuses `AnthropicDirectClient.DetectImageMediaType` for PNG/JPEG magic-byte sniffing (internal static, same assembly)
@@ -803,3 +803,31 @@ Branch: ralph/windows-port (continues from the completed Windows port — see ar
   - `python3 hermes-clicky-plugin/examples/demo_point.py`
   - `python3 hermes-clicky-plugin/examples/demo_explain.py`
 - Demo scripts correctly return structured `bridge_unavailable` until `CLICKY_BRIDGE_COMMAND` points at a native bridge.
+
+
+## 2026-06-04 17:28 CEST - US-011A
+- Wired the Windows Hermes bridge `pointToTarget(renderOverlay=true)` path to a real second-cursor overlay adapter instead of the standalone no-op renderer.
+- Added `WindowsPointOverlayRenderer`, which hosts the existing `Clicky.Overlay.OverlayWindowManager` on a Windows STA overlay thread and dispatches `FlyTo` without launching the tray app or executing any OS control.
+- Kept deterministic tests on fake seams: successful fake host render returns `overlayRendered=true`, unavailable renderer returns `false`, failed renderer preserves coordinates with `overlayRendered=false`, and `renderOverlay=false` remains a dry run.
+- Updated bridge capabilities to report overlay available and added a real visible second-cursor smoke checklist.
+- Validation:
+  - RED: `dotnet test windows/tests/Clicky.Bridge.Tests/Clicky.Bridge.Tests.csproj /p:EnableWindowsTargeting=true --filter WindowsPointOverlayRenderer -v minimal` failed with missing `IWindowsPointOverlayHost` before implementation.
+  - GREEN: `dotnet test windows/tests/Clicky.Bridge.Tests/Clicky.Bridge.Tests.csproj /p:EnableWindowsTargeting=true -v minimal` => 20 passed.
+  - `dotnet build windows/src/Clicky.Bridge/Clicky.Bridge.csproj /p:EnableWindowsTargeting=true -c Release -v minimal` => 0 warnings, 0 errors.
+  - `python3 hermes-clicky-plugin/scripts/validate_protocol.py` => ok.
+  - `python3 -m unittest discover -s hermes-clicky-plugin/tests -q` => 39 passed.
+- Files changed:
+  - NEW: `windows/src/Clicky.Bridge/WindowsPointOverlayRenderer.cs`
+  - MODIFIED: `windows/src/Clicky.Bridge/Program.cs`
+  - MODIFIED: `windows/src/Clicky.Bridge/Clicky.Bridge.csproj`
+  - MODIFIED: `windows/src/Clicky.Bridge/WindowsPointToTargetService.cs`
+  - MODIFIED: `windows/src/Clicky.Bridge/WindowsObserveService.cs`
+  - MODIFIED: `windows/tests/Clicky.Bridge.Tests/WindowsPointToTargetServiceTests.cs`
+  - NEW: `windows/docs/hermes-bridge-real-overlay-smoke.md`
+  - MODIFIED: `windows/docs/hermes-bridge-observe-smoke.md`
+  - MODIFIED: `prd.json`
+- **Learnings for future iterations:**
+  - Keep `Clicky.Bridge` free of a compile-time WPF/WindowsDesktop dependency for default test runs on macOS; use a Windows-only runtime overlay load seam so bridge tests still run with `/p:EnableWindowsTargeting=true` on non-Windows hosts.
+  - Real WPF overlay rendering must run on an STA thread with a dispatcher/message pump. A fake host seam is the right deterministic test boundary; real compositor visibility belongs in opt-in smoke docs.
+  - `CLICKY_BRIDGE_OVERLAY_LINGER_MS` controls how long the one-shot stdio bridge keeps the visible overlay alive before process exit.
+---

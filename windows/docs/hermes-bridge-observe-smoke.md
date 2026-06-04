@@ -55,7 +55,7 @@ expected:
 - response includes `normalized`, `physical`, `label`, `reasoning`, and `overlayRendered=false`.
 - low confidence / none intents return `low_confidence` or `no_target` and no coordinates.
 
-For real overlay demos, host `WindowsPointToTargetService` with an `IWindowsPointOverlayRenderer` implementation owned by the native runtime. The stdio bridge default renderer is intentionally no-op so Hermes never starts the tray app behind the user's back.
+For real overlay demos, use `renderOverlay=true`; the stdio bridge now owns a Windows-only real overlay adapter that loads `Clicky.Overlay.dll` and renders the second cursor without launching the tray app. See `windows/docs/hermes-bridge-real-overlay-smoke.md`.
 
 ## permission/unavailable behavior
 

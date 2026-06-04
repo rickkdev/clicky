@@ -1,3 +1,5 @@
+using System.IO;
+
 namespace Clicky.Bridge;
 
 public interface IClock

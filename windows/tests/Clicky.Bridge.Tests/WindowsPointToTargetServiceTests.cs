@@ -71,6 +71,58 @@ public sealed class WindowsPointToTargetServiceTests
     }
 
     [Fact]
+    public async Task PointToTarget_RenderOverlayTrueReturnsFalseWhenOverlayRendererFailsButKeepsCoordinates()
+    {
+        var renderer = new FailingOverlayRenderer();
+        var service = new WindowsPointToTargetService(
+            FakeCaptureProvider.WithCursorScreen(),
+            FakePointingTurnProvider.PointAt(100, 50, "button"),
+            renderer);
+
+        var response = await service.PointToTargetAsync(new PointToTargetRequest(Target: "button", RenderOverlay: true));
+
+        Assert.True(response.Ok);
+        Assert.Equal("pointed", response.Status);
+        Assert.NotNull(response.Normalized);
+        Assert.NotNull(response.Physical);
+        Assert.False(response.OverlayRendered);
+        Assert.True(renderer.WasCalled);
+    }
+
+    [Fact]
+    public async Task WindowsPointOverlayRenderer_UsesOverlayHostToRenderRealSecondCursor()
+    {
+        var host = new RecordingOverlayHost();
+        var renderer = new WindowsPointOverlayRenderer(() => host);
+
+        var rendered = await renderer.RenderPointAsync(
+            new Point(200, 100),
+            new Rectangle(0, 0, 1920, 1080),
+            "button",
+            CancellationToken.None);
+
+        Assert.True(rendered);
+        Assert.True(host.Started);
+        Assert.Equal(new Point(200, 100), host.LastPoint);
+        Assert.Equal(new Rectangle(0, 0, 1920, 1080), host.LastDisplayBounds);
+        Assert.Equal("button", host.LastLabel);
+    }
+
+    [Fact]
+    public async Task WindowsPointOverlayRenderer_ReturnsFalseWhenOverlayHostUnavailable()
+    {
+        var renderer = new WindowsPointOverlayRenderer(() => throw new InvalidOperationException("overlay unavailable"));
+
+        var rendered = await renderer.RenderPointAsync(
+            new Point(200, 100),
+            new Rectangle(0, 0, 1920, 1080),
+            "button",
+            CancellationToken.None);
+
+        Assert.False(rendered);
+    }
+
+    [Fact]
     public async Task PointToTarget_LowConfidenceReturnsNonActionableStatusWithoutCoordinates()
     {
         var renderer = new RecordingOverlayRenderer();
@@ -180,6 +232,37 @@ public sealed class WindowsPointToTargetServiceTests
             LastPoint = point;
             LastLabel = label;
             return Task.FromResult(true);
+        }
+    }
+
+    private sealed class FailingOverlayRenderer : IWindowsPointOverlayRenderer
+    {
+        public bool WasCalled { get; private set; }
+
+        public Task<bool> RenderPointAsync(Point point, Rectangle displayBounds, string label, CancellationToken cancellationToken)
+        {
+            WasCalled = true;
+            return Task.FromResult(false);
+        }
+    }
+
+    private sealed class RecordingOverlayHost : IWindowsPointOverlayHost
+    {
+        public bool Started { get; private set; }
+        public Point? LastPoint { get; private set; }
+        public Rectangle? LastDisplayBounds { get; private set; }
+        public string? LastLabel { get; private set; }
+
+        public void Start()
+        {
+            Started = true;
+        }
+
+        public void FlyTo(Point point, Rectangle displayBounds, string label)
+        {
+            LastPoint = point;
+            LastDisplayBounds = displayBounds;
+            LastLabel = label;
         }
     }
 }

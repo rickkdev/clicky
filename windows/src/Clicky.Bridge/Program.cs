@@ -70,7 +70,7 @@ static async Task<object> GetCapabilitiesAsync(JsonElement? parameters, JsonSeri
             observeScreen = new { enabled = available, reason = available ? null : "screen_capture_unavailable" },
             explainScreen = new { enabled = available && HasExplanationResponseConfig(), reason = available ? (HasExplanationResponseConfig() ? null : "missing_explanation_response_config") : "screen_capture_unavailable" },
             pointToTarget = new { enabled = available && HasPointingResponseConfig(), reason = available ? (HasPointingResponseConfig() ? null : "missing_pointing_response_config") : "screen_capture_unavailable" },
-            overlay = new { enabled = false, reason = "standalone_bridge_overlay_not_available" },
+            overlay = new { enabled = true, reason = (string?)null },
             osControl = new { enabled = false, reason = "phase_2_not_implemented" },
         }
     };
@@ -110,7 +110,7 @@ static async Task<object> PointToTargetAsync(JsonElement? parameters, JsonSerial
     var service = new WindowsPointToTargetService(
         new WindowsScreenCaptureProvider(),
         new EnvironmentPointingTurnProvider(),
-        new NoopPointOverlayRenderer());
+        new WindowsPointOverlayRenderer());
     return await service.PointToTargetAsync(request);
 }
 

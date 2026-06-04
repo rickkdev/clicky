@@ -169,6 +169,24 @@
       "notes": "Completed in hermes-clicky-plugin/docs/native-hermes-integration-recommendation.md with native integration recommendation covering architecture, reliability, latency evidence from the demo workflow, available Windows [TURN] diagnostics instrumentation, semantic pointing fixture accuracy evidence, native-vs-Hermes ownership, privacy/permission/model-cost/support risks, and a staged native integration roadmap. Added tests/test_native_integration_recommendation.py to keep US-010 evidence covered."
     },
     {
+      "id": "US-011A",
+      "epic": "Hermes Clicky Plugin",
+      "title": "Wire Windows Hermes bridge to real second-cursor overlay",
+      "description": "As Hermes Agent on Windows, I want pointToTarget(renderOverlay=true) to render the actual Clicky second cursor overlay, so Hermes guidance is visible without launching the tray app or taking OS control.",
+      "acceptanceCriteria": [
+        "Windows bridge uses the existing windows/src/Clicky.Overlay/ overlay implementation through a real overlay adapter instead of only NoopPointOverlayRenderer.",
+        "renderOverlay=true invokes the overlay renderer and returns overlayRendered=true when rendering succeeds.",
+        "If the overlay is failed or unavailable, point coordinates are still returned and overlayRendered=false.",
+        "renderOverlay=false does not invoke the overlay renderer.",
+        "Deterministic tests use fake seams and do not require the real desktop compositor.",
+        "Add a manual Windows smoke checklist for a visible real second cursor.",
+        "No tray auto-launch, no clicks, no typing, no app launching, and no OS control."
+      ],
+      "priority": 10.5,
+      "passes": true,
+      "notes": "Completed with windows/src/Clicky.Bridge/WindowsPointOverlayRenderer.cs. The stdio bridge now constructs WindowsPointOverlayRenderer for clicky.pointToTarget, which loads Clicky.Overlay.dll and dispatches OverlayWindowManager.FlyTo on an STA overlay thread. Deterministic tests cover successful render via fake host, unavailable overlay returning false, renderOverlay=true preserving coordinates on renderer failure, and renderOverlay=false dry-run behavior. Manual smoke doc: windows/docs/hermes-bridge-real-overlay-smoke.md."
+    },
+    {
       "id": "US-011",
       "epic": "Hermes OS Control",
       "title": "Define action proposal protocol",

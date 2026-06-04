@@ -87,11 +87,22 @@ public sealed class WindowsPointToTargetService
         var overlayRendered = false;
         if (request.RenderOverlay)
         {
-            overlayRendered = await _overlayRenderer.RenderPointAsync(
-                new Point(physical.X, physical.Y),
-                conversion.DisplayBounds,
-                directive.Label,
-                cancellationToken).ConfigureAwait(false);
+            try
+            {
+                overlayRendered = await _overlayRenderer.RenderPointAsync(
+                    new Point(physical.X, physical.Y),
+                    conversion.DisplayBounds,
+                    directive.Label,
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch
+            {
+                overlayRendered = false;
+            }
         }
 
         return new PointToTargetResponse(
