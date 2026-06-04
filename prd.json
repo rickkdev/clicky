@@ -82,8 +82,8 @@
         "The plugin can request renderOverlay=false for dry-run tests and renderOverlay=true for demos."
       ],
       "priority": 5,
-      "passes": false,
-      "notes": "Do not add new verifier, locator, or prompt layers. Follow windows/docs/pointing-redesign.md."
+      "passes": true,
+      "notes": "Completed with windows/src/Clicky.Bridge/: clicky.pointToTarget routes through WindowsPointToTargetService, captures screens via the existing Windows capture seam, and adapts redesigned PointingTurnResult/PointIntent into the Hermes protocol response. Added deterministic Clicky.Bridge.Tests coverage for pointed responses with normalized/physical coordinates, renderOverlay=false dry-run, renderOverlay=true renderer dispatch via seam, low-confidence/no-coordinate non-actionable behavior, invalid target, and capture permission_denied. No new verifier/locator/prompt layer was added. Standalone stdio bridge does not launch tray/overlay implicitly; native hosts can provide IWindowsPointOverlayRenderer for demos."
     },
     {
       "id": "US-006",

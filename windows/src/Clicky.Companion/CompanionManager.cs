@@ -972,7 +972,7 @@ public sealed class CompanionManager : IAsyncDisposable, IDisposable
                 $"displayBounds=({converted.DisplayBounds.X},{converted.DisplayBounds.Y},{converted.DisplayBounds.Width},{converted.DisplayBounds.Height}) " +
                 $"scale=({converted.ScaleX:F4},{converted.ScaleY:F4}) displayLocal=({converted.DisplayLocalPoint.X:F2},{converted.DisplayLocalPoint.Y:F2}) " +
                 $"screenPoint=({converted.ScreenPoint.X:F1},{converted.ScreenPoint.Y:F1})");
-            targets.Add(new OverlayPointTarget(converted.ScreenPoint, converted.DisplayBounds, directive.Label));
+            targets.Add(new OverlayPointTarget(new System.Windows.Point(converted.ScreenPoint.X, converted.ScreenPoint.Y), converted.DisplayBounds, directive.Label));
         }
 
         if (targets.Count == 0)
@@ -1347,7 +1347,7 @@ public sealed class CompanionManager : IAsyncDisposable, IDisposable
             // Step 5: fly to the point on the UI thread
             await _dispatcher.InvokeAsync(() =>
             {
-                _overlayManager.FlyTo(screenPoint, displayBounds, directive.Label);
+                _overlayManager.FlyTo(new System.Windows.Point(screenPoint.X, screenPoint.Y), displayBounds, directive.Label);
             });
             DebugLog.Write($"[TEST] flyto: dispatched screenPoint=({screenPoint.X:F1},{screenPoint.Y:F1}) bubble=\"{directive.Label}\"");
         }
@@ -1413,7 +1413,7 @@ public sealed class CompanionManager : IAsyncDisposable, IDisposable
 
             await _dispatcher.InvokeAsync(() =>
             {
-                _overlayManager.FlyTo(converted.ScreenPoint, converted.DisplayBounds, parsedDirective.Label);
+                _overlayManager.FlyTo(new System.Windows.Point(converted.ScreenPoint.X, converted.ScreenPoint.Y), converted.DisplayBounds, parsedDirective.Label);
             });
             DebugLog.Write($"[SMOKE] flyto: dispatched screenPoint=({converted.ScreenPoint.X:F1},{converted.ScreenPoint.Y:F1}) bubble=\"{parsedDirective.Label}\"");
         }

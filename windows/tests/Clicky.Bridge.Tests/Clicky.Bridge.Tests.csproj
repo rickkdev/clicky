@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Clicky.Bridge\Clicky.Bridge.csproj" />
+    <ProjectReference Include="..\..\src\Clicky.Pointing\Clicky.Pointing.csproj" />
   </ItemGroup>
 
 </Project>

@@ -122,6 +122,12 @@ successful response includes:
 - `reasoning`
 - `overlayRendered`
 
+Windows bridge notes:
+
+- point decisions are adapted from the redesigned `PointingTurnResult` / `PointIntent` shape.
+- `renderOverlay=false` is a dry run and must not render anything.
+- standalone stdio bridge does not launch the tray app for overlays; native runtime hosts can provide an overlay renderer for demos.
+
 non-actionable response statuses include:
 
 - `no_target`

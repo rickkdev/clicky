@@ -66,7 +66,7 @@ public static partial class PointTagParser
     /// A tuple of (screenPoint in desktop coords, displayBounds of the target screen),
     /// or <c>null</c> if the target screen cannot be found.
     /// </returns>
-    public static (System.Windows.Point ScreenPoint, Rectangle DisplayBounds)? ConvertToScreenCoordinates(
+    public static (PointCoordinates ScreenPoint, Rectangle DisplayBounds)? ConvertToScreenCoordinates(
         PointDirective directive,
         IReadOnlyList<CapturedScreen> screens)
     {
@@ -120,8 +120,8 @@ public static partial class PointTagParser
             ClampedY = clampedY,
             ScaleX = scaleX,
             ScaleY = scaleY,
-            DisplayLocalPoint = new System.Windows.Point(displayLocalX, displayLocalY),
-            ScreenPoint = new System.Windows.Point(globalX, globalY),
+            DisplayLocalPoint = new PointCoordinates(displayLocalX, displayLocalY),
+            ScreenPoint = new PointCoordinates(globalX, globalY),
             DisplayBounds = target.DisplayBounds,
         };
     }

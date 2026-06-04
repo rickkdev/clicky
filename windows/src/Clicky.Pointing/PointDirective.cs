@@ -42,6 +42,8 @@ public sealed record PointingParseResult
 /// <summary>
 /// Full screenshot-space to desktop-space conversion details for diagnostics.
 /// </summary>
+public sealed record PointCoordinates(double X, double Y);
+
 public sealed record PointConversionResult
 {
     /// <summary>The screen chosen for conversion.</summary>
@@ -60,10 +62,10 @@ public sealed record PointConversionResult
     public required double ScaleY { get; init; }
 
     /// <summary>Target point in display-local physical pixels.</summary>
-    public required System.Windows.Point DisplayLocalPoint { get; init; }
+    public required PointCoordinates DisplayLocalPoint { get; init; }
 
     /// <summary>Target point in global desktop physical pixels.</summary>
-    public required System.Windows.Point ScreenPoint { get; init; }
+    public required PointCoordinates ScreenPoint { get; init; }
 
     /// <summary>The physical monitor bounds used for the conversion.</summary>
     public required Rectangle DisplayBounds { get; init; }
