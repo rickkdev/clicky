@@ -1,0 +1,32 @@
+{
+  "protocolVersion": "clicky.hermes.v1",
+  "ok": true,
+  "status": "proposed",
+  "actionMode": "confirmBeforeAction",
+  "summary": "Propose clicking the visible Settings tab. This is inert data only; nothing has been clicked.",
+  "proposals": [
+    {
+      "id": "act_01_low_click",
+      "actionType": "click",
+      "targetLabel": "Settings tab",
+      "coordinates": {
+        "x": 2099,
+        "y": 202,
+        "screen": "display_1"
+      },
+      "normalized": {
+        "x": 0.82,
+        "y": 0.14
+      },
+      "nativeSelector": {
+        "kind": "semanticRole",
+        "value": "repository-settings-tab",
+        "screen": "display_1"
+      },
+      "confidence": 0.91,
+      "riskLevel": "low",
+      "requiresConfirmation": true,
+      "rationale": "The target is a visible navigation tab and the proposed click is non-destructive, but the default mode still requires user confirmation."
+    }
+  ]
+}

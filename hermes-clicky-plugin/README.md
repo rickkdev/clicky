@@ -24,6 +24,7 @@ v1 non-goals:
 - tts playback
 - cloudflare worker routing
 - click/type/open-app os control
+- action execution
 - scoped autopilot
 - rewriting clicky as native hermes code
 
@@ -62,6 +63,9 @@ examples:
 - `protocol/examples/explain.success.json`
 - `protocol/examples/point.success.json`
 - `protocol/examples/point.low-confidence.json`
+- `protocol/examples/action.low-risk-click.json`
+- `protocol/examples/action.high-risk-destructive.json`
+- `protocol/examples/action.blocked.json`
 
 validate:
 
@@ -135,4 +139,6 @@ Full demo notes and failure cases: `examples/demo_workflow.md`.
 - do not write screenshots to disk unless `imageMode=file` or debug mode is explicit.
 - default `imageMode` is `metadataOnly`.
 - low-confidence pointing returns `low_confidence`, not made-up coordinates.
+- visual pointing results are not executable action proposals.
+- action proposal examples are inert protocol data only; default `actionMode` is `confirmBeforeAction`.
 - os control is phase 2. no click/type/open-app execution in v1.

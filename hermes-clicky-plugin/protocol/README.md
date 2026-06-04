@@ -24,7 +24,9 @@ canonical schema:
 - image bytes or image file paths are only returned when requested by `imageMode`.
 - Windows `metadataOnly` returns display/image/cursor metadata and must not write screenshot files.
 - Windows real-capture smoke checks live in `windows/docs/hermes-bridge-observe-smoke.md`; normal CI should use fake capture-provider tests.
-- os control is not part of v1.
+- visual pointing results are guidance only; they are not executable action proposals.
+- action proposals are inert data structures only. no bridge or plugin code may click, type, press hotkeys, open apps, focus windows, or execute os control from this protocol.
+- default action mode is `confirmBeforeAction`.
 
 ## methods
 
@@ -146,6 +148,38 @@ non-actionable response statuses include:
 - `bridge_unavailable`
 - `error`
 
+### action proposals
+
+`actionProposalsResponse` is a semantic design contract for future desktop control. it is separate from `pointToTargetResponse`: pointing can render a visible pointer, while proposals describe possible future actions as inert data. defining a proposal never executes it.
+
+proposal action types:
+
+- `click`
+- `doubleClick`
+- `typeText`
+- `hotkey`
+- `openApplication`
+- `focusWindow`
+- `waitForScreenChange`
+- `stop`
+
+each proposal includes:
+
+- `targetLabel`
+- `coordinates` when a safe physical point is available
+- `nativeSelector` when a semantic selector is available
+- `confidence`
+- `riskLevel`: `low`, `medium`, `high`, or `blocked`
+- `requiresConfirmation`
+- `rationale`
+
+response rules:
+
+- `actionMode` defaults to `confirmBeforeAction`.
+- all current proposal examples set `requiresConfirmation: true`.
+- blocked actions are represented as proposals with `riskLevel: blocked` and `status: blocked`; they still do not execute.
+- no native ui-framework fields, platform api payloads, provider payloads, or executor-specific fields are part of the proposal contract.
+
 ## examples
 
 - `examples/capabilities.windows.json`
@@ -153,6 +187,9 @@ non-actionable response statuses include:
 - `examples/explain.success.json`
 - `examples/point.success.json`
 - `examples/point.low-confidence.json`
+- `examples/action.low-risk-click.json`
+- `examples/action.high-risk-destructive.json`
+- `examples/action.blocked.json`
 
 validate:
 

@@ -200,8 +200,8 @@
         "Validate all examples with the protocol schema check."
       ],
       "priority": 11,
-      "passes": false,
-      "notes": "Phase 2 only. This story should not execute any real OS action and should not start before V1 observe/explain/point is stable."
+      "passes": true,
+      "notes": "Completed in hermes-clicky-plugin/: added inert action proposal protocol types in protocol/schema.json for click, doubleClick, typeText, hotkey, openApplication, focusWindow, waitForScreenChange, and stop. Proposals require targetLabel, optional coordinates/nativeSelector, confidence, riskLevel, requiresConfirmation, and rationale; actionProposalsResponse is separate from pointToTargetResponse and defaults actionMode to confirmBeforeAction. Added low-risk click, high-risk destructive, and blocked action examples plus schema validation coverage. No OS action execution, tray launch, clicks, typing, hotkeys, app launching, focus/window control, or native executor code was added."
     },
     {
       "id": "US-012",

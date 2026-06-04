@@ -54,6 +54,61 @@ class ProtocolContractTests(unittest.TestCase):
         for name, data in examples.items():
             self.assertEqual(data.get("protocolVersion"), "clicky.hermes.v1", f"{name} missing protocolVersion")
 
+    def test_action_proposal_protocol_defines_all_action_types_and_safety_fields(self):
+        self.assertIn("actionProposal", DEFS)
+        proposal = DEFS["actionProposal"]
+        action_type = proposal["properties"]["actionType"]
+        self.assertEqual(
+            set(action_type["enum"]),
+            {
+                "click",
+                "doubleClick",
+                "typeText",
+                "hotkey",
+                "openApplication",
+                "focusWindow",
+                "waitForScreenChange",
+                "stop",
+            },
+        )
+        for field in ["targetLabel", "confidence", "riskLevel", "requiresConfirmation", "rationale"]:
+            self.assertIn(field, proposal["required"], f"actionProposal must require {field}")
+        self.assertIn("coordinates", proposal["properties"])
+        self.assertIn("nativeSelector", proposal["properties"])
+
+    def test_action_proposal_response_is_separate_from_visual_pointing_and_defaults_to_confirmation(self):
+        self.assertIn("actionProposalsResponse", DEFS)
+        response = DEFS["actionProposalsResponse"]
+        self.assertIn("actionMode", response["required"])
+        self.assertEqual(response["properties"]["actionMode"].get("default"), "confirmBeforeAction")
+        self.assertIn("confirmBeforeAction", response["properties"]["actionMode"]["enum"])
+        self.assertIn("proposals", response["required"])
+        self.assertNotIn("overlayRendered", response["properties"], "action proposals must not masquerade as visual pointing results")
+        self.assertNotIn("actionMode", DEFS["pointToTargetResponse"]["properties"], "pointing results must stay visual, not executable")
+
+    def test_action_proposal_examples_cover_low_risk_high_risk_and_blocked_cases(self):
+        examples = {p.name: json.loads(p.read_text(encoding="utf-8")) for p in (ROOT / "protocol" / "examples").glob("*.json")}
+        for required in [
+            "action.low-risk-click.json",
+            "action.high-risk-destructive.json",
+            "action.blocked.json",
+        ]:
+            self.assertIn(required, examples)
+
+        low = examples["action.low-risk-click.json"]
+        self.assertEqual(low["actionMode"], "confirmBeforeAction")
+        self.assertEqual(low["proposals"][0]["actionType"], "click")
+        self.assertEqual(low["proposals"][0]["riskLevel"], "low")
+
+        high = examples["action.high-risk-destructive.json"]
+        self.assertEqual(high["proposals"][0]["riskLevel"], "high")
+        self.assertTrue(high["proposals"][0]["requiresConfirmation"])
+
+        blocked = examples["action.blocked.json"]
+        self.assertEqual(blocked["status"], "blocked")
+        self.assertEqual(blocked["proposals"][0]["riskLevel"], "blocked")
+        self.assertTrue(blocked["proposals"][0]["requiresConfirmation"])
+
     def test_protocol_does_not_leak_native_or_provider_internals(self):
         doc_path = ROOT / "protocol" / "README.md"
         doc_text = doc_path.read_text(encoding="utf-8") if doc_path.exists() else ""

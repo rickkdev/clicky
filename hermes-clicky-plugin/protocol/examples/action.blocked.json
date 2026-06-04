@@ -1,0 +1,25 @@
+{
+  "protocolVersion": "clicky.hermes.v1",
+  "ok": false,
+  "status": "blocked",
+  "actionMode": "confirmBeforeAction",
+  "summary": "Blocked proposal for entering sensitive text into a password field. This is inert data only; nothing has been typed.",
+  "proposals": [
+    {
+      "id": "act_03_type_password",
+      "actionType": "typeText",
+      "targetLabel": "Password field",
+      "nativeSelector": {
+        "kind": "semanticRole",
+        "value": "password-field",
+        "screen": "display_1"
+      },
+      "confidence": 0.94,
+      "riskLevel": "blocked",
+      "requiresConfirmation": true,
+      "rationale": "Typing credentials or secret material is blocked at the proposal layer until a later permission and policy story defines safe handling.",
+      "inputPreview": "[redacted]",
+      "blockedReason": "credential_entry_not_allowed"
+    }
+  ]
+}

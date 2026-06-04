@@ -1,0 +1,32 @@
+{
+  "protocolVersion": "clicky.hermes.v1",
+  "ok": true,
+  "status": "proposed",
+  "actionMode": "confirmBeforeAction",
+  "summary": "Propose clicking a destructive delete control. This is inert data only; nothing has been clicked.",
+  "proposals": [
+    {
+      "id": "act_02_delete_project",
+      "actionType": "click",
+      "targetLabel": "Delete project button",
+      "coordinates": {
+        "x": 1840,
+        "y": 1180,
+        "screen": "display_1"
+      },
+      "normalized": {
+        "x": 0.72,
+        "y": 0.82
+      },
+      "nativeSelector": {
+        "kind": "accessibilityLabel",
+        "value": "Delete project",
+        "screen": "display_1"
+      },
+      "confidence": 0.88,
+      "riskLevel": "high",
+      "requiresConfirmation": true,
+      "rationale": "The visible control appears destructive and could permanently remove data, so it must require explicit confirmation before any future executor may run it."
+    }
+  ]
+}

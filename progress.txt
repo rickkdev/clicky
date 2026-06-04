@@ -831,3 +831,30 @@ Branch: ralph/windows-port (continues from the completed Windows port — see ar
   - Real WPF overlay rendering must run on an STA thread with a dispatcher/message pump. A fake host seam is the right deterministic test boundary; real compositor visibility belongs in opt-in smoke docs.
   - `CLICKY_BRIDGE_OVERLAY_LINGER_MS` controls how long the one-shot stdio bridge keeps the visible overlay alive before process exit.
 ---
+
+## 2026-06-04 17:43 CEST - US-011
+- Defined the Hermes/Clicky action proposal protocol as inert semantic data only. No action execution, OS control, tray auto-launch, clicks, typing, hotkeys, app launching, or focus/window control was added.
+- Added `actionProposal`, `nativeSelector`, and `actionProposalsResponse` schema definitions under `hermes-clicky-plugin/protocol/schema.json`. Supported proposal types: `click`, `doubleClick`, `typeText`, `hotkey`, `openApplication`, `focusWindow`, `waitForScreenChange`, and `stop`.
+- Kept visual pointing separate from future executable proposals: `pointToTargetResponse` remains overlay/pointing-only, while `actionProposalsResponse` carries `actionMode: confirmBeforeAction` and proposals.
+- Added protocol examples for a low-risk click, a high-risk destructive action, and a blocked credential-entry action. All examples are explicit that they are inert data only.
+- Strengthened `scripts/validate_protocol.py` with a small local schema checker so every protocol example is validated against `protocol/schema.json` without adding a dependency.
+- Updated plugin/protocol docs to describe proposal safety fields, default confirm-before-action behavior, blocked proposals, and the non-execution boundary.
+- Validation:
+  - RED: `python3 -m unittest hermes-clicky-plugin/tests/test_protocol_contract.py -v` failed on missing `actionProposal`, `actionProposalsResponse`, and action examples before implementation.
+  - GREEN: `python3 -m unittest hermes-clicky-plugin/tests/test_protocol_contract.py -v` => 9 passed.
+  - `python3 hermes-clicky-plugin/scripts/validate_protocol.py` => ok.
+  - `python3 -m unittest discover -s hermes-clicky-plugin/tests -q` => 42 passed.
+- Files changed:
+  - MODIFIED: `hermes-clicky-plugin/protocol/schema.json`
+  - MODIFIED: `hermes-clicky-plugin/protocol/README.md`
+  - MODIFIED: `hermes-clicky-plugin/README.md`
+  - MODIFIED: `hermes-clicky-plugin/scripts/validate_protocol.py`
+  - MODIFIED: `hermes-clicky-plugin/tests/test_protocol_contract.py`
+  - NEW: `hermes-clicky-plugin/protocol/examples/action.low-risk-click.json`
+  - NEW: `hermes-clicky-plugin/protocol/examples/action.high-risk-destructive.json`
+  - NEW: `hermes-clicky-plugin/protocol/examples/action.blocked.json`
+  - MODIFIED: `prd.json`
+- **Learnings for future iterations:**
+  - Keep action proposal protocol separate from point/overlay responses. Pointing tells the user where something is; proposals describe a possible future action and must remain inert until later permission, policy, confirmation, audit, and executor stories exist.
+  - The protocol validation script intentionally uses a local dependency-free schema subset because this plugin does not currently vendor `jsonschema`. If schema complexity grows, either vendor a pinned validator or keep examples constrained to the supported subset.
+---
