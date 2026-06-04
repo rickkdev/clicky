@@ -148,8 +148,8 @@
         "Document at least three known failure cases and the user-facing behavior for each."
       ],
       "priority": 9,
-      "passes": false,
-      "notes": "The sharp v1 demo is observe/explain/point. Do not demo OS control yet."
+      "passes": true,
+      "notes": "Completed in hermes-clicky-plugin/examples/: demo_workflow.py runs the V1 product path where user asks where to click, Hermes/bridge observes screen context, calls pointToTarget with renderOverlay=true, then calls explainScreen and returns a concise Hermes response. The script defaults to deterministic fake bridge for CI-safe demos, supports Windows first via bridge command plus deterministic CLICKY_BRIDGE_POINTING_RESPONSE/CLICKY_BRIDGE_EXPLANATION_RESPONSE, and includes macOS bridge example now that US-008 exists. Demo output records bridgeStartupMs, screenCaptureMs, modelResponseMs, overlayRenderMs, and totalMs. examples/demo_workflow.md documents run commands plus failure cases for bridge_unavailable, permission_denied/screen_capture, low_confidence, and overlay unavailable. No OS control is demoed."
     },
     {
       "id": "US-010",

@@ -113,7 +113,21 @@ Enable permissions manually in System Settings:
 2. Privacy & Security → Accessibility → allow Clicky / the future bridge host.
 3. restart the host process after changing permissions; macOS TCC often requires restart.
 
-Until the macOS bridge is wired, granted permissions still return explicit `macos_*_not_wired` reasons for observe/explain/point/overlay.
+For the standalone macOS bridge, granted permissions still require deterministic explanation/point env seams until the native model host is wired.
+
+## demo workflow
+
+Run the V1 point/explain product demo:
+
+```bash
+python3 hermes-clicky-plugin/examples/demo_workflow.py \
+  --bridge-command "python3 hermes-clicky-plugin/scripts/fake_bridge.py" \
+  --platform windows \
+  --target "settings" \
+  --task "show me where to configure the repository"
+```
+
+Full demo notes and failure cases: `examples/demo_workflow.md`.
 
 ## design rules
 
