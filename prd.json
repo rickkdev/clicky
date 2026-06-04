@@ -1,7 +1,7 @@
 {
   "project": "Clicky for Hermes Agent",
   "branchName": "ralph/hermes-clicky-plugin",
-  "description": "Port Clicky's screen understanding, explanation, and pointing capabilities into a Hermes Agent plugin first, then extend the same platform into permissioned operating-system control. The first epic ships a narrow plugin contract and local bridge so Hermes can observe, explain, and point on Windows and macOS without owning the native Clicky runtime. The second epic adds action proposals, safety policy, native action executors, audit logs, and post-action verification so Hermes can click, type, open apps, and complete scoped desktop tasks with explicit user control.",
+  "description": "Convert Clicky into a Hermes Agent plugin without rewriting the native apps. The repo remains the working home for the conversion, but all Hermes-facing code starts in a new top-level hermes-clicky-plugin/ folder. That folder owns the plugin manifest, protocol schemas, bridge client, docs, demos, and tests. The existing windows/ and mac/ trees stay as native runtime backends behind a narrow local JSON-RPC bridge. V1 ships observe, explain, and point only: Hermes can ask what is on screen, ask where to click, and let Clicky render a pointer/annotation. Speech, TTS, and OS control are explicitly out of the first conversion milestone. Once observe/point are reliable, the same protocol can grow into permissioned desktop control with action proposals, safety policy, audit logs, and post-action verification.",
   "userStories": [
     {
       "id": "US-001",
@@ -18,41 +18,40 @@
       ],
       "priority": 1,
       "passes": false,
-      "notes": "Keep this story contract-only. Do not build the runtime bridge yet."
+      "notes": "Contract-only. Define semantic Hermes-facing types before touching native runtime code. Use examples and schema validation as the guardrail."
     },
     {
       "id": "US-002",
       "epic": "Hermes Clicky Plugin",
-      "title": "Create Hermes plugin manifest and package skeleton",
-      "description": "As a Hermes user, I want Clicky to appear as an installable Hermes plugin, so I can enable the feature without manually wiring native code.",
+      "title": "Create hermes-clicky-plugin folder, manifest, and package skeleton",
+      "description": "As a Hermes user, I want Clicky to appear as an installable Hermes plugin from a clean repo folder, so the Hermes-facing package is separated from native runtime internals.",
       "acceptanceCriteria": [
-        "Add a hermes-clicky-plugin package or directory with a plugin manifest, README, and minimal entrypoint.",
-        "The manifest declares observe, explain, point, overlay, and capability-check tools.",
+        "Create a new top-level hermes-clicky-plugin/ directory; all Hermes plugin code, protocol files, examples, validation scripts, and demo scripts live under this directory.",
+        "Add hermes-clicky-plugin/plugin.yaml, README.md, __init__.py, schemas.py, tools.py, bridge_client.py, protocol/schema.json, protocol/examples/, scripts/validate_protocol.py, and examples/.",
+        "The plugin registers get_clicky_capabilities, observe_clicky_screen, explain_clicky_screen, and point_clicky_target tools through the Hermes plugin register(ctx) API.",
         "The plugin declares Windows and macOS support separately and reports unsupported platforms clearly.",
-        "The package can be installed or loaded in a local Hermes development environment using documented commands.",
-        "The initial entrypoint returns a deterministic getCapabilities response without launching the native runtime.",
-        "Add a smoke test or script that verifies the manifest and entrypoint load."
+        "The initial handlers return deterministic bridge_unavailable or capability responses without launching native runtime code implicitly.",
+        "Add a validation script that checks plugin.yaml, protocol schema JSON, and all protocol examples."
       ],
       "priority": 2,
       "passes": false,
-      "notes": "The skeleton should be small and easy to throw away if Hermes plugin packaging changes."
+      "notes": "This folder is the plugin boundary. It should be installable into ~/.hermes/plugins/hermes-clicky-plugin without copying random repo-root files."
     },
     {
       "id": "US-003",
       "epic": "Hermes Clicky Plugin",
-      "title": "Build local bridge process for Clicky runtime",
-      "description": "As Hermes Agent, I want to communicate with Clicky through a narrow local bridge, so the plugin can call native Windows and macOS runtimes without embedding them.",
+      "title": "Build JSON-RPC stdio bridge process for Clicky runtime",
+      "description": "As Hermes Agent, I want to communicate with Clicky through a narrow local JSON-RPC bridge, so the plugin can call native runtimes without embedding WPF or Swift internals.",
       "acceptanceCriteria": [
-        "Choose and document the first bridge transport, favoring JSON-RPC over stdio or localhost WebSocket.",
-        "Add request routing for getCapabilities, observeScreen, explainScreen, and pointToTarget.",
-        "The bridge starts, receives a health request, returns a structured response, and shuts down cleanly.",
-        "Bridge errors are returned as structured protocol errors with code, message, and retryable fields.",
-        "No API keys or provider secrets are logged by the bridge.",
-        "Add automated tests for successful requests, malformed requests, unknown methods, and runtime-unavailable errors."
+        "Use JSON-RPC over stdio as the first bridge transport and document why localhost/WebSocket is deferred.",
+        "Add bridge request routing for getCapabilities, observeScreen, explainScreen, and pointToTarget.",
+        "The bridge starts, handles a health request, returns a structured response, and shuts down cleanly.",
+        "Bridge errors are returned as structured protocol errors with code, message, retryable, and permission fields where relevant.",
+        "The Hermes plugin talks to the bridge only through hermes-clicky-plugin/bridge_client.py; no ad hoc subprocess calls in tool handlers."
       ],
       "priority": 3,
       "passes": false,
-      "notes": "Prefer a debuggable local process boundary over direct library embedding for the first plugin release."
+      "notes": "Prefer a debuggable local process boundary over direct library embedding. Windows bridge host should live under windows/src/Clicky.Bridge/ when implemented."
     },
     {
       "id": "US-004",
@@ -61,15 +60,14 @@
       "description": "As Hermes Agent on Windows, I want to request a current screen observation, so I can reason about what the user is seeing.",
       "acceptanceCriteria": [
         "Wire the bridge observeScreen method to the existing Windows capture implementation.",
-        "The response includes display bounds, image dimensions, coordinate scale metadata, and a screen identifier.",
+        "The response includes display bounds, image dimensions, coordinate scale metadata, screen identifiers, and cursor-screen metadata.",
+        "Support imageMode=metadataOnly|file|base64; default to metadataOnly unless Hermes explicitly requests image output.",
         "The implementation respects existing Windows capture permission behavior and returns a clear permission error when capture is unavailable.",
-        "The bridge does not write screenshots to disk unless an explicit debug flag is enabled.",
-        "Add deterministic tests using fake capture seams.",
-        "Run the existing Windows capture tests and document any tests that cannot run on the current host."
+        "The bridge does not write screenshots to disk unless imageMode=file or an explicit debug flag is enabled."
       ],
       "priority": 4,
       "passes": false,
-      "notes": "Follow the existing Windows fake provider/capture seam pattern; keep compositor-dependent validation out of normal CI."
+      "notes": "Follow existing Windows fake provider/capture seams. Keep compositor-dependent validation out of normal CI."
     },
     {
       "id": "US-005",
@@ -79,10 +77,9 @@
       "acceptanceCriteria": [
         "Wire pointToTarget to the redesigned Windows pointing path behind useRedesignedPointingProtocol.",
         "Use PointingTurnResult and PointIntent as the single source of point decisions in this path.",
-        "The bridge response includes target coordinates, confidence, label, and whether an overlay was rendered.",
-        "Low-confidence or missing-target decisions return a non-actionable result instead of fabricating a point.",
-        "Run SemanticPointingEvaluationTests before and after the change.",
-        "Add at least one bridge-level test that verifies a fake pointing result is translated into the Hermes protocol."
+        "The bridge response includes status, target coordinates, normalized coordinates, confidence, label, reasoning summary, and whether an overlay was rendered.",
+        "Low-confidence or missing-target decisions return non-actionable status values instead of fabricating a point.",
+        "The plugin can request renderOverlay=false for dry-run tests and renderOverlay=true for demos."
       ],
       "priority": 5,
       "passes": false,
@@ -95,15 +92,14 @@
       "description": "As a Hermes user, I want Clicky to explain visible dialogs, pages, and controls without pointing, so I can understand what is on screen.",
       "acceptanceCriteria": [
         "Add an explainScreen method that accepts user task text and optional screen observation references.",
-        "The method can run without rendering an overlay.",
+        "The method can run without rendering an overlay and without speech/TTS.",
         "The response includes concise explanation text and optional referenced regions when the model identifies them.",
         "The implementation reuses existing Clicky model orchestration where practical.",
-        "Add fake LLM tests for explanation-only success, provider failure, and cancellation.",
-        "Manual smoke test: ask Hermes to explain a visible dialog and verify no pointer overlay appears unless requested."
+        "The plugin does not expose provider-specific model payloads to Hermes."
       ],
       "priority": 6,
       "passes": false,
-      "notes": "This is the plugin's lower-risk assistive mode and should not depend on OS control work."
+      "notes": "Lower-risk assistive mode. Keep voice out of V1."
     },
     {
       "id": "US-007",
@@ -120,7 +116,7 @@
       ],
       "priority": 7,
       "passes": false,
-      "notes": "Start with truthful capability reporting before wiring every macOS operation."
+      "notes": "Start with truthful capability reporting before wiring every macOS operation. macOS comes after Windows proof unless a demo requirement forces it earlier."
     },
     {
       "id": "US-008",
@@ -137,7 +133,7 @@
       ],
       "priority": 8,
       "passes": false,
-      "notes": "Keep Windows and macOS behind the same Hermes contract even if their internals differ."
+      "notes": "Keep Windows and macOS behind the same Hermes contract even if internals differ. Do not block Windows V1 on full macOS parity."
     },
     {
       "id": "US-009",
@@ -145,16 +141,15 @@
       "title": "Add plugin demo workflow",
       "description": "As a product reviewer, I want a short Hermes demo that shows Clicky guiding a user on screen, so the plugin value is obvious before native integration.",
       "acceptanceCriteria": [
-        "Create a demo script for the flow: user asks where to click, Hermes calls pointToTarget, Clicky renders the pointer, Hermes responds with the target explanation.",
-        "Include one Windows demo path and one macOS demo path or clearly document which platform is supported first.",
+        "Create a demo script for: user asks where to click, Hermes calls pointToTarget, Clicky renders the pointer, Hermes responds with the target explanation.",
+        "Use hermes-clicky-plugin/examples/ for the demo assets/scripts.",
+        "Include one Windows demo path first; add macOS only if capability adapter is ready.",
         "Capture timing for bridge startup, screen capture, model response, and overlay render.",
-        "Document at least three known failure cases and the user-facing behavior for each.",
-        "Add screenshots or a short recording artifact if the repo convention supports checked-in demo media.",
-        "Update progress.txt with demo results."
+        "Document at least three known failure cases and the user-facing behavior for each."
       ],
       "priority": 9,
       "passes": false,
-      "notes": "This story prepares evidence for later native Hermes integration."
+      "notes": "The sharp v1 demo is observe/explain/point. Do not demo OS control yet."
     },
     {
       "id": "US-010",
@@ -171,7 +166,7 @@
       ],
       "priority": 10,
       "passes": false,
-      "notes": "This is a product and architecture deliverable, not an implementation rewrite."
+      "notes": "Architecture/product deliverable. Decide later whether to split repos or make Clicky native Hermes functionality based on plugin evidence."
     },
     {
       "id": "US-011",
@@ -188,7 +183,7 @@
       ],
       "priority": 11,
       "passes": false,
-      "notes": "This story should not execute any real OS action."
+      "notes": "Phase 2 only. This story should not execute any real OS action and should not start before V1 observe/explain/point is stable."
     },
     {
       "id": "US-012",
@@ -205,7 +200,7 @@
       ],
       "priority": 12,
       "passes": false,
-      "notes": "Default to confirmBeforeAction when action execution is introduced."
+      "notes": "Default to confirmBeforeAction when action execution is introduced. Phase 2: do not start until plugin V1 observe/explain/point is working and demoed."
     },
     {
       "id": "US-013",
@@ -222,7 +217,7 @@
       ],
       "priority": 13,
       "passes": false,
-      "notes": "Keep the first policy conservative and explicit."
+      "notes": "Keep the first policy conservative and explicit. Phase 2: do not start until plugin V1 observe/explain/point is working and demoed."
     },
     {
       "id": "US-014",
@@ -239,7 +234,7 @@
       ],
       "priority": 14,
       "passes": false,
-      "notes": "If Hermes owns final UI, keep this story focused on the plugin-side request and state model."
+      "notes": "If Hermes owns final UI, keep this story focused on the plugin-side request and state model. Phase 2: do not start until plugin V1 observe/explain/point is working and demoed."
     },
     {
       "id": "US-015",
@@ -256,7 +251,7 @@
       ],
       "priority": 15,
       "passes": false,
-      "notes": "Keep compositor and real desktop validation in manual smoke fixtures, not default CI."
+      "notes": "Keep compositor and real desktop validation in manual smoke fixtures, not default CI. Phase 2: do not start until plugin V1 observe/explain/point is working and demoed."
     },
     {
       "id": "US-016",
@@ -273,7 +268,7 @@
       ],
       "priority": 16,
       "passes": false,
-      "notes": "Coordinate clicks are acceptable as fallback, but prefer semantic/native automation when available."
+      "notes": "Coordinate clicks are acceptable as fallback, but prefer semantic/native automation when available. Phase 2: do not start until plugin V1 observe/explain/point is working and demoed."
     },
     {
       "id": "US-017",
@@ -290,7 +285,7 @@
       ],
       "priority": 17,
       "passes": false,
-      "notes": "This will be essential evidence when debugging automation failures."
+      "notes": "This will be essential evidence when debugging automation failures. Phase 2: do not start until plugin V1 observe/explain/point is working and demoed."
     },
     {
       "id": "US-018",
@@ -307,7 +302,7 @@
       ],
       "priority": 18,
       "passes": false,
-      "notes": "This turns OS control into a loop instead of blind input playback."
+      "notes": "This turns OS control into a loop instead of blind input playback. Phase 2: do not start until plugin V1 observe/explain/point is working and demoed."
     },
     {
       "id": "US-019",
@@ -324,7 +319,7 @@
       ],
       "priority": 19,
       "passes": false,
-      "notes": "Do not add full-control behavior before scoped autopilot is reliable."
+      "notes": "Do not add full-control behavior before scoped autopilot is reliable. Phase 2: do not start until plugin V1 observe/explain/point is working and demoed."
     },
     {
       "id": "US-020",
@@ -341,33 +336,91 @@
       ],
       "priority": 20,
       "passes": false,
-      "notes": "Keep normal CI deterministic. Real compositor and desktop automation checks should be explicit opt-in fixtures."
+      "notes": "Keep normal CI deterministic. Real compositor and desktop automation checks should be explicit opt-in fixtures. Phase 2: do not start until plugin V1 observe/explain/point is working and demoed."
     }
   ],
   "repoStrategy": {
-    "currentRecommendation": "Use this repository as the Hermes Clicky Plugin repo for now instead of creating a new repo immediately.",
+    "currentRecommendation": "Keep this repository as the conversion repo, but make hermes-clicky-plugin/ the self-contained Hermes plugin package. Do not mix plugin implementation into the Clicky repo root.",
     "rationale": [
-      "This repo already contains the hardest platform-specific assets: Windows capture, overlay rendering, pointing protocol work, semantic pointing fixtures, macOS reference code, and desktop permission knowledge.",
-      "A new repo can still be created later, but starting here avoids a premature migration before the plugin contract and runtime bridge are proven.",
-      "The repo should be repositioned as a Hermes plugin-first project while keeping the existing Windows and macOS apps as native runtimes behind the Hermes bridge."
+      "A new external repo right now would waste time moving code before the protocol boundary is proven.",
+      "A new internal folder gives the same architectural separation with less migration risk.",
+      "windows/ and mac/ should be treated as native runtime backends, not as plugin source folders."
     ],
     "nearTermChanges": [
-      "Add a hermes-plugin package or directory at the repo root with the Hermes manifest, protocol types, bridge client, and plugin entrypoint.",
-      "Keep windows/ and mac/ as native runtime backends rather than rewriting or deleting them up front.",
-      "Update README.md, AGENTS.md, CODEX.md, and CLAUDE.md so future agent runs understand that this repo is now focused on the Hermes plugin and runtime bridge.",
-      "Remove obsolete standalone-product code only after the corresponding Hermes plugin path is working and tested."
+      "Create hermes-clicky-plugin/ at the repo root as a complete Hermes plugin package with plugin.yaml, registration code, schemas, handlers, bridge client, protocol docs, examples, validation scripts, and demo scripts.",
+      "Keep repo-root changes limited to PRD/docs that point agents into hermes-clicky-plugin/.",
+      "Create the Windows bridge host separately under windows/src/Clicky.Bridge/ when US-003 starts.",
+      "Extract a runtime-facing service from CompanionManager only when bridge methods need it; do not rewrite the tray app first.",
+      "Keep old standalone app behavior working until the Hermes plugin path replaces a specific capability."
     ],
     "splitLaterWhen": [
-      "Hermes plugin packaging stabilizes and the plugin can observe, explain, and point through the bridge.",
-      "The Windows and macOS runtime boundaries are clear enough to extract without dragging unrelated desktop-app code.",
-      "There is a distribution, ownership, or release-management reason to separate Hermes integration from the native runtimes."
-    ],
-    "possibleFutureRepoShape": [
-      "packages/hermes-clicky-plugin for the Hermes plugin.",
-      "packages/clicky-protocol for shared schemas and protocol types.",
-      "runtimes/windows for the Windows bridge host and runtime adapter.",
-      "runtimes/macos for the macOS bridge host and runtime adapter.",
-      "docs/ for architecture, permissions, testing, and native Hermes integration recommendations."
+      "Hermes plugin packaging stabilizes.",
+      "The plugin can observe, explain, and point through the bridge on at least Windows.",
+      "The runtime boundary is boring enough to extract without dragging unrelated desktop-app code.",
+      "Distribution or ownership requires a separate repo."
     ]
+  },
+  "architectureDecision": {
+    "decision": "Use a new top-level hermes-clicky-plugin/ folder inside this repo as a self-contained Hermes plugin package; windows/ and mac/ remain native runtime backends called through the bridge.",
+    "why": [
+      "This avoids a premature repo split while the plugin contract and bridge are still changing.",
+      "The folder creates a clean product boundary: Hermes-facing plugin code lives in one place; native platform code remains in windows/ and mac/.",
+      "The existing repo already contains the hard parts: capture, overlay rendering, pointing logic, semantic fixtures, timing logs, and platform permission knowledge."
+    ],
+    "firstFolderShape": [
+      "hermes-clicky-plugin/plugin.yaml",
+      "hermes-clicky-plugin/README.md",
+      "hermes-clicky-plugin/__init__.py",
+      "hermes-clicky-plugin/schemas.py",
+      "hermes-clicky-plugin/tools.py",
+      "hermes-clicky-plugin/bridge_client.py",
+      "hermes-clicky-plugin/protocol/schema.json",
+      "hermes-clicky-plugin/protocol/examples/*.json",
+      "hermes-clicky-plugin/scripts/validate_protocol.py",
+      "hermes-clicky-plugin/examples/demo_point.py",
+      "hermes-clicky-plugin/examples/demo_explain.py"
+    ],
+    "nativeRuntimeShapeLater": [
+      "windows/src/Clicky.Bridge/ for the Windows JSON-RPC bridge host.",
+      "windows/src/Clicky.Runtime/ or equivalent extracted runtime service for observe/explain/point.",
+      "mac/ bridge host only after Windows bridge proves the protocol."
+    ],
+    "doNotDoInV1": [
+      "Do not launch the full tray app as the plugin runtime.",
+      "Do not expose WPF, Win32, ScreenCaptureKit, Swift, Codex app-server, or provider-specific payloads through the Hermes protocol.",
+      "Do not make Cloudflare Worker part of the Hermes plugin path.",
+      "Do not implement click/type/open-app OS control before observe, explain, point, permissions, and audit semantics are stable.",
+      "Do not send giant base64 screenshots by default; prefer explicit imageMode=file or metadataOnly.",
+      "Do not put Hermes plugin source at repo root; repo-root files should only explain or delegate into hermes-clicky-plugin/."
+    ]
+  },
+  "conversionStrategy": {
+    "v1Scope": [
+      "getCapabilities",
+      "observeScreen",
+      "explainScreen",
+      "pointToTarget",
+      "optional overlay rendering"
+    ],
+    "v1NonGoals": [
+      "speech transcription",
+      "tts playback",
+      "cloud worker routing",
+      "desktop click/type execution",
+      "scoped autopilot",
+      "full native Hermes rewrite"
+    ],
+    "transport": "JSON-RPC over stdio first. It is easier to spawn, test, log, and secure than localhost/WebSocket for the initial plugin bridge.",
+    "modelOwnership": "For V1 Clicky owns model inference for explainScreen and pointToTarget so existing pointing behavior can be reused. Add lower-level observe/render tools later so Hermes can own inference when ready.",
+    "platformOrder": [
+      "Windows observe/capabilities",
+      "Windows pointToTarget",
+      "Windows explainScreen",
+      "demo workflow",
+      "macOS capability adapter",
+      "macOS observe/explain/point"
+    ],
+    "screenshotPolicy": "Bridge responses should support imageMode=metadataOnly|file|base64. Default to metadataOnly unless Hermes explicitly asks for image files. Never write screenshots to disk unless requested or debug mode is enabled.",
+    "folderBoundary": "Everything required to install, load, validate, and demo the Hermes plugin lives under hermes-clicky-plugin/. Native backends are called as external bridge processes and are the only exception."
   }
 }

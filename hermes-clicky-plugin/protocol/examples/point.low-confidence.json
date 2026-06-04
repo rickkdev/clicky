@@ -1,0 +1,14 @@
+{
+  "ok": false,
+  "status": "low_confidence",
+  "target": "billing danger zone button",
+  "label": "billing danger zone button",
+  "confidence": 0.31,
+  "reasoning": "Multiple destructive-looking controls are visible and the requested target is ambiguous.",
+  "overlayRendered": false,
+  "error": {
+    "code": "low_confidence_target",
+    "message": "Clicky could not identify the requested target confidently enough to point.",
+    "retryable": true
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "ok": true,
+  "status": "pointed",
+  "target": "repository settings tab",
+  "label": "Settings",
+  "confidence": 0.91,
+  "normalized": { "x": 0.82, "y": 0.14 },
+  "physical": { "x": 2099, "y": 202, "screen": "display_1" },
+  "reasoning": "The Settings tab is visible in the repository navigation near the top-right of the content area.",
+  "overlayRendered": true
+}
