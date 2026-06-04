@@ -1,6 +1,6 @@
 """hermes-clicky-plugin registration."""
 
-from . import schemas, tools
+from . import macos_capabilities, schemas, tools
 
 
 def register(ctx):

@@ -79,10 +79,26 @@ plugin side:
 
 - `bridge_client.py`
 
-native side later:
+native side:
 
 - windows: `../windows/src/Clicky.Bridge/`
-- macos: not first; add after windows proves the contract.
+- macos: capability adapter first; observe/explain/point bridge comes in the next story.
+
+## macOS permissions
+
+`get_clicky_capabilities(platform="macos")` reports permission state without launching the native app:
+
+- Screen Recording gates screen capture, observe, explain, and point.
+- Accessibility gates overlay rendering and any future OS-control path.
+- OS control remains disabled with `phase_2_not_implemented` even when Accessibility is granted.
+
+Enable permissions manually in System Settings:
+
+1. Privacy & Security → Screen Recording → allow Clicky / the future bridge host.
+2. Privacy & Security → Accessibility → allow Clicky / the future bridge host.
+3. restart the host process after changing permissions; macOS TCC often requires restart.
+
+Until the macOS bridge is wired, granted permissions still return explicit `macos_*_not_wired` reasons for observe/explain/point/overlay.
 
 ## design rules
 

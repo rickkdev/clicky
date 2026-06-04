@@ -115,8 +115,8 @@
         "Update plugin README with macOS permission setup notes."
       ],
       "priority": 7,
-      "passes": false,
-      "notes": "Start with truthful capability reporting before wiring every macOS operation. macOS comes after Windows proof unless a demo requirement forces it earlier."
+      "passes": true,
+      "notes": "Completed in hermes-clicky-plugin/: added macos_capabilities.py adapter that reports Screen Recording and Accessibility permission state via macOS ApplicationServices probes where available, with deterministic injectable permission state for tests. get_clicky_capabilities(platform=macos) now falls back to this adapter when no native bridge is configured, without launching the macOS app. Capabilities for observeScreen, explainScreen, pointToTarget, overlay, and osControl are reported independently with explicit missing-permission or macos_*_not_wired reasons; osControl remains disabled with phase_2_not_implemented. Added tests for granted/denied permission combinations and README macOS permission setup notes."
     },
     {
       "id": "US-008",

@@ -6,6 +6,7 @@ import json
 import platform as platform_module
 from typing import Any
 
+from . import macos_capabilities
 from .bridge_client import ClickyBridgeClient, ClickyBridgeError
 
 
@@ -77,6 +78,9 @@ def get_clicky_capabilities(args: dict, **kwargs) -> str:
     bridge_result = _bridge_or_error("clicky.getCapabilities", {"platform": platform_name})
     if bridge_result.get("ok") is not False:
         return _json(bridge_result)
+
+    if platform_name == "macos":
+        return _json(macos_capabilities.build_macos_capabilities())
 
     # deterministic skeleton response until the native bridge exists
     return _json({
