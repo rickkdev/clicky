@@ -33,6 +33,10 @@ canonical schema:
 - safety-policy evaluation is separate from permission tiers: tiers answer whether the selected trust level allows an action class; safety policy answers whether this specific proposal is safe.
 - safety decisions include `decision`, user-readable `reason`, `riskFlags`, and `forwardToExecutor`.
 - blocked safety decisions set `forwardToExecutor=false` and produce inert blocked audit records; no executor exists in this phase.
+- confirmation UX is Hermes-facing structured state only: no native dialogs, no tray flows, no desktop execution.
+- confirmation copy must be concise and must not expose raw rationale, input previews, credentials, or internal reasoning.
+- approved confirmations are safety-rechecked immediately before a future executor could receive them; if the recheck blocks, `forwardToExecutor=false`.
+- cancelled and stale confirmations produce inert audit events only.
 
 ## methods
 
@@ -212,6 +216,34 @@ safety risk flags:
 - `low_confidence`
 - `blocked_risk`
 
+### confirmation UX
+
+When a proposal needs confirmation, Hermes receives a structured `confirmationRequest` with:
+
+- `confirmationId`
+- `proposalId`
+- `actionSummary`
+- `target`
+- `risk`
+- `reason`
+- `expiresAt`
+
+The user response is represented as a `confirmationResponse` with `decision`:
+
+- `approved`
+- `cancelled`
+- `explanationRequested`
+- `stale`
+
+Rules:
+
+- cancelled actions set `forwardToExecutor=false` and append an inert `confirmation_cancelled` audit event.
+- explanation requests set `needsExplanation=true` and do not forward.
+- stale proposals are rejected by expiry or proposal id mismatch.
+- approved proposals are rechecked by `safety_policy.py` immediately before forwarding semantics are returned.
+- even after approval, `forwardToExecutor=true` only when the fresh safety decision is `allow`.
+- no executor is called; this is state for a future execution layer only.
+
 ## examples
 
 - `examples/capabilities.windows.json`
@@ -224,6 +256,10 @@ safety risk flags:
 - `examples/action.blocked.json`
 - `examples/permission.observe-blocks-action.json`
 - `examples/permission.full-control-capability.json`
+- `examples/confirmation.required.json`
+- `examples/confirmation.cancelled.json`
+- `examples/confirmation.approved-rechecked.json`
+- `examples/confirmation.stale.json`
 
 validate:
 

@@ -1,0 +1,29 @@
+{
+  "protocolVersion": "clicky.hermes.v1",
+  "ok": true,
+  "status": "confirmation_resolved",
+  "confirmationId": "confirm-1234",
+  "proposalId": "proposal-click-1",
+  "decision": "approved",
+  "safetyRechecked": true,
+  "safetyDecision": {
+    "proposalId": "proposal-click-1",
+    "actionType": "click",
+    "decision": "allow",
+    "reason": "allowed by safety policy: no risk flags detected",
+    "riskFlags": [],
+    "forwardToExecutor": true
+  },
+  "forwardToExecutor": true,
+  "auditEvent": {
+    "event": "confirmation_approved",
+    "status": "approved",
+    "confirmationId": "confirm-1234",
+    "proposalId": "proposal-click-1",
+    "actionType": "click",
+    "target": "Save button",
+    "timestamp": "2026-06-04T18:01:00Z",
+    "safetyDecision": "allow",
+    "forwardToExecutor": true
+  }
+}

@@ -46,6 +46,7 @@ def validate_python_syntax() -> None:
         ROOT / "bridge_client.py",
         ROOT / "permission_policy.py",
         ROOT / "safety_policy.py",
+        ROOT / "confirmation_state.py",
     ]:
         try:
             ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -155,6 +156,8 @@ def validate_protocol_json() -> None:
         "permissionDecision",
         "riskFlag",
         "safetyDecision",
+        "confirmationRequest",
+        "confirmationResponse",
     ]:
         if name not in defs:
             fail(f"protocol/schema.json missing {name}")
@@ -163,7 +166,7 @@ def validate_protocol_json() -> None:
     if not doc.exists():
         fail("protocol/README.md missing")
     doc_text = doc.read_text(encoding="utf-8")
-    for method in ["getCapabilities", "observeScreen", "explainScreen", "pointToTarget", "action proposals"]:
+    for method in ["getCapabilities", "observeScreen", "explainScreen", "pointToTarget", "action proposals", "confirmation"]:
         if method not in doc_text:
             fail(f"protocol/README.md missing {method}")
 
@@ -180,6 +183,10 @@ def validate_protocol_json() -> None:
         "action.low-risk-click.json",
         "action.high-risk-destructive.json",
         "action.blocked.json",
+        "confirmation.required.json",
+        "confirmation.cancelled.json",
+        "confirmation.approved-rechecked.json",
+        "confirmation.stale.json",
     ]:
         if not (ROOT / "protocol" / "examples" / required).exists():
             fail(f"missing required example {required}")

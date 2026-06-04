@@ -1,0 +1,12 @@
+{
+  "protocolVersion": "clicky.hermes.v1",
+  "ok": true,
+  "status": "confirmation_required",
+  "confirmationId": "confirm-1234",
+  "proposalId": "proposal-send-message-1",
+  "actionSummary": "type text on Email compose body",
+  "target": "Email compose body",
+  "risk": "medium",
+  "reason": "needs confirmation: send_message",
+  "expiresAt": "2026-06-04T18:02:00Z"
+}

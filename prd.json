@@ -251,8 +251,8 @@
         "Add tests for approve, cancel, and stale-proposal rejection."
       ],
       "priority": 14,
-      "passes": false,
-      "notes": "If Hermes owns final UI, keep this story focused on the plugin-side request and state model. Phase 2: do not start until plugin V1 observe/explain/point is working and demoed."
+      "passes": true,
+      "notes": "Completed in hermes-clicky-plugin/: added confirmation_state.py for Hermes-facing structured confirmation UX around inert action proposals. Confirmation requests include confirmationId, proposalId, concise redacted action summary, target, risk, reason, and expiresAt. Responses support approved/cancelled/explanationRequested/stale, append inert audit events, reject stale/ID-mismatched proposals deterministically, and approval performs a fresh safety_policy recheck before returning forwardToExecutor semantics. No UI windows, native dialogs, tray flows, executor, OS control, clicks, typing, hotkeys, app launch, focus/window control, or file IO audit log was added."
     },
     {
       "id": "US-015",

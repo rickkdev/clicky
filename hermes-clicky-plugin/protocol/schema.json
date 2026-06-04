@@ -32,6 +32,12 @@
       "$ref": "#/$defs/actionProposalsResponse"
     },
     {
+      "$ref": "#/$defs/confirmationRequest"
+    },
+    {
+      "$ref": "#/$defs/confirmationResponse"
+    },
+    {
       "$ref": "#/$defs/errorResponse"
     }
   ],
@@ -874,6 +880,166 @@
         },
         "forwardToExecutor": {
           "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "confirmationRequest": {
+      "type": "object",
+      "description": "structured Hermes-facing confirmation request for an inert proposed action",
+      "required": [
+        "protocolVersion",
+        "ok",
+        "status",
+        "confirmationId",
+        "proposalId",
+        "actionSummary",
+        "target",
+        "risk",
+        "reason",
+        "expiresAt"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": "clicky.hermes.v1"
+        },
+        "ok": {
+          "const": true
+        },
+        "status": {
+          "const": "confirmation_required"
+        },
+        "confirmationId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "proposalId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "actionSummary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1
+        },
+        "risk": {
+          "type": "string",
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "blocked"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expiresAt": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "confirmationResponse": {
+      "type": "object",
+      "description": "Hermes-facing confirmation response state; never an execution result",
+      "required": [
+        "protocolVersion",
+        "ok",
+        "status",
+        "confirmationId",
+        "proposalId",
+        "decision",
+        "forwardToExecutor",
+        "auditEvent"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": "clicky.hermes.v1"
+        },
+        "ok": {
+          "const": true
+        },
+        "status": {
+          "const": "confirmation_resolved"
+        },
+        "confirmationId": {
+          "type": "string"
+        },
+        "proposalId": {
+          "type": "string"
+        },
+        "decision": {
+          "type": "string",
+          "enum": [
+            "approved",
+            "cancelled",
+            "explanationRequested",
+            "stale"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        },
+        "needsExplanation": {
+          "type": "boolean"
+        },
+        "safetyRechecked": {
+          "type": "boolean"
+        },
+        "safetyDecision": {
+          "$ref": "#/$defs/safetyDecision"
+        },
+        "forwardToExecutor": {
+          "type": "boolean"
+        },
+        "auditEvent": {
+          "type": "object",
+          "required": [
+            "event",
+            "status",
+            "confirmationId",
+            "proposalId",
+            "timestamp",
+            "forwardToExecutor"
+          ],
+          "properties": {
+            "event": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "confirmationId": {
+              "type": "string"
+            },
+            "proposalId": {
+              "type": "string"
+            },
+            "actionType": {
+              "type": "string"
+            },
+            "target": {
+              "type": "string"
+            },
+            "timestamp": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "safetyDecision": {
+              "type": "string"
+            },
+            "forwardToExecutor": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

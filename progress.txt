@@ -911,3 +911,29 @@ Branch: ralph/windows-port (continues from the completed Windows port — see ar
   - `forwardToExecutor` is semantic gate data only until an executor story exists. Blocked safety decisions should never be forwarded in future pipelines.
   - Risk-category tests should use plain proposal dictionaries so policy remains testable without screen capture, native runtime, or desktop automation.
 ---
+
+## 2026-06-04 18:57 CEST - US-014
+- Added Hermes-facing confirmation UX state for inert action proposals in `confirmation_state.py`.
+- Confirmation requests now carry `confirmationId`, `proposalId`, concise redacted `actionSummary`, `target`, `risk`, `reason`, and `expiresAt` without exposing raw `inputPreview`, credentials, or internal rationale.
+- Confirmation responses support `approved`, `cancelled`, `explanationRequested`, and `stale` decisions. Cancel/explain/stale never forward; cancelled and stale paths append inert structured audit events only.
+- Approved responses perform a fresh `safety_policy.evaluate_safety_policy()` recheck immediately before returning forwarding semantics. If the recheck blocks, `forwardToExecutor=false`. No executor is called.
+- Added deterministic stale rejection by expiry and proposal id mismatch.
+- Extended `protocol/schema.json` with `confirmationRequest` and `confirmationResponse`, added four protocol examples, and updated README/protocol docs plus validation coverage.
+- Validation passed: `python3 hermes-clicky-plugin/scripts/validate_protocol.py` and `python3 -m unittest discover -s hermes-clicky-plugin/tests -q` (66 tests).
+- Files changed:
+  - NEW: `hermes-clicky-plugin/confirmation_state.py`
+  - NEW: `hermes-clicky-plugin/tests/test_confirmation_state.py`
+  - NEW: `hermes-clicky-plugin/protocol/examples/confirmation.required.json`
+  - NEW: `hermes-clicky-plugin/protocol/examples/confirmation.cancelled.json`
+  - NEW: `hermes-clicky-plugin/protocol/examples/confirmation.approved-rechecked.json`
+  - NEW: `hermes-clicky-plugin/protocol/examples/confirmation.stale.json`
+  - MODIFIED: `hermes-clicky-plugin/protocol/schema.json`
+  - MODIFIED: `hermes-clicky-plugin/protocol/README.md`
+  - MODIFIED: `hermes-clicky-plugin/README.md`
+  - MODIFIED: `hermes-clicky-plugin/scripts/validate_protocol.py`
+  - MODIFIED: `prd.json`
+- **Learnings for future iterations:**
+  - Confirmation UX for this phase is a protocol/state helper, not desktop UI. Keep native dialogs/tray flows out until a story explicitly asks for them.
+  - Approval must never imply execution. Treat `forwardToExecutor` as gate data only, and only set it after a fresh safety recheck returns `allow`.
+  - Redaction belongs at confirmation-request construction because this is the user-facing copy boundary; never pass `inputPreview` or raw rationale into confirmation copy.
+---
