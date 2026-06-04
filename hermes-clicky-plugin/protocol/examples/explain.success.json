@@ -1,0 +1,21 @@
+{
+  "protocolVersion": "clicky.hermes.v1",
+  "ok": true,
+  "status": "explained",
+  "explanation": "The visible page is a repository settings screen. The navigation is across the top, and the main content area contains configuration sections.",
+  "regions": [
+    {
+      "label": "repository navigation",
+      "normalized": {
+        "x": 0.5,
+        "y": 0.13
+      },
+      "physical": {
+        "x": 1280,
+        "y": 187,
+        "screen": "display_1"
+      },
+      "confidence": 0.86
+    }
+  ]
+}

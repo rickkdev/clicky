@@ -29,12 +29,14 @@ def _bridge_or_error(method: str, params: dict[str, Any]) -> dict[str, Any]:
         return ClickyBridgeClient().call(method, params)
     except ClickyBridgeError as exc:
         return {
+            "protocolVersion": "clicky.hermes.v1",
             "ok": False,
             "status": exc.code,
             "error": exc.to_dict(),
         }
     except Exception as exc:  # plugin handlers must never raise into hermes
         return {
+            "protocolVersion": "clicky.hermes.v1",
             "ok": False,
             "status": "plugin_error",
             "error": {"code": "plugin_error", "message": str(exc), "retryable": False},
@@ -51,6 +53,7 @@ def get_clicky_capabilities(args: dict, **kwargs) -> str:
 
     # deterministic skeleton response until the native bridge exists
     return _json({
+        "protocolVersion": "clicky.hermes.v1",
         "ok": True,
         "status": "bridge_unavailable",
         "plugin": {
@@ -83,7 +86,7 @@ def observe_clicky_screen(args: dict, **kwargs) -> str:
 def explain_clicky_screen(args: dict, **kwargs) -> str:
     task = str(args.get("task", "")).strip()
     if not task:
-        return _json({"ok": False, "status": "invalid_request", "error": {"code": "missing_task", "message": "task is required", "retryable": False}})
+        return _json({"protocolVersion": "clicky.hermes.v1", "ok": False, "status": "invalid_request", "error": {"code": "missing_task", "message": "task is required", "retryable": False}})
     result = _bridge_or_error("clicky.explainScreen", {"task": task, "screenId": args.get("screenId")})
     return _json(result)
 
@@ -91,7 +94,7 @@ def explain_clicky_screen(args: dict, **kwargs) -> str:
 def point_clicky_target(args: dict, **kwargs) -> str:
     target = str(args.get("target", "")).strip()
     if not target:
-        return _json({"ok": False, "status": "invalid_request", "error": {"code": "missing_target", "message": "target is required", "retryable": False}})
+        return _json({"protocolVersion": "clicky.hermes.v1", "ok": False, "status": "invalid_request", "error": {"code": "missing_target", "message": "target is required", "retryable": False}})
     result = _bridge_or_error("clicky.pointToTarget", {
         "target": target,
         "task": args.get("task"),

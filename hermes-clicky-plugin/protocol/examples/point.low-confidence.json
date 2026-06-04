@@ -10,5 +10,6 @@
     "code": "low_confidence_target",
     "message": "Clicky could not identify the requested target confidently enough to point.",
     "retryable": true
-  }
+  },
+  "protocolVersion": "clicky.hermes.v1"
 }

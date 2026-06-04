@@ -17,8 +17,8 @@
         "Validate all example JSON with an automated check."
       ],
       "priority": 1,
-      "passes": false,
-      "notes": "Contract-only. Define semantic Hermes-facing types before touching native runtime code. Use examples and schema validation as the guardrail."
+      "passes": true,
+      "notes": "Completed in hermes-clicky-plugin/: protocol/README.md documents getCapabilities, observeScreen, explainScreen, pointToTarget; protocol/schema.json defines versioned request/response schemas; examples cover capability, observe metadata, explain success, point success, and low-confidence; scripts/validate_protocol.py and tests/test_protocol_contract.py verify the contract. Keep this story contract-only."
     },
     {
       "id": "US-002",

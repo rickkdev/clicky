@@ -4,170 +4,535 @@
   "title": "Hermes Clicky Plugin Protocol",
   "type": "object",
   "oneOf": [
-    { "$ref": "#/$defs/capabilitiesResponse" },
-    { "$ref": "#/$defs/observeScreenResponse" },
-    { "$ref": "#/$defs/explainScreenResponse" },
-    { "$ref": "#/$defs/pointToTargetResponse" },
-    { "$ref": "#/$defs/errorResponse" }
+    {
+      "$ref": "#/$defs/pointToTargetRequest"
+    },
+    {
+      "$ref": "#/$defs/explainScreenRequest"
+    },
+    {
+      "$ref": "#/$defs/observeScreenRequest"
+    },
+    {
+      "$ref": "#/$defs/getCapabilitiesRequest"
+    },
+    {
+      "$ref": "#/$defs/capabilitiesResponse"
+    },
+    {
+      "$ref": "#/$defs/observeScreenResponse"
+    },
+    {
+      "$ref": "#/$defs/explainScreenResponse"
+    },
+    {
+      "$ref": "#/$defs/pointToTargetResponse"
+    },
+    {
+      "$ref": "#/$defs/errorResponse"
+    }
   ],
   "$defs": {
     "error": {
       "type": "object",
-      "required": ["code", "message", "retryable"],
+      "required": [
+        "code",
+        "message",
+        "retryable"
+      ],
       "properties": {
-        "code": { "type": "string" },
-        "message": { "type": "string" },
-        "retryable": { "type": "boolean" },
-        "permission": { "type": "string" }
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "permission": {
+          "type": "string"
+        }
       },
       "additionalProperties": true
     },
     "errorResponse": {
       "type": "object",
-      "required": ["ok", "status", "error"],
+      "required": [
+        "protocolVersion",
+        "ok",
+        "status",
+        "error"
+      ],
       "properties": {
-        "ok": { "const": false },
-        "status": { "type": "string" },
-        "error": { "$ref": "#/$defs/error" }
+        "ok": {
+          "const": false
+        },
+        "status": {
+          "type": "string"
+        },
+        "error": {
+          "$ref": "#/$defs/error"
+        },
+        "protocolVersion": {
+          "const": "clicky.hermes.v1"
+        }
       },
       "additionalProperties": true
     },
     "capability": {
       "type": "object",
-      "required": ["enabled"],
+      "required": [
+        "enabled"
+      ],
       "properties": {
-        "enabled": { "type": "boolean" },
-        "reason": { "type": "string" }
+        "enabled": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        }
       },
       "additionalProperties": true
     },
     "capabilitiesResponse": {
       "type": "object",
-      "required": ["ok", "status", "platform", "capabilities"],
+      "required": [
+        "protocolVersion",
+        "ok",
+        "status",
+        "platform",
+        "capabilities"
+      ],
       "properties": {
-        "ok": { "type": "boolean" },
-        "status": { "type": "string" },
-        "platform": { "type": "string" },
-        "plugin": { "type": "object" },
+        "ok": {
+          "type": "boolean"
+        },
+        "status": {
+          "type": "string"
+        },
+        "platform": {
+          "type": "string"
+        },
+        "plugin": {
+          "type": "object"
+        },
         "capabilities": {
           "type": "object",
-          "required": ["observeScreen", "explainScreen", "pointToTarget", "overlay", "osControl"],
+          "required": [
+            "observeScreen",
+            "explainScreen",
+            "pointToTarget",
+            "overlay",
+            "osControl"
+          ],
           "properties": {
-            "observeScreen": { "$ref": "#/$defs/capability" },
-            "explainScreen": { "$ref": "#/$defs/capability" },
-            "pointToTarget": { "$ref": "#/$defs/capability" },
-            "overlay": { "$ref": "#/$defs/capability" },
-            "osControl": { "$ref": "#/$defs/capability" }
+            "observeScreen": {
+              "$ref": "#/$defs/capability"
+            },
+            "explainScreen": {
+              "$ref": "#/$defs/capability"
+            },
+            "pointToTarget": {
+              "$ref": "#/$defs/capability"
+            },
+            "overlay": {
+              "$ref": "#/$defs/capability"
+            },
+            "osControl": {
+              "$ref": "#/$defs/capability"
+            }
           },
           "additionalProperties": true
+        },
+        "protocolVersion": {
+          "const": "clicky.hermes.v1"
         }
       },
       "additionalProperties": true
     },
     "display": {
       "type": "object",
-      "required": ["id", "bounds", "scale", "isCursorScreen"],
+      "required": [
+        "id",
+        "bounds",
+        "scale",
+        "isCursorScreen"
+      ],
       "properties": {
-        "id": { "type": "string" },
-        "bounds": { "$ref": "#/$defs/rect" },
-        "scale": { "type": "number" },
-        "isCursorScreen": { "type": "boolean" }
+        "id": {
+          "type": "string"
+        },
+        "bounds": {
+          "$ref": "#/$defs/rect"
+        },
+        "scale": {
+          "type": "number"
+        },
+        "isCursorScreen": {
+          "type": "boolean"
+        }
       },
       "additionalProperties": true
     },
     "rect": {
       "type": "object",
-      "required": ["x", "y", "width", "height"],
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
       "properties": {
-        "x": { "type": "number" },
-        "y": { "type": "number" },
-        "width": { "type": "number" },
-        "height": { "type": "number" }
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "width": {
+          "type": "number"
+        },
+        "height": {
+          "type": "number"
+        }
       }
     },
     "image": {
       "type": "object",
-      "required": ["mode", "width", "height", "mime"],
+      "required": [
+        "mode",
+        "width",
+        "height",
+        "mime"
+      ],
       "properties": {
-        "mode": { "enum": ["metadataOnly", "file", "base64"] },
-        "path": { "type": "string" },
-        "data": { "type": "string" },
-        "width": { "type": "integer" },
-        "height": { "type": "integer" },
-        "mime": { "type": "string" }
+        "mode": {
+          "enum": [
+            "metadataOnly",
+            "file",
+            "base64"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "data": {
+          "type": "string"
+        },
+        "width": {
+          "type": "integer"
+        },
+        "height": {
+          "type": "integer"
+        },
+        "mime": {
+          "type": "string"
+        }
       },
       "additionalProperties": true
     },
     "observeScreenResponse": {
       "type": "object",
-      "required": ["ok", "status", "observationId", "platform", "displays", "images"],
+      "required": [
+        "protocolVersion",
+        "ok",
+        "status",
+        "observationId",
+        "platform",
+        "displays",
+        "images"
+      ],
       "properties": {
-        "ok": { "const": true },
-        "status": { "const": "observed" },
-        "observationId": { "type": "string" },
-        "platform": { "type": "string" },
-        "capturedAt": { "type": "string" },
-        "coordinateSpace": { "type": "string" },
-        "displays": { "type": "array", "items": { "$ref": "#/$defs/display" } },
-        "images": { "type": "array", "items": { "$ref": "#/$defs/image" } }
+        "ok": {
+          "const": true
+        },
+        "status": {
+          "const": "observed"
+        },
+        "observationId": {
+          "type": "string"
+        },
+        "platform": {
+          "type": "string"
+        },
+        "capturedAt": {
+          "type": "string"
+        },
+        "coordinateSpace": {
+          "type": "string"
+        },
+        "displays": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/display"
+          }
+        },
+        "images": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/image"
+          }
+        },
+        "protocolVersion": {
+          "const": "clicky.hermes.v1"
+        }
       },
       "additionalProperties": true
     },
     "region": {
       "type": "object",
-      "required": ["label", "normalized"],
+      "required": [
+        "label",
+        "normalized"
+      ],
       "properties": {
-        "label": { "type": "string" },
-        "normalized": { "$ref": "#/$defs/point" },
-        "physical": { "$ref": "#/$defs/physicalPoint" },
-        "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+        "label": {
+          "type": "string"
+        },
+        "normalized": {
+          "$ref": "#/$defs/point"
+        },
+        "physical": {
+          "$ref": "#/$defs/physicalPoint"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
       },
       "additionalProperties": true
     },
     "explainScreenResponse": {
       "type": "object",
-      "required": ["ok", "status", "explanation"],
+      "required": [
+        "protocolVersion",
+        "ok",
+        "status",
+        "explanation"
+      ],
       "properties": {
-        "ok": { "const": true },
-        "status": { "const": "explained" },
-        "explanation": { "type": "string" },
-        "regions": { "type": "array", "items": { "$ref": "#/$defs/region" } }
+        "ok": {
+          "const": true
+        },
+        "status": {
+          "const": "explained"
+        },
+        "explanation": {
+          "type": "string"
+        },
+        "regions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/region"
+          }
+        },
+        "protocolVersion": {
+          "const": "clicky.hermes.v1"
+        }
       },
       "additionalProperties": true
     },
     "point": {
       "type": "object",
-      "required": ["x", "y"],
+      "required": [
+        "x",
+        "y"
+      ],
       "properties": {
-        "x": { "type": "number" },
-        "y": { "type": "number" }
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        }
       }
     },
     "physicalPoint": {
       "type": "object",
-      "required": ["x", "y", "screen"],
+      "required": [
+        "x",
+        "y",
+        "screen"
+      ],
       "properties": {
-        "x": { "type": "number" },
-        "y": { "type": "number" },
-        "screen": { "type": "string" }
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "screen": {
+          "type": "string"
+        }
       }
     },
     "pointToTargetResponse": {
       "type": "object",
-      "required": ["ok", "status", "target", "overlayRendered"],
+      "required": [
+        "protocolVersion",
+        "ok",
+        "status",
+        "target",
+        "overlayRendered"
+      ],
       "properties": {
-        "ok": { "type": "boolean" },
-        "status": { "enum": ["pointed", "no_target", "low_confidence", "permission_denied", "bridge_unavailable", "error"] },
-        "target": { "type": "string" },
-        "label": { "type": "string" },
-        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
-        "normalized": { "$ref": "#/$defs/point" },
-        "physical": { "$ref": "#/$defs/physicalPoint" },
-        "reasoning": { "type": "string" },
-        "overlayRendered": { "type": "boolean" },
-        "error": { "$ref": "#/$defs/error" }
+        "ok": {
+          "type": "boolean"
+        },
+        "status": {
+          "enum": [
+            "pointed",
+            "no_target",
+            "low_confidence",
+            "permission_denied",
+            "bridge_unavailable",
+            "error"
+          ]
+        },
+        "target": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "normalized": {
+          "$ref": "#/$defs/point"
+        },
+        "physical": {
+          "$ref": "#/$defs/physicalPoint"
+        },
+        "reasoning": {
+          "type": "string"
+        },
+        "overlayRendered": {
+          "type": "boolean"
+        },
+        "error": {
+          "$ref": "#/$defs/error"
+        },
+        "protocolVersion": {
+          "const": "clicky.hermes.v1"
+        }
       },
       "additionalProperties": true
+    },
+    "getCapabilitiesRequest": {
+      "type": "object",
+      "required": [
+        "protocolVersion",
+        "method"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": "clicky.hermes.v1"
+        },
+        "method": {
+          "const": "getCapabilities"
+        },
+        "platform": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "windows",
+            "macos"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "observeScreenRequest": {
+      "type": "object",
+      "required": [
+        "protocolVersion",
+        "method"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": "clicky.hermes.v1"
+        },
+        "method": {
+          "const": "observeScreen"
+        },
+        "imageMode": {
+          "enum": [
+            "metadataOnly",
+            "file",
+            "base64"
+          ]
+        },
+        "includeCursorScreenOnly": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "explainScreenRequest": {
+      "type": "object",
+      "required": [
+        "protocolVersion",
+        "method",
+        "task"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": "clicky.hermes.v1"
+        },
+        "method": {
+          "const": "explainScreen"
+        },
+        "task": {
+          "type": "string",
+          "minLength": 1
+        },
+        "screenId": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "pointToTargetRequest": {
+      "type": "object",
+      "required": [
+        "protocolVersion",
+        "method",
+        "target"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": "clicky.hermes.v1"
+        },
+        "method": {
+          "const": "pointToTarget"
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1
+        },
+        "task": {
+          "type": "string"
+        },
+        "screenId": {
+          "type": "string"
+        },
+        "renderOverlay": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "getCapabilitiesResponse": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/capabilitiesResponse"
+        }
+      ]
     }
   }
 }

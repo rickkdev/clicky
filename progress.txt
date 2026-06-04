@@ -787,3 +787,19 @@ Branch: ralph/windows-port (continues from the completed Windows port — see ar
   - Keep the structured pointing path enabled by app configuration while preserving the switch for A/B diagnosis; this avoids reintroducing old verifier/locator layers just to compare behavior.
   - `ProductVersion` on the single-file publish includes a commit hash suffix, while `FileVersion` stays numeric (`1.4.8.0`).
 ---
+
+---
+
+## 2026-06-04 - US-001 Hermes Clicky plugin protocol
+- Defined the Hermes-facing Clicky protocol under `hermes-clicky-plugin/protocol/`.
+- Added `protocol/README.md` with the v1 contract, JSON-RPC-over-stdio bridge assumption, method docs, non-actionable statuses, screenshot policy, and examples list.
+- Expanded `protocol/schema.json` with versioned request/response definitions for `getCapabilities`, `observeScreen`, `explainScreen`, and `pointToTarget`.
+- Added protocol examples for Windows capabilities, metadata-only observation, explanation success, point success, and low-confidence pointing.
+- Added `hermes-clicky-plugin/tests/test_protocol_contract.py` to lock the protocol boundary: all methods documented, request/response schemas present, success responses versioned, examples versioned, and no native/provider internals leaked into the protocol.
+- Strengthened `hermes-clicky-plugin/scripts/validate_protocol.py` so package validation checks the protocol doc, required schema defs, required examples, and `protocolVersion`.
+- Verified:
+  - `python3 -m unittest hermes-clicky-plugin/tests/test_protocol_contract.py -v`
+  - `python3 hermes-clicky-plugin/scripts/validate_protocol.py`
+  - `python3 hermes-clicky-plugin/examples/demo_point.py`
+  - `python3 hermes-clicky-plugin/examples/demo_explain.py`
+- Demo scripts correctly return structured `bridge_unavailable` until `CLICKY_BRIDGE_COMMAND` points at a native bridge.

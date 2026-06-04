@@ -7,10 +7,22 @@
     "version": "0.1.0"
   },
   "capabilities": {
-    "observeScreen": { "enabled": true },
-    "explainScreen": { "enabled": true },
-    "pointToTarget": { "enabled": true },
-    "overlay": { "enabled": true },
-    "osControl": { "enabled": false, "reason": "phase_2_not_implemented" }
-  }
+    "observeScreen": {
+      "enabled": true
+    },
+    "explainScreen": {
+      "enabled": true
+    },
+    "pointToTarget": {
+      "enabled": true
+    },
+    "overlay": {
+      "enabled": true
+    },
+    "osControl": {
+      "enabled": false,
+      "reason": "phase_2_not_implemented"
+    }
+  },
+  "protocolVersion": "clicky.hermes.v1"
 }
