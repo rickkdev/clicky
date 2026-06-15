@@ -285,8 +285,8 @@
         "Add a manual macOS smoke checklist for real desktop execution."
       ],
       "priority": 16,
-      "passes": false,
-      "notes": "Coordinate clicks are acceptable as fallback, but prefer semantic/native automation when available. Phase 2: do not start until plugin V1 observe/explain/point is working and demoed."
+      "passes": true,
+      "notes": "Completed with mac/hermes-clicky-bridge/clicky_macos_bridge.py: added gated clicky.executeAction support for click, doubleClick, typeText, hotkey, openApplication, and focusWindow. macOS executor checks Accessibility permission and returns structured permission_denied errors, refuses missing/mismatched permission decisions, blocked safety decisions, and unapproved confirmation-required actions before forwarding. Real execution uses System Events/AppleScript for click/type/hotkey/focus and /usr/bin/open -a for app launch; deterministic tests use CLICKY_MAC_BRIDGE_FAKE_EXECUTOR and do not touch the desktop. Results are structured/provider-neutral with typed text redacted. Manual opt-in smoke checklist added at mac/docs/hermes-bridge-action-executor-smoke.md."
     },
     {
       "id": "US-017",

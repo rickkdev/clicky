@@ -53,7 +53,7 @@ class MacOSBridgeStdioTests(unittest.TestCase):
         self.assertFalse(result["permissions"]["screenRecording"]["granted"])
         self.assertTrue(result["permissions"]["accessibility"]["granted"])
         self.assertEqual(result["capabilities"]["observeScreen"]["reason"], "missing_screen_recording_permission")
-        self.assertEqual(result["capabilities"]["osControl"]["reason"], "phase_2_not_implemented")
+        self.assertTrue(result["capabilities"]["osControl"]["enabled"])
 
     def test_observe_screen_returns_shared_protocol_shape_with_coordinate_metadata(self):
         response = self.bridge_roundtrip(
@@ -132,6 +132,106 @@ class MacOSBridgeStdioTests(unittest.TestCase):
         self.assertEqual(result["normalized"], {"x": 0.8, "y": 0.75})
         self.assertEqual(result["physical"]["screen"], "macos-display-1")
         self.assertFalse(result["overlayRendered"])
+
+    def test_execute_action_permission_denied_without_accessibility(self):
+        response = self.bridge_roundtrip(
+            "clicky.executeAction",
+            execution_request("click"),
+            env={"CLICKY_MAC_BRIDGE_ACCESSIBILITY": "0", "CLICKY_MAC_BRIDGE_FAKE_EXECUTOR": "1"},
+        )
+
+        error = response["error"]
+        self.assertEqual(error["code"], "permission_denied")
+        self.assertEqual(error["permission"], "accessibility")
+        self.assertFalse(error["retryable"])
+
+    def test_execute_action_refuses_missing_permission_decision_before_executor(self):
+        request = execution_request("click")
+        request["permissionDecision"] = None
+
+        response = self.bridge_roundtrip(
+            "clicky.executeAction",
+            request,
+            env={"CLICKY_MAC_BRIDGE_ACCESSIBILITY": "1", "CLICKY_MAC_BRIDGE_FAKE_EXECUTOR": "1"},
+        )
+
+        result = response["result"]
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["reason"], "missing permission decision")
+        self.assertFalse(result["forwardedToExecutor"])
+
+    def test_execute_action_refuses_unapproved_confirmation_when_required(self):
+        request = execution_request("typeText", permission_decision="requireConfirmation", requires_confirmation=True)
+
+        response = self.bridge_roundtrip(
+            "clicky.executeAction",
+            request,
+            env={"CLICKY_MAC_BRIDGE_ACCESSIBILITY": "1", "CLICKY_MAC_BRIDGE_FAKE_EXECUTOR": "1"},
+        )
+
+        result = response["result"]
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["reason"], "approved confirmation required")
+        self.assertFalse(result["forwardedToExecutor"])
+
+    def test_execute_action_routes_allowed_actions_through_fake_executor(self):
+        for action_type in ["click", "doubleClick", "typeText", "hotkey", "openApplication", "focusWindow"]:
+            with self.subTest(action_type=action_type):
+                response = self.bridge_roundtrip(
+                    "clicky.executeAction",
+                    execution_request(action_type),
+                    env={"CLICKY_MAC_BRIDGE_ACCESSIBILITY": "1", "CLICKY_MAC_BRIDGE_FAKE_EXECUTOR": "1"},
+                )
+
+                result = response["result"]
+                self.assertTrue(result["ok"])
+                self.assertEqual(result["status"], "executed")
+                self.assertEqual(result["actionType"], action_type)
+                self.assertTrue(result["forwardedToExecutor"])
+                self.assertEqual(result["result"]["method"], action_type)
+                self.assertNotIn("inputPreview", json.dumps(result))
+                self.assertNotIn("typed text", json.dumps(result).lower())
+
+
+def execution_request(action_type, permission_decision="allow", requires_confirmation=False):
+    proposal = {
+        "id": f"proposal-{action_type}",
+        "actionType": action_type,
+        "targetLabel": "safe target",
+        "confidence": 0.99,
+        "riskLevel": "low",
+        "requiresConfirmation": requires_confirmation,
+        "rationale": "deterministic test proposal",
+        "coordinates": {"x": 100, "y": 200, "screen": "macos-display-1"},
+    }
+    if action_type == "typeText":
+        proposal["inputPreview"] = "typed text"
+    if action_type == "hotkey":
+        proposal["hotkey"] = ["Command", "L"]
+    if action_type == "openApplication":
+        proposal["application"] = "TextEdit"
+    if action_type == "focusWindow":
+        proposal["nativeSelector"] = {"kind": "windowTitle", "value": "Untitled"}
+    return {
+        "proposal": proposal,
+        "permissionDecision": {
+            "decision": permission_decision,
+            "permissionTier": "confirmBeforeAction",
+            "actionType": action_type,
+            "reason": "test permission",
+        },
+        "safetyDecision": {
+            "proposalId": proposal["id"],
+            "actionType": action_type,
+            "decision": "allow",
+            "reason": "test safety",
+            "riskFlags": [],
+            "forwardToExecutor": True,
+        },
+        "confirmationResponse": None,
+    }
 
 
 if __name__ == "__main__":

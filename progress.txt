@@ -973,3 +973,28 @@ Branch: ralph/windows-port (continues from the completed Windows port — see ar
   - Native execution results must report what happened without echoing raw typed text; use counts/redaction flags for `typeText`.
   - On this macOS validation host, use Homebrew `dotnet@8` via `/opt/homebrew/opt/dotnet@8/libexec/dotnet` plus `/p:EnableWindowsTargeting=true` for Windows bridge tests/builds.
 ---
+## 2026-06-15 - US-016
+- Implemented the macOS basic action executor behind the native macOS bridge. Added `clicky.executeAction` routing in `mac/hermes-clicky-bridge/clicky_macos_bridge.py` without tray auto-launch or autopilot behavior.
+- Added Accessibility permission enforcement. Missing Accessibility returns structured JSON-RPC `permission_denied` with `permission=accessibility` before any gate/executor path.
+- Added the same execution gate semantics used by Windows: missing/mismatched permission decisions, blocked safety decisions, and unapproved confirmation-required actions return structured `blocked` results and are not forwarded.
+- Added macOS executor paths for `click`, `doubleClick`, `typeText`, `hotkey`, `openApplication`, and `focusWindow`. Real execution uses System Events/AppleScript for click/type/hotkey/focus and `/usr/bin/open -a` for app launch; deterministic tests use `CLICKY_MAC_BRIDGE_FAKE_EXECUTOR=1`.
+- Updated protocol wording from Windows-only to native execution and updated macOS README docs.
+- Added opt-in manual macOS action smoke checklist at `mac/docs/hermes-bridge-action-executor-smoke.md`.
+- Validation:
+  - RED: `python3 -m unittest hermes-clicky-plugin.tests.test_macos_bridge_stdio.MacOSBridgeStdioTests.test_execute_action_permission_denied_without_accessibility hermes-clicky-plugin.tests.test_macos_bridge_stdio.MacOSBridgeStdioTests.test_execute_action_routes_allowed_actions_through_fake_executor -v` failed with `method_not_found` before implementation.
+  - GREEN: `python3 -m unittest hermes-clicky-plugin.tests.test_macos_bridge_stdio -v` => 9 passed.
+  - `python3 -m unittest discover -s hermes-clicky-plugin/tests -v` => 71 passed.
+  - `python3 hermes-clicky-plugin/scripts/validate_protocol.py` => ok.
+  - `git diff --check` => ok.
+- Files changed:
+  - MODIFIED: `mac/hermes-clicky-bridge/clicky_macos_bridge.py`
+  - NEW: `mac/docs/hermes-bridge-action-executor-smoke.md`
+  - MODIFIED: `hermes-clicky-plugin/tests/test_macos_bridge_stdio.py`
+  - MODIFIED: `hermes-clicky-plugin/protocol/schema.json`
+  - MODIFIED: `hermes-clicky-plugin/protocol/README.md`
+  - MODIFIED: `hermes-clicky-plugin/README.md`
+  - MODIFIED: `prd.json`
+- **Learnings for future iterations:**
+  - Keep macOS desktop automation behind explicit Accessibility permission checks and fake executor seams; never let normal CI touch the real desktop.
+  - System Events/AppleScript is acceptable for the first macOS executor, but semantic/native selectors should replace coordinate fallbacks where reliable.
+---

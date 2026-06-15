@@ -249,7 +249,7 @@ Rules:
 
 ### executeAction
 
-`executeAction` is the Windows-native execution request/result contract for approved desktop actions. It supports:
+`executeAction` is the native execution request/result contract for approved desktop actions. Windows and macOS bridge backends implement it behind the same permission, safety, and confirmation gates. It supports:
 
 - `click`
 - `doubleClick`

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""macOS JSON-RPC stdio bridge for Hermes Clicky V1.
+"""macOS JSON-RPC stdio bridge for Hermes Clicky.
 
-This bridge is deliberately narrow: capabilities, observe, explain, point.
-It does not execute OS control and does not launch the tray app.
+This bridge is deliberately narrow: capabilities, observe, explain, point,
+and gated action execution. It does not launch the tray app.
 """
 
 from __future__ import annotations
@@ -99,7 +99,7 @@ def get_capabilities(params: dict[str, Any]) -> dict[str, Any]:
             "explainScreen": capability(screen and bool(os.environ.get("CLICKY_MAC_BRIDGE_EXPLANATION_RESPONSE")), None if screen and os.environ.get("CLICKY_MAC_BRIDGE_EXPLANATION_RESPONSE") else ("missing_screen_recording_permission" if not screen else "missing_explanation_response_config")),
             "pointToTarget": capability(screen and bool(os.environ.get("CLICKY_MAC_BRIDGE_POINT_RESPONSE")), None if screen and os.environ.get("CLICKY_MAC_BRIDGE_POINT_RESPONSE") else ("missing_screen_recording_permission" if not screen else "missing_point_response_config")),
             "overlay": capability(access, None if access else "missing_accessibility_permission"),
-            "osControl": capability(False, "phase_2_not_implemented"),
+            "osControl": capability(access, None if access else "missing_accessibility_permission"),
         },
     }
 
@@ -112,6 +112,17 @@ def require_screen_capture() -> None:
             "macOS Screen Recording permission is required for screen capture.",
             retryable=False,
             permission="screen_capture",
+        )
+
+
+def require_accessibility() -> None:
+    _, access = permission_state()
+    if not access:
+        raise BridgeProtocolError(
+            "permission_denied",
+            "macOS Accessibility permission is required for desktop action execution.",
+            retryable=False,
+            permission="accessibility",
         )
 
 
@@ -243,12 +254,174 @@ def point_to_target(params: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+SUPPORTED_ACTIONS = {"click", "doubleClick", "typeText", "hotkey", "openApplication", "focusWindow"}
+
+
+def timestamp() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def execute_action(params: dict[str, Any]) -> dict[str, Any]:
+    require_accessibility()
+    proposal = params.get("proposal") or {}
+    if not isinstance(proposal, dict):
+        raise BridgeProtocolError("invalid_request", "proposal must be an object", retryable=False)
+    started_at = timestamp()
+    cancelled = bool(params.get("cancelled") or (params.get("cancellation") or {}).get("cancelled"))
+    if cancelled:
+        return execution_result(proposal, "cancelled", None, "cancelled before execution", started_at, forwarded=False)
+
+    gate_failure = validate_execution_gates(params, proposal)
+    if gate_failure:
+        return execution_result(proposal, "blocked", None, gate_failure, started_at, forwarded=False)
+
+    try:
+        result = run_action_executor(proposal)
+        return execution_result(proposal, "executed", redact_result(result), None, started_at, forwarded=True, ok=True)
+    except Exception as exc:
+        return execution_result(proposal, "error", None, str(exc), started_at, forwarded=True)
+
+
+def validate_execution_gates(params: dict[str, Any], proposal: dict[str, Any]) -> str | None:
+    proposal_id = str(proposal.get("id") or "").strip()
+    action_type = str(proposal.get("actionType") or "").strip()
+    if not proposal_id:
+        return "proposal id is required"
+    if action_type not in SUPPORTED_ACTIONS:
+        return "unsupported action type"
+
+    permission_decision = params.get("permissionDecision")
+    if permission_decision is None:
+        return "missing permission decision"
+    if not isinstance(permission_decision, dict):
+        return "permission decision must be an object"
+    if permission_decision.get("actionType") != action_type:
+        return "permission decision action mismatch"
+    permission_value = permission_decision.get("decision")
+    if permission_value == "block":
+        return "permission decision blocked execution"
+    if permission_value not in {"allow", "requireConfirmation"}:
+        return "permission decision did not pass"
+
+    safety_decision = params.get("safetyDecision")
+    if safety_decision is None:
+        return "missing safety decision"
+    if not isinstance(safety_decision, dict):
+        return "safety decision must be an object"
+    if safety_decision.get("proposalId") != proposal_id:
+        return "safety decision proposal mismatch"
+    if safety_decision.get("actionType") != action_type:
+        return "safety decision action mismatch"
+    if safety_decision.get("decision") != "allow" or not bool(safety_decision.get("forwardToExecutor")):
+        return "safety decision did not allow forwarding"
+
+    needs_confirmation = bool(proposal.get("requiresConfirmation")) or permission_value == "requireConfirmation"
+    if needs_confirmation:
+        confirmation = params.get("confirmationResponse")
+        if not isinstance(confirmation, dict) or confirmation.get("proposalId") != proposal_id or confirmation.get("decision") != "approved" or not bool(confirmation.get("forwardToExecutor")):
+            return "approved confirmation required"
+        confirmation_safety = confirmation.get("safetyDecision")
+        if isinstance(confirmation_safety, dict) and (confirmation_safety.get("decision") != "allow" or not bool(confirmation_safety.get("forwardToExecutor"))):
+            return "confirmation safety recheck did not allow forwarding"
+
+    return None
+
+
+def execution_result(
+    proposal: dict[str, Any],
+    status: str,
+    result: dict[str, Any] | None,
+    reason: str | None,
+    started_at: str,
+    *,
+    forwarded: bool,
+    ok: bool = False,
+) -> dict[str, Any]:
+    return {
+        "protocolVersion": PROTOCOL_VERSION,
+        "ok": ok,
+        "status": status,
+        "proposalId": str(proposal.get("id") or ""),
+        "actionType": str(proposal.get("actionType") or ""),
+        "result": result,
+        "reason": reason,
+        "startedAt": started_at,
+        "completedAt": timestamp(),
+        "forwardedToExecutor": forwarded,
+    }
+
+
+def redact_result(result: dict[str, Any]) -> dict[str, Any]:
+    redacted = dict(result)
+    for key in ("text", "typedText", "inputPreview"):
+        redacted.pop(key, None)
+    return redacted
+
+
+def run_action_executor(proposal: dict[str, Any]) -> dict[str, Any]:
+    action_type = str(proposal.get("actionType"))
+    if env_bool("CLICKY_MAC_BRIDGE_FAKE_EXECUTOR", False):
+        return {"method": action_type, "executor": "fake"}
+    if action_type == "click":
+        run_click(proposal, click_count=1)
+    elif action_type == "doubleClick":
+        run_click(proposal, click_count=2)
+    elif action_type == "typeText":
+        run_osascript(['tell application "System Events" to keystroke ' + json.dumps(str(proposal.get("inputPreview") or ""))])
+    elif action_type == "hotkey":
+        run_hotkey(proposal)
+    elif action_type == "openApplication":
+        app = str(proposal.get("application") or proposal.get("targetLabel") or "").strip()
+        if not app:
+            raise BridgeProtocolError("invalid_request", "application is required", retryable=False)
+        subprocess.run(["/usr/bin/open", "-a", app], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+    elif action_type == "focusWindow":
+        selector = proposal.get("nativeSelector") or {}
+        title = str(selector.get("value") or proposal.get("targetLabel") or "").replace('"', '\\"')
+        run_osascript([f'tell application "System Events" to set frontmost of first process whose name contains "{title}" to true'])
+    else:
+        raise BridgeProtocolError("invalid_request", "unsupported action type", retryable=False)
+    return {"method": action_type, "executor": "macos"}
+
+
+def run_click(proposal: dict[str, Any], *, click_count: int) -> None:
+    coordinates = proposal.get("coordinates") or {}
+    if not isinstance(coordinates, dict) or "x" not in coordinates or "y" not in coordinates:
+        raise BridgeProtocolError("invalid_request", "coordinates are required for coordinate click fallback", retryable=False)
+    x = int(coordinates["x"])
+    y = int(coordinates["y"])
+    script = [f'tell application "System Events" to click at {{{x}, {y}}}']
+    if click_count == 2:
+        script.append(f'tell application "System Events" to click at {{{x}, {y}}}')
+    run_osascript(script)
+
+
+def run_hotkey(proposal: dict[str, Any]) -> None:
+    hotkey = proposal.get("hotkey") or []
+    if not isinstance(hotkey, list) or not hotkey:
+        raise BridgeProtocolError("invalid_request", "hotkey is required", retryable=False)
+    key = str(hotkey[-1]).lower()
+    modifiers = [str(item).lower() for item in hotkey[:-1]]
+    modifier_map = {"command": "command down", "cmd": "command down", "control": "control down", "ctrl": "control down", "option": "option down", "alt": "option down", "shift": "shift down"}
+    using = [modifier_map[item] for item in modifiers if item in modifier_map]
+    suffix = " using {" + ", ".join(using) + "}" if using else ""
+    run_osascript([f'tell application "System Events" to keystroke "{key}"{suffix}'])
+
+
+def run_osascript(lines: list[str]) -> None:
+    command = ["/usr/bin/osascript"]
+    for line in lines:
+        command.extend(["-e", line])
+    subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+
+
 ROUTES = {
     "rpc.health": lambda params: {"protocolVersion": PROTOCOL_VERSION, "ok": True, "status": "ok", "transport": "stdio", "bridge": "macos"},
     "clicky.getCapabilities": get_capabilities,
     "clicky.observeScreen": observe_screen,
     "clicky.explainScreen": explain_screen,
     "clicky.pointToTarget": point_to_target,
+    "clicky.executeAction": execute_action,
 }
 
 

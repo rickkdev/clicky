@@ -28,6 +28,8 @@ v1 non-goals:
 - scoped autopilot engine
 - rewriting clicky as native hermes code
 
+phase 2 now adds gated native action execution behind permission, safety, and confirmation layers. autopilot remains out of scope until post-action verification and audit logging are solid.
+
 ## install locally
 
 copy or symlink this folder into hermes plugins:
@@ -103,12 +105,15 @@ Configure Hermes to use the macOS stdio bridge:
 export CLICKY_BRIDGE_COMMAND="python3 /Users/rick81/clicky/mac/hermes-clicky-bridge/clicky_macos_bridge.py"
 ```
 
-The macOS bridge supports `getCapabilities`, `observeScreen`, `explainScreen`, and `pointToTarget` through the shared protocol. It does not launch the tray app and does not execute OS control. Explanation and pointing use deterministic env seams until the native model host is wired:
+The macOS bridge supports `getCapabilities`, `observeScreen`, `explainScreen`, `pointToTarget`, and gated `executeAction` through the shared protocol. It does not launch the tray app. Explanation, pointing, and action execution expose deterministic env seams for tests/smoke before touching real desktop APIs:
 
 - `CLICKY_MAC_BRIDGE_EXPLANATION_RESPONSE`
 - `CLICKY_MAC_BRIDGE_POINT_RESPONSE`
+- `CLICKY_MAC_BRIDGE_FAKE_EXECUTOR=1`
 
-Manual smoke checklist: `../mac/docs/hermes-bridge-macos-smoke.md`.
+Manual observe/explain/point smoke checklist: `../mac/docs/hermes-bridge-macos-smoke.md`.
+
+Manual action executor smoke checklist: `../mac/docs/hermes-bridge-action-executor-smoke.md`.
 
 ## macOS permissions
 

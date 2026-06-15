@@ -1052,7 +1052,7 @@
     },
     "actionExecutionRequest": {
       "type": "object",
-      "description": "gated Windows action execution request; executor must refuse requests that have not passed permission, safety, and confirmation layers",
+      "description": "gated native action execution request; executors must refuse requests that have not passed permission, safety, and confirmation layers",
       "required": [
         "protocolVersion",
         "method",
@@ -1084,7 +1084,7 @@
     },
     "actionExecutionResult": {
       "type": "object",
-      "description": "structured provider-neutral execution result from the native Windows executor",
+      "description": "structured provider-neutral execution result from a native action executor",
       "required": [
         "protocolVersion",
         "ok",
