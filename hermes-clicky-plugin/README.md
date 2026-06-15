@@ -24,11 +24,11 @@ v1 non-goals:
 - tts playback
 - cloudflare worker routing
 - click/type/open-app os control
-- action execution
-- scoped autopilot engine
+- ungated action execution
+- full-control autopilot
 - rewriting clicky as native hermes code
 
-phase 2 now adds gated native action execution behind permission, safety, and confirmation layers. autopilot remains out of scope until post-action verification and audit logging are solid.
+phase 2 now adds gated native action execution behind permission, safety, confirmation, audit, verification, and scoped autopilot session policy layers.
 
 ## install locally
 

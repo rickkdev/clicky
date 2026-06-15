@@ -336,8 +336,8 @@
         "Add tests for normal completion, timeout, scope violation, high-risk confirmation, and user cancellation."
       ],
       "priority": 19,
-      "passes": false,
-      "notes": "Do not add full-control behavior before scoped autopilot is reliable. Phase 2: do not start until plugin V1 observe/explain/point is working and demoed."
+      "passes": true,
+      "notes": "Completed in hermes-clicky-plugin/: added scoped_autopilot.py deterministic session policy with explicit task description, allowed apps/windows, allowed action types, timeout, max step count, session audit grouping, and stop reasons. Each step routes through scopedAutopilot permission and safety policy before forwardToExecutor; high-risk/text/app/hotkey actions require confirmation; blocked actions, timeout, max steps, scope violations, failed/uncertain/prompt verification, and user cancel stop the session. Added protocol schema/example and tests for normal completion, timeout, max steps, scope violation, high-risk confirmation, failed verification, and cancellation. No full-control behavior, tray launch, capture, or desktop execution was added."
     },
     {
       "id": "US-020",

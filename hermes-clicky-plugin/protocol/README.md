@@ -291,6 +291,19 @@ After an `executeAction` result with `status: executed`, the caller should run o
 
 `failed`, `blockedByPrompt`, and `uncertain` set `continueAutomation: false`; `uncertain` also sets `requiresUserGuidance: true` so scoped automation stops instead of guessing.
 
+### scoped autopilot sessions
+
+Scoped autopilot is a bounded task mode, not full control. A session declares:
+
+- `sessionId`
+- task description
+- allowed applications/windows
+- allowed action types
+- timeout
+- maximum step count
+
+Each proposed step is still checked by the `scopedAutopilot` permission tier and safety policy before it can be forwarded. High-risk, text, app-launch, or hotkey steps require confirmation. The session stops on timeout, max steps, scope violation, blocked action, failed/uncertain/prompt verification, or user cancellation. Audit records include `sessionId` so all steps can be grouped.
+
 ## examples
 
 - `examples/capabilities.windows.json`
@@ -308,6 +321,7 @@ After an `executeAction` result with `status: executed`, the caller should run o
 - `examples/confirmation.approved-rechecked.json`
 - `examples/confirmation.stale.json`
 - `examples/action.execution.executed.json`
+- `examples/autopilot.allowed-step.json`
 - `examples/verification.success.json`
 - `examples/verification.uncertain.json`
 

@@ -1,0 +1,27 @@
+{
+  "protocolVersion": "clicky.hermes.v1",
+  "ok": true,
+  "sessionId": "auto-1",
+  "taskDescription": "organize harmless notes",
+  "proposalId": "proposal-1",
+  "actionType": "click",
+  "status": "allowed",
+  "stepIndex": 1,
+  "reason": "permission: scopedAutopilot allows low-risk navigation/control actions inside an explicit scope; safety: allowed by safety policy: no risk flags detected",
+  "permissionDecision": {
+    "decision": "allow",
+    "permissionTier": "scopedAutopilot",
+    "actionType": "click",
+    "reason": "scopedAutopilot allows low-risk navigation/control actions inside an explicit scope"
+  },
+  "safetyDecision": {
+    "proposalId": "proposal-1",
+    "actionType": "click",
+    "decision": "allow",
+    "reason": "allowed by safety policy: no risk flags detected",
+    "riskFlags": [],
+    "forwardToExecutor": true
+  },
+  "forwardToExecutor": true,
+  "timestamp": "2026-06-15T20:00:05Z"
+}

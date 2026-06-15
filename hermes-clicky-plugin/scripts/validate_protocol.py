@@ -163,6 +163,7 @@ def validate_protocol_json() -> None:
         "actionExecutionRequest",
         "actionExecutionResult",
         "postActionVerificationResult",
+        "scopedAutopilotSessionResult",
     ]:
         if name not in defs:
             fail(f"protocol/schema.json missing {name}")

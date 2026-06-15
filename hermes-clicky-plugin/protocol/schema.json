@@ -47,6 +47,9 @@
       "$ref": "#/$defs/postActionVerificationResult"
     },
     {
+      "$ref": "#/$defs/scopedAutopilotSessionResult"
+    },
+    {
       "$ref": "#/$defs/errorResponse"
     }
   ],
@@ -1216,6 +1219,118 @@
         },
         "ok": {
           "const": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "scopedAutopilotSessionResult": {
+      "type": "object",
+      "description": "deterministic scoped autopilot session gate result; groups a bounded task session and never executes desktop actions by itself",
+      "required": [
+        "protocolVersion",
+        "ok",
+        "sessionId",
+        "taskDescription",
+        "status",
+        "stepIndex",
+        "forwardToExecutor",
+        "timestamp"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": "clicky.hermes.v1"
+        },
+        "ok": {
+          "const": true
+        },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "taskDescription": {
+          "type": "string",
+          "minLength": 1
+        },
+        "proposalId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "actionType": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "click",
+                "doubleClick",
+                "typeText",
+                "hotkey",
+                "openApplication",
+                "focusWindow",
+                "waitForScreenChange",
+                "stop"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "allowed",
+            "requiresConfirmation",
+            "stopped",
+            "continuing"
+          ]
+        },
+        "stopReason": {
+          "type": "string",
+          "enum": [
+            "timeout",
+            "max_steps",
+            "scope_violation",
+            "blocked_action",
+            "failed_verification",
+            "uncertain",
+            "blockedByPrompt",
+            "user_cancel",
+            "session_already_stopped"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        },
+        "stepIndex": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "permissionDecision": {
+          "$ref": "#/$defs/permissionDecision"
+        },
+        "safetyDecision": {
+          "$ref": "#/$defs/safetyDecision"
+        },
+        "verificationStatus": {
+          "type": "string",
+          "enum": [
+            "success",
+            "failed",
+            "uncertain",
+            "blockedByPrompt",
+            "skipped"
+          ]
+        },
+        "continueAutomation": {
+          "type": "boolean"
+        },
+        "forwardToExecutor": {
+          "type": "boolean"
+        },
+        "timestamp": {
+          "type": "string"
         }
       },
       "additionalProperties": false

@@ -1046,3 +1046,22 @@ Branch: ralph/windows-port (continues from the completed Windows port — see ar
   - Do not continue scoped automation on `failed`, `uncertain`, or `blockedByPrompt`; stop and surface guidance instead.
   - Use `result.verificationRequired=false` as the explicit opt-out for actions where another result already proves completion.
 ---
+
+## 2026-06-15 20:55 CEST - US-019
+- Implemented deterministic scoped autopilot session policy in `hermes-clicky-plugin/scoped_autopilot.py`.
+- RED: `python3 -m unittest hermes-clicky-plugin/tests/test_scoped_autopilot.py -q` failed with `ModuleNotFoundError: No module named 'hermes_clicky_plugin_autopilot_tests.scoped_autopilot'`.
+- GREEN: `python3 -m unittest hermes-clicky-plugin/tests/test_scoped_autopilot.py -q` passed 6 tests.
+- Validation: `python3 -m unittest discover -s hermes-clicky-plugin/tests -q` passed 85 tests; `python3 hermes-clicky-plugin/scripts/validate_protocol.py` returned `ok: hermes-clicky-plugin validates`; `git diff --check` passed.
+- Files changed:
+  - NEW: `hermes-clicky-plugin/scoped_autopilot.py`
+  - NEW: `hermes-clicky-plugin/tests/test_scoped_autopilot.py`
+  - NEW: `hermes-clicky-plugin/protocol/examples/autopilot.allowed-step.json`
+  - MODIFIED: `hermes-clicky-plugin/protocol/schema.json`
+  - MODIFIED: `hermes-clicky-plugin/protocol/README.md`
+  - MODIFIED: `hermes-clicky-plugin/scripts/validate_protocol.py`
+  - MODIFIED: `hermes-clicky-plugin/README.md`
+  - MODIFIED: `prd.json`
+- **Learnings for future iterations:**
+  - Scoped autopilot should remain policy/session orchestration only in the Hermes plugin: it groups steps under `sessionId`, gates each proposal through permission and safety, and returns `forwardToExecutor` semantics without touching desktop APIs.
+  - Stop conditions should be explicit data (`timeout`, `max_steps`, `scope_violation`, `blocked_action`, verification failures, user cancel) so native bridge executors can stay dumb and deterministic.
+---
