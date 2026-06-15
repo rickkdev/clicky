@@ -115,6 +115,19 @@ Manual observe/explain/point smoke checklist: `../mac/docs/hermes-bridge-macos-s
 
 Manual action executor smoke checklist: `../mac/docs/hermes-bridge-action-executor-smoke.md`.
 
+End-to-end desktop task smoke fixtures are opt-in and documented here:
+
+- Windows: `../windows/docs/hermes-bridge-e2e-desktop-smoke.md`
+- macOS: `../mac/docs/hermes-bridge-e2e-desktop-smoke.md`
+
+Default CI validates their fake fixture contract with:
+
+```bash
+python3 -m unittest hermes-clicky-plugin/tests/test_desktop_smoke_fixtures.py -q
+```
+
+Real desktop runs require `CLICKY_RUN_DESKTOP_SMOKE=1`; they only use harmless Notepad/TextEdit workflows and must not perform purchases, credential entry, real messages, or destructive actions.
+
 ## macOS permissions
 
 `get_clicky_capabilities(platform="macos")` reports permission state without launching the native app:

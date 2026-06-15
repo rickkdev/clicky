@@ -1065,3 +1065,24 @@ Branch: ralph/windows-port (continues from the completed Windows port — see ar
   - Scoped autopilot should remain policy/session orchestration only in the Hermes plugin: it groups steps under `sessionId`, gates each proposal through permission and safety, and returns `forwardToExecutor` semantics without touching desktop APIs.
   - Stop conditions should be explicit data (`timeout`, `max_steps`, `scope_violation`, `blocked_action`, verification failures, user cancel) so native bridge executors can stay dumb and deterministic.
 ---
+
+
+## 2026-06-15 21:10 CEST - US-020
+- Added opt-in end-to-end desktop task smoke fixture metadata for harmless Windows Notepad and macOS TextEdit workflows: open app, focus window, click editor, type smoke text, verify expected text through post-action observation semantics.
+- Added CI-safe fake runner contract in `hermes-clicky-plugin/smoke_fixtures.py` and `hermes-clicky-plugin/scripts/run_desktop_smoke.py`; default runs never execute desktop actions and report `desktopActionsExecuted=false`.
+- Added Windows and macOS smoke docs with opt-in commands, safety exclusions, log locations, and baseline fake results. Real compositor/desktop automation remains explicit operator opt-in via `CLICKY_RUN_DESKTOP_SMOKE=1`.
+- RED: `python3 -m unittest hermes-clicky-plugin/tests/test_desktop_smoke_fixtures.py -v` failed with `FileNotFoundError: hermes-clicky-plugin/smoke_fixtures.py` before implementation.
+- GREEN: `python3 -m unittest hermes-clicky-plugin/tests/test_desktop_smoke_fixtures.py -v` passed 4 tests.
+- Validation: `python3 -m unittest discover -s hermes-clicky-plugin/tests -q` passed 89 tests; `python3 hermes-clicky-plugin/scripts/validate_protocol.py` returned ok; `python3 hermes-clicky-plugin/scripts/run_desktop_smoke.py --platform windows` and `--platform macos` both returned fake `status=passed`; `git diff --check` passed.
+- Files changed:
+  - NEW: `hermes-clicky-plugin/smoke_fixtures.py`
+  - NEW: `hermes-clicky-plugin/scripts/run_desktop_smoke.py`
+  - NEW: `hermes-clicky-plugin/tests/test_desktop_smoke_fixtures.py`
+  - NEW: `windows/docs/hermes-bridge-e2e-desktop-smoke.md`
+  - NEW: `mac/docs/hermes-bridge-e2e-desktop-smoke.md`
+  - MODIFIED: `hermes-clicky-plugin/README.md`
+  - MODIFIED: `prd.json`
+- **Learnings for future iterations:**
+  - End-to-end desktop automation smoke should be represented as deterministic fixture data plus opt-in native/manual runner docs; default CI must only prove the fixture contract with fake providers/executors.
+  - Keep smoke apps boring and local (`Notepad`, `TextEdit`) and explicitly ban purchases, credentials, real messages, and destructive actions.
+---

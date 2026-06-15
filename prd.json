@@ -353,8 +353,8 @@
         "Update progress.txt with baseline pass/fail results and known platform limitations."
       ],
       "priority": 20,
-      "passes": false,
-      "notes": "Keep normal CI deterministic. Real compositor and desktop automation checks should be explicit opt-in fixtures. Phase 2: do not start until plugin V1 observe/explain/point is working and demoed."
+      "passes": true,
+      "notes": "Completed with opt-in end-to-end desktop task smoke fixtures for Windows Notepad and macOS TextEdit. Added deterministic fake fixture contract in hermes-clicky-plugin/smoke_fixtures.py plus tests that prove default CI uses fake providers/executors and never executes desktop actions. Added docs for opt-in real runs, safety exclusions, commands, and log locations at windows/docs/hermes-bridge-e2e-desktop-smoke.md and mac/docs/hermes-bridge-e2e-desktop-smoke.md. Baseline fake results: Windows and macOS fixtures pass 5/5 steps with desktopActionsExecuted=false; real hardware runs remain operator opt-in."
     }
   ],
   "repoStrategy": {
