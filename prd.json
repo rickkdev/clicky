@@ -302,8 +302,8 @@
         "Add tests for redaction and record lifecycle ordering."
       ],
       "priority": 17,
-      "passes": false,
-      "notes": "This will be essential evidence when debugging automation failures. Phase 2: do not start until plugin V1 observe/explain/point is working and demoed."
+      "passes": true,
+      "notes": "Completed with hermes-clicky-plugin/audit_log.py append-only JSONL audit records for proposals, policy decisions, confirmations, executions, verification results, failures, and cancellations. Records include timestamp, requestId, user request/action/target summaries, decision/result, errorCategory, deterministic sequence ordering, default redaction for credentials and full typed text, disabled mode, minimized privacy mode, and documented Windows/macOS log locations. Tests: test_audit_log.py redaction, lifecycle ordering, disabled/minimized/location coverage."
     },
     {
       "id": "US-018",

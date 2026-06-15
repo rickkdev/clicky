@@ -998,3 +998,21 @@ Branch: ralph/windows-port (continues from the completed Windows port — see ar
   - Keep macOS desktop automation behind explicit Accessibility permission checks and fake executor seams; never let normal CI touch the real desktop.
   - System Events/AppleScript is acceptable for the first macOS executor, but semantic/native selectors should replace coordinate fallbacks where reliable.
 ---
+
+## 2026-06-15 - US-017
+- Implemented action audit logging for Hermes OS-control lifecycle records: proposals, policy decisions, confirmations, executions, verification results, failures, and cancellations.
+- RED: `python3 -m unittest hermes-clicky-plugin/tests/test_audit_log.py -q` failed with `ModuleNotFoundError: No module named 'hermes_clicky_plugin_audit_tests.audit_log'`.
+- GREEN: `python3 -m unittest hermes-clicky-plugin/tests/test_audit_log.py -q` passed 3 tests after adding `audit_log.py`.
+- Validation: `python3 -m unittest discover -s hermes-clicky-plugin/tests -q` passed 74 tests; `python3 hermes-clicky-plugin/scripts/validate_protocol.py` returned `ok: hermes-clicky-plugin validates`; `git diff --check` passed.
+- Files changed:
+  - NEW: `hermes-clicky-plugin/audit_log.py`
+  - NEW: `hermes-clicky-plugin/tests/test_audit_log.py`
+  - MODIFIED: `hermes-clicky-plugin/README.md`
+  - MODIFIED: `AGENTS.md`
+  - MODIFIED: `prd.json`
+  - MODIFIED: `progress.txt`
+- **Learnings for future iterations:**
+  - Keep audit records provider/platform-neutral and append-only JSONL; do not execute actions or capture screens from the logging layer.
+  - Redact `inputPreview` completely by default. Full typed content in logs is a footgun even when it does not match a credential keyword.
+  - Use `mode="minimized"` when only lifecycle/error evidence is needed without user/target summaries.
+---

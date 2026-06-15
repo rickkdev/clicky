@@ -160,3 +160,5 @@ Full demo notes and failure cases: `examples/demo_workflow.md`.
 - approved confirmations perform a fresh safety recheck before returning forwarding semantics; blocked rechecks set `forwardToExecutor=false`.
 - blocked safety decisions set `forwardToExecutor=false` and can append inert audit records, but they do not write logs or call an executor.
 - phase 2 os control execution is Windows-native only in `../windows/src/Clicky.Bridge/` for US-015. this package defines schema/docs only and does not execute click/type/open-app/hotkey/focus actions directly.
+- action audit logging is append-only JSONL in `audit_log.py`; records cover proposals, policy decisions, confirmations, executions, verification results, failures, and cancellations with sensitive text redacted by default.
+- audit logging supports `enabled=false` and `mode="minimized"` for privacy-sensitive environments. default native locations are Windows `%APPDATA%\\Clicky\\audit.jsonl` and macOS `~/Library/Application Support/Clicky/audit.jsonl`.
