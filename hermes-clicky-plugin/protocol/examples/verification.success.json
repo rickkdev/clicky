@@ -1,0 +1,15 @@
+{
+  "protocolVersion": "clicky.hermes.v1",
+  "ok": true,
+  "requestId": "req-verify-1",
+  "proposalId": "proposal-click-settings",
+  "actionType": "click",
+  "status": "success",
+  "reason": "expected_state_observed",
+  "expectedState": "settings dialog opened",
+  "observationSummary": "The settings dialog is visible after the click.",
+  "observationRan": true,
+  "continueAutomation": true,
+  "requiresUserGuidance": false,
+  "verifiedAt": "2026-06-15T18:30:00Z"
+}

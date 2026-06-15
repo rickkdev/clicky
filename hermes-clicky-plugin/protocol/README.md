@@ -279,6 +279,18 @@ execution result fields:
 - `completedAt`
 - `forwardedToExecutor`
 
+### post-action verification
+
+After an `executeAction` result with `status: executed`, the caller should run one fresh screen observation unless the execution result explicitly reports `result.verificationRequired: false`. Verification consumes provider-neutral observation flags and returns:
+
+- `status: success` when the expected state is observed.
+- `status: failed` for unchanged targets, unchanged screens, visible error dialogs, or app focus loss.
+- `status: blockedByPrompt` when a permission/security prompt appears.
+- `status: uncertain` when the screen changed but the expected state cannot be confirmed.
+- `status: skipped` when verification is explicitly unnecessary or the action did not execute.
+
+`failed`, `blockedByPrompt`, and `uncertain` set `continueAutomation: false`; `uncertain` also sets `requiresUserGuidance: true` so scoped automation stops instead of guessing.
+
 ## examples
 
 - `examples/capabilities.windows.json`
@@ -296,6 +308,8 @@ execution result fields:
 - `examples/confirmation.approved-rechecked.json`
 - `examples/confirmation.stale.json`
 - `examples/action.execution.executed.json`
+- `examples/verification.success.json`
+- `examples/verification.uncertain.json`
 
 validate:
 

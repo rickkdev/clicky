@@ -159,6 +159,7 @@ Full demo notes and failure cases: `examples/demo_workflow.md`.
 - confirmation UX is structured Hermes-facing state in `confirmation_state.py`; it builds concise redacted confirmation requests and handles approve/cancel/explain/stale responses without dialogs or execution.
 - approved confirmations perform a fresh safety recheck before returning forwarding semantics; blocked rechecks set `forwardToExecutor=false`.
 - blocked safety decisions set `forwardToExecutor=false` and can append inert audit records, but they do not write logs or call an executor.
-- phase 2 os control execution is Windows-native only in `../windows/src/Clicky.Bridge/` for US-015. this package defines schema/docs only and does not execute click/type/open-app/hotkey/focus actions directly.
+- phase 2 os control execution is native-backend only (`../windows/src/Clicky.Bridge/` and `../mac/hermes-clicky-bridge/`). this package defines schema/docs/helpers only and does not execute click/type/open-app/hotkey/focus actions directly.
 - action audit logging is append-only JSONL in `audit_log.py`; records cover proposals, policy decisions, confirmations, executions, verification results, failures, and cancellations with sensitive text redacted by default.
+- post-action verification lives in `post_action_verification.py`; it runs through an injected observation seam, classifies success/failed/uncertain/blockedByPrompt/skipped, and stops scoped automation on failed/uncertain/prompt outcomes.
 - audit logging supports `enabled=false` and `mode="minimized"` for privacy-sensitive environments. default native locations are Windows `%APPDATA%\\Clicky\\audit.jsonl` and macOS `~/Library/Application Support/Clicky/audit.jsonl`.

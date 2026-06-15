@@ -124,6 +124,22 @@ class ProtocolContractTests(unittest.TestCase):
         self.assertNotIn("wpf", forbidden)
         self.assertNotIn("win32", forbidden)
 
+    def test_post_action_verification_result_stops_uncertain_or_failed_automation(self):
+        self.assertIn("postActionVerificationResult", DEFS)
+        result = DEFS["postActionVerificationResult"]
+        self.assertEqual(set(result["properties"]["status"]["enum"]), {"success", "failed", "uncertain", "blockedByPrompt", "skipped"})
+        for field in ["protocolVersion", "proposalId", "actionType", "status", "reason", "observationRan", "continueAutomation", "requiresUserGuidance", "verifiedAt"]:
+            self.assertIn(field, result["required"])
+
+        examples = {p.name: json.loads(p.read_text(encoding="utf-8")) for p in (ROOT / "protocol" / "examples").glob("*.json")}
+        self.assertIn("verification.success.json", examples)
+        self.assertIn("verification.uncertain.json", examples)
+        self.assertEqual(examples["verification.success.json"]["status"], "success")
+        self.assertTrue(examples["verification.success.json"]["continueAutomation"])
+        self.assertEqual(examples["verification.uncertain.json"]["status"], "uncertain")
+        self.assertFalse(examples["verification.uncertain.json"]["continueAutomation"])
+        self.assertTrue(examples["verification.uncertain.json"]["requiresUserGuidance"])
+
     def test_protocol_does_not_leak_native_or_provider_internals(self):
         doc_path = ROOT / "protocol" / "README.md"
         doc_text = doc_path.read_text(encoding="utf-8") if doc_path.exists() else ""

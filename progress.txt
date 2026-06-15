@@ -1016,3 +1016,33 @@ Branch: ralph/windows-port (continues from the completed Windows port — see ar
   - Redact `inputPreview` completely by default. Full typed content in logs is a footgun even when it does not match a credential keyword.
   - Use `mode="minimized"` when only lifecycle/error evidence is needed without user/target summaries.
 ---
+
+
+## 2026-06-15 20:48 CEST - US-018
+- Implemented deterministic post-action verification for gated desktop automation in `hermes-clicky-plugin/post_action_verification.py`.
+- Verification runs through an injected observation seam after `status: executed` results unless `result.verificationRequired=false`; it never captures screens or executes desktop actions directly.
+- Classifies `success`, `failed`, `uncertain`, `blockedByPrompt`, and `skipped`; detects expected success, permission prompts, error dialogs, unchanged targets/screens, app focus loss, and changed-but-unverified uncertainty.
+- Failed, uncertain, and blocked-by-prompt results set `continueAutomation=false`; uncertain also sets `requiresUserGuidance=true` so scoped automation stops instead of guessing.
+- Extended protocol schema/docs/examples with `postActionVerificationResult`, `verification.success.json`, and `verification.uncertain.json`.
+- RED: `python3 -m unittest hermes-clicky-plugin/tests/test_post_action_verification.py -v` failed with `ModuleNotFoundError: No module named 'hermes_clicky_plugin_verification_tests.post_action_verification'` before implementation.
+- RED: `python3 -m unittest hermes-clicky-plugin/tests/test_protocol_contract.py -v` failed on missing `postActionVerificationResult` before schema/examples were added.
+- GREEN: `python3 -m unittest hermes-clicky-plugin/tests/test_protocol_contract.py hermes-clicky-plugin/tests/test_post_action_verification.py -v` passed 15 tests.
+- Validation: `python3 -m unittest discover -s hermes-clicky-plugin/tests -q` passed 79 tests; `python3 hermes-clicky-plugin/scripts/validate_protocol.py` returned ok; `git diff --check` passed.
+- Files changed:
+  - NEW: `hermes-clicky-plugin/post_action_verification.py`
+  - NEW: `hermes-clicky-plugin/tests/test_post_action_verification.py`
+  - NEW: `hermes-clicky-plugin/protocol/examples/verification.success.json`
+  - NEW: `hermes-clicky-plugin/protocol/examples/verification.uncertain.json`
+  - MODIFIED: `hermes-clicky-plugin/protocol/schema.json`
+  - MODIFIED: `hermes-clicky-plugin/protocol/README.md`
+  - MODIFIED: `hermes-clicky-plugin/README.md`
+  - MODIFIED: `hermes-clicky-plugin/scripts/validate_protocol.py`
+  - MODIFIED: `hermes-clicky-plugin/tests/test_protocol_contract.py`
+  - MODIFIED: `AGENTS.md`
+  - MODIFIED: `prd.json`
+  - MODIFIED: `progress.txt`
+- **Learnings for future iterations:**
+  - Post-action verification should stay separate from executors and consume provider-neutral observation summaries through injected fake/native seams.
+  - Do not continue scoped automation on `failed`, `uncertain`, or `blockedByPrompt`; stop and surface guidance instead.
+  - Use `result.verificationRequired=false` as the explicit opt-out for actions where another result already proves completion.
+---

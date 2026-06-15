@@ -319,8 +319,8 @@
         "Manual smoke test: click a known button and verify the next screen or dialog is detected."
       ],
       "priority": 18,
-      "passes": false,
-      "notes": "This turns OS control into a loop instead of blind input playback. Phase 2: do not start until plugin V1 observe/explain/point is working and demoed."
+      "passes": true,
+      "notes": "Completed in hermes-clicky-plugin/: added deterministic post_action_verification.py with an injected observation seam that runs after executed actions unless result.verificationRequired=false. It classifies success, failed, uncertain, blockedByPrompt, and skipped; detects expected success, permission prompts, error dialogs, unchanged targets/screens, app focus loss, and uncertain changed screens; failed/uncertain/prompt outcomes stop scoped automation and uncertain requests user guidance. Added postActionVerificationResult schema/examples and tests. No desktop capture or OS action execution was added to default tests."
     },
     {
       "id": "US-019",

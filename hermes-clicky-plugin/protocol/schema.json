@@ -44,6 +44,9 @@
       "$ref": "#/$defs/actionExecutionResult"
     },
     {
+      "$ref": "#/$defs/postActionVerificationResult"
+    },
+    {
       "$ref": "#/$defs/errorResponse"
     }
   ],
@@ -1140,6 +1143,79 @@
         },
         "forwardedToExecutor": {
           "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "postActionVerificationResult": {
+      "type": "object",
+      "description": "provider-neutral post-action verification result from a fresh observation; uncertain/failed/prompt statuses stop scoped automation and request guidance when needed",
+      "required": [
+        "protocolVersion",
+        "ok",
+        "proposalId",
+        "actionType",
+        "status",
+        "reason",
+        "observationRan",
+        "continueAutomation",
+        "requiresUserGuidance",
+        "verifiedAt"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": "clicky.hermes.v1"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "proposalId": {
+          "type": "string"
+        },
+        "actionType": {
+          "type": "string",
+          "enum": [
+            "click",
+            "doubleClick",
+            "typeText",
+            "hotkey",
+            "openApplication",
+            "focusWindow"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "success",
+            "failed",
+            "uncertain",
+            "blockedByPrompt",
+            "skipped"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        },
+        "expectedState": {
+          "type": "string"
+        },
+        "observationSummary": {
+          "type": "string"
+        },
+        "observationRan": {
+          "type": "boolean"
+        },
+        "continueAutomation": {
+          "type": "boolean"
+        },
+        "requiresUserGuidance": {
+          "type": "boolean"
+        },
+        "verifiedAt": {
+          "type": "string"
+        },
+        "ok": {
+          "const": true
         }
       },
       "additionalProperties": false

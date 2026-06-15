@@ -47,6 +47,8 @@ def validate_python_syntax() -> None:
         ROOT / "permission_policy.py",
         ROOT / "safety_policy.py",
         ROOT / "confirmation_state.py",
+        ROOT / "audit_log.py",
+        ROOT / "post_action_verification.py",
     ]:
         try:
             ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -158,6 +160,9 @@ def validate_protocol_json() -> None:
         "safetyDecision",
         "confirmationRequest",
         "confirmationResponse",
+        "actionExecutionRequest",
+        "actionExecutionResult",
+        "postActionVerificationResult",
     ]:
         if name not in defs:
             fail(f"protocol/schema.json missing {name}")
@@ -187,6 +192,9 @@ def validate_protocol_json() -> None:
         "confirmation.cancelled.json",
         "confirmation.approved-rechecked.json",
         "confirmation.stale.json",
+        "action.execution.executed.json",
+        "verification.success.json",
+        "verification.uncertain.json",
     ]:
         if not (ROOT / "protocol" / "examples" / required).exists():
             fail(f"missing required example {required}")
