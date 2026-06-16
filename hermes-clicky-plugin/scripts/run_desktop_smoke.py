@@ -24,7 +24,21 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="run Clicky Hermes desktop smoke fixture metadata")
     parser.add_argument("--platform", choices=["windows", "macos"], required=True)
     parser.add_argument("--real", action="store_true", help="require CLICKY_RUN_DESKTOP_SMOKE=1 and return native-runner instructions")
+    parser.add_argument("--macos-youtube-url", help="emit a deterministic macOS Chrome→YouTube executeAction smoke plan; does not execute desktop actions")
     args = parser.parse_args()
+
+    if args.macos_youtube_url:
+        if args.platform != "macos":
+            print(json.dumps({"status": "blocked", "reason": "--macos-youtube-url requires --platform macos", "desktopActionsExecuted": False}, indent=2))
+            return 2
+        print(json.dumps({
+            "platform": "macos",
+            "fixture": "chrome-youtube-execute-action",
+            "status": "planned",
+            "desktopActionsExecuted": False,
+            "steps": smoke_fixtures.build_macos_youtube_action_smoke_steps(args.macos_youtube_url),
+        }, indent=2, sort_keys=True))
+        return 0
 
     if args.real and os.environ.get(smoke_fixtures.OPT_IN_ENV) != "1":
         print(json.dumps({

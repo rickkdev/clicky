@@ -1,4 +1,6 @@
 import importlib.util
+import json
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -55,6 +57,44 @@ class DesktopTaskSmokeFixtureTests(unittest.TestCase):
             self.assertFalse(result["desktopActionsExecuted"])
             self.assertEqual(result["stepsPassed"], 5)
             self.assertEqual(result["verification"]["status"], "success")
+
+    def test_macos_youtube_action_smoke_builds_safe_clicky_execute_steps(self):
+        steps = self.smoke.build_macos_youtube_action_smoke_steps("https://www.youtube.com/watch?v=pAgnJDJN4VA")
+
+        self.assertEqual([step["method"] for step in steps], ["clicky.executeAction", "clicky.executeAction", "clicky.executeAction", "clicky.executeAction"])
+        proposals = [step["params"]["proposal"] for step in steps]
+        self.assertEqual([proposal["actionType"] for proposal in proposals], ["openApplication", "hotkey", "typeText", "hotkey"])
+        self.assertEqual(proposals[0]["application"], "Google Chrome")
+        self.assertEqual(proposals[1]["hotkey"], ["cmd", "l"])
+        self.assertEqual(proposals[2]["inputPreview"], "https://www.youtube.com/watch?v=pAgnJDJN4VA")
+        self.assertEqual(proposals[3]["hotkey"], ["enter"])
+        for step in steps:
+            params = step["params"]
+            proposal = params["proposal"]
+            self.assertFalse(proposal["requiresConfirmation"])
+            self.assertEqual(params["permissionDecision"]["decision"], "allow")
+            self.assertEqual(params["safetyDecision"]["proposalId"], proposal["id"])
+            self.assertTrue(params["safetyDecision"]["forwardToExecutor"])
+
+    def test_macos_youtube_action_smoke_rejects_non_youtube_url(self):
+        with self.assertRaises(ValueError):
+            self.smoke.build_macos_youtube_action_smoke_steps("https://example.com")
+
+    def test_run_desktop_smoke_emits_macos_youtube_plan_without_executing_actions(self):
+        completed = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "run_desktop_smoke.py"), "--platform", "macos", "--macos-youtube-url", "https://www.youtube.com/watch?v=pAgnJDJN4VA"],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=5,
+            check=False,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        result = json.loads(completed.stdout)
+        self.assertEqual(result["status"], "planned")
+        self.assertFalse(result["desktopActionsExecuted"])
+        self.assertEqual(result["steps"][3]["params"]["proposal"]["hotkey"], ["enter"])
 
     def test_smoke_docs_document_opt_in_commands_and_log_locations(self):
         docs = [

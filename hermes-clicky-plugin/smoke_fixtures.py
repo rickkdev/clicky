@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from typing import Any, Mapping
+from urllib.parse import urlparse
 
 OPT_IN_ENV = "CLICKY_RUN_DESKTOP_SMOKE"
 PROHIBITED_ACTIONS = ["destructiveActions", "networkPurchases", "realAccountMessages", "credentialEntry"]
@@ -74,6 +75,43 @@ def get_fixture(platform: str) -> dict[str, Any]:
     if key not in _FIXTURES:
         raise ValueError(f"unsupported smoke fixture platform: {platform}")
     return deepcopy(_FIXTURES[key])
+
+
+def _execute_step(step_id: str, action_type: str, **proposal_fields: Any) -> dict[str, Any]:
+    proposal = {
+        "id": step_id,
+        "actionType": action_type,
+        "requiresConfirmation": False,
+        **proposal_fields,
+    }
+    return {
+        "method": "clicky.executeAction",
+        "params": {
+            "proposal": proposal,
+            "permissionDecision": {"actionType": action_type, "decision": "allow"},
+            "safetyDecision": {"proposalId": step_id, "actionType": action_type, "decision": "allow", "forwardToExecutor": True},
+        },
+    }
+
+
+def build_macos_youtube_action_smoke_steps(url: str) -> list[dict[str, Any]]:
+    """Build deterministic macOS bridge requests for the Chrome→YouTube smoke.
+
+    This only builds requests; it does not execute desktop actions. The URL is
+    constrained to YouTube so the smoke cannot be repurposed into arbitrary web
+    navigation by accident.
+    """
+
+    parsed = urlparse(url)
+    host = parsed.netloc.lower()
+    if parsed.scheme != "https" or host not in {"www.youtube.com", "youtube.com", "youtu.be"}:
+        raise ValueError("macOS YouTube smoke requires an https YouTube URL")
+    return [
+        _execute_step("macos-youtube-open-chrome", "openApplication", application="Google Chrome", targetLabel="Google Chrome"),
+        _execute_step("macos-youtube-focus-address", "hotkey", hotkey=["cmd", "l"], targetLabel="Chrome address bar"),
+        _execute_step("macos-youtube-type-url", "typeText", inputPreview=url, targetLabel="Chrome address bar"),
+        _execute_step("macos-youtube-enter", "hotkey", hotkey=["enter"], targetLabel="Chrome address bar"),
+    ]
 
 
 def run_fixture(platform: str, env: Mapping[str, str] | None = None) -> dict[str, Any]:

@@ -127,6 +127,12 @@ Quick macOS native-action smoke after reloading Hermes:
 3. Type a YouTube URL or search text with `execute_clicky_action` (`typeText`).
 4. Press Enter with `execute_clicky_action` (`hotkey`, key `enter`). The previous Enter issue is fixed by macOS key-code handling.
 
+To emit the same smoke as a deterministic non-executing plan:
+
+```bash
+python3 scripts/run_desktop_smoke.py --platform macos --macos-youtube-url 'https://www.youtube.com/watch?v=pAgnJDJN4VA'
+```
+
 Leave `CLICKY_BRIDGE_COMMAND` unset to use the repo-local macOS bridge auto-detect path, or set it explicitly to override auto-detection.
 
 End-to-end desktop task smoke fixtures are opt-in and documented here:
