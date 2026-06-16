@@ -37,7 +37,7 @@ canonical schema:
 - confirmation copy must be concise and must not expose raw rationale, input previews, credentials, or internal reasoning.
 - approved confirmations are safety-rechecked immediately before a future executor could receive them; if the recheck blocks, `forwardToExecutor=false`.
 - cancelled and stale confirmations produce inert audit events only.
-- `executeAction` is Windows-native only in US-015 and returns structured execution results.
+- `executeAction` is exposed to Hermes as `execute_clicky_action` and returns structured execution results from the native bridge.
 - execution requests must include the original proposal plus permission, safety, and, when required, confirmation gate results.
 - execution results are provider-neutral and must not include raw typed credential text or native UI framework internals.
 

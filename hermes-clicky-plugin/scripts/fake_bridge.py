@@ -111,6 +111,23 @@ def point_to_target(params: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def execute_action(params: dict[str, Any]) -> dict[str, Any]:
+    action_type = str(params.get("actionType") or "").strip()
+    if not action_type:
+        raise BridgeProtocolError("invalid_request", "actionType is required", retryable=False)
+    return {
+        "protocolVersion": PROTOCOL_VERSION,
+        "ok": True,
+        "status": "executed",
+        "proposalId": params.get("proposalId") or "fake-action-001",
+        "actionType": action_type,
+        "target": params.get("target"),
+        "reason": params.get("reason") or "deterministic fake bridge action",
+        "result": {"verificationRequired": action_type not in {"openApplication", "focusWindow"}},
+        "forwardedToExecutor": True,
+    }
+
+
 class BridgeProtocolError(Exception):
     def __init__(self, code: str, message: str, *, retryable: bool = False, permission: str | None = None):
         super().__init__(message)
@@ -123,6 +140,7 @@ ROUTES = {
     "clicky.observeScreen": observe_screen,
     "clicky.explainScreen": explain_screen,
     "clicky.pointToTarget": point_to_target,
+    "clicky.executeAction": execute_action,
 }
 
 

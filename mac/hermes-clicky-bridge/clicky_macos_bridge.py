@@ -403,8 +403,12 @@ def run_hotkey(proposal: dict[str, Any]) -> None:
     key = str(hotkey[-1]).lower()
     modifiers = [str(item).lower() for item in hotkey[:-1]]
     modifier_map = {"command": "command down", "cmd": "command down", "control": "control down", "ctrl": "control down", "option": "option down", "alt": "option down", "shift": "shift down"}
+    key_code_map = {"enter": 36, "return": 36, "tab": 48, "escape": 53, "esc": 53, "space": 49, "delete": 51, "backspace": 51}
     using = [modifier_map[item] for item in modifiers if item in modifier_map]
     suffix = " using {" + ", ".join(using) + "}" if using else ""
+    if key in key_code_map:
+        run_osascript([f'tell application "System Events" to key code {key_code_map[key]}{suffix}'])
+        return
     run_osascript([f'tell application "System Events" to keystroke "{key}"{suffix}'])
 
 

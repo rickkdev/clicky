@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import subprocess
+import sys
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 
@@ -36,10 +39,22 @@ class BridgeConfig:
 
     @staticmethod
     def from_env() -> "BridgeConfig":
+        command = os.getenv("CLICKY_BRIDGE_COMMAND") or _default_bridge_command()
         return BridgeConfig(
-            command=os.getenv("CLICKY_BRIDGE_COMMAND"),
+            command=command,
             timeout_seconds=int(os.getenv("CLICKY_BRIDGE_TIMEOUT", "30")),
         )
+
+
+def _default_bridge_command() -> str | None:
+    """return a repo-local bridge command when it is safe to infer one."""
+    if platform.system() != "Darwin":
+        return None
+    plugin_root = Path(__file__).resolve().parent
+    candidate = plugin_root.parent / "mac" / "hermes-clicky-bridge" / "clicky_macos_bridge.py"
+    if not candidate.exists():
+        return None
+    return f"{sys.executable} {candidate}"
 
 
 class ClickyBridgeClient:

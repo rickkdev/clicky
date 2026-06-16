@@ -1,12 +1,13 @@
 name: hermes-clicky-plugin
 version: 0.1.0
-description: Hermes plugin adapter for Clicky screen observation, explanation, pointing, and overlay guidance.
+description: Hermes plugin adapter for Clicky screen observation, explanation, pointing, overlay guidance, and gated native OS actions/control.
 author: Rick / Clicky contributors
 provides_tools:
   - get_clicky_capabilities
   - observe_clicky_screen
   - explain_clicky_screen
   - point_clicky_target
+  - execute_clicky_action
 platforms:
   windows:
     supported: true

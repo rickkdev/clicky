@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -55,6 +56,7 @@ class PluginSkeletonTests(unittest.TestCase):
             "observe_clicky_screen",
             "explain_clicky_screen",
             "point_clicky_target",
+            "execute_clicky_action",
         ]:
             self.assertIn(tool_name, text)
 
@@ -63,7 +65,7 @@ class PluginSkeletonTests(unittest.TestCase):
         self.assertIn("macos", text)
         self.assertIn("unsupported", text)
 
-    def test_register_adds_four_clicky_tools_with_schemas_and_handlers(self):
+    def test_register_adds_clicky_tools_with_schemas_and_handlers(self):
         plugin = load_plugin_package()
         ctx = FakeHermesContext()
 
@@ -77,6 +79,7 @@ class PluginSkeletonTests(unittest.TestCase):
                 "observe_clicky_screen",
                 "explain_clicky_screen",
                 "point_clicky_target",
+                "execute_clicky_action",
             ],
         )
         for tool in ctx.registered:
@@ -120,6 +123,140 @@ class PluginSkeletonTests(unittest.TestCase):
         self.assertEqual(captured["params"]["task"], "explain the dialog")
         self.assertEqual(captured["params"]["observationId"], "obs-123")
         self.assertEqual(captured["params"]["screenId"], "display-1")
+
+
+    def test_execute_action_tool_routes_safe_action_request_to_bridge(self):
+        plugin = load_plugin_package()
+        captured = {}
+
+        def fake_bridge(method, params):
+            captured["method"] = method
+            captured["params"] = params
+            return {"protocolVersion": "clicky.hermes.v1", "ok": True, "status": "executed", "actionType": "openApplication"}
+
+        plugin.tools._bridge_or_error = fake_bridge
+
+        result = json.loads(plugin.tools.execute_clicky_action({
+            "actionType": "openApplication",
+            "target": "Google Chrome",
+            "reason": "open youtube for the user",
+            "confirmationApproved": True,
+        }))
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(captured["method"], "clicky.executeAction")
+        self.assertEqual(captured["params"]["proposal"]["actionType"], "openApplication")
+        self.assertEqual(captured["params"]["proposal"]["application"], "Google Chrome")
+        self.assertEqual(captured["params"]["permissionDecision"]["decision"], "allow")
+        self.assertTrue(captured["params"]["safetyDecision"]["forwardToExecutor"])
+
+    def test_execute_action_tool_adds_verification_required_hook_after_execution(self):
+        plugin = load_plugin_package()
+
+        def fake_bridge(method, params):
+            return {
+                "protocolVersion": "clicky.hermes.v1",
+                "ok": True,
+                "status": "executed",
+                "proposalId": params["proposal"]["id"],
+                "actionType": params["proposal"]["actionType"],
+            }
+
+        plugin.tools._bridge_or_error = fake_bridge
+
+        result = json.loads(plugin.tools.execute_clicky_action({
+            "proposalId": "proposal-verify-hook",
+            "actionType": "openApplication",
+            "target": "Calendar",
+            "expectedState": "Calendar app is frontmost",
+        }))
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["status"], "executed")
+        self.assertTrue(result["verificationRequired"])
+        self.assertEqual(result["verificationStatus"], "required")
+        self.assertEqual(result["postActionVerification"]["status"], "required")
+        self.assertEqual(result["postActionVerification"]["expectedState"], "Calendar app is frontmost")
+        self.assertTrue(result["postActionVerification"]["observationRequired"])
+
+    def test_execute_action_tool_runs_supplied_post_action_observation_deterministically(self):
+        plugin = load_plugin_package()
+
+        def fake_bridge(method, params):
+            return {
+                "protocolVersion": "clicky.hermes.v1",
+                "ok": True,
+                "status": "executed",
+                "proposalId": params["proposal"]["id"],
+                "actionType": params["proposal"]["actionType"],
+            }
+
+        plugin.tools._bridge_or_error = fake_bridge
+
+        result = json.loads(plugin.tools.execute_clicky_action({
+            "proposalId": "proposal-verified",
+            "actionType": "openApplication",
+            "target": "Calendar",
+            "expectedState": "Calendar app is frontmost",
+            "postActionObservation": {
+                "matchedExpectedState": True,
+                "screenChanged": True,
+                "summary": "Calendar app is visible and frontmost",
+            },
+        }))
+
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["verificationRequired"])
+        self.assertEqual(result["verificationStatus"], "success")
+        verification = result["postActionVerificationResult"]
+        self.assertEqual(verification["status"], "success")
+        self.assertTrue(verification["observationRan"])
+        self.assertTrue(verification["continueAutomation"])
+
+    def test_execute_action_tool_writes_privacy_preserving_execution_and_verification_audit(self):
+        plugin = load_plugin_package()
+
+        def fake_bridge(method, params):
+            return {
+                "protocolVersion": "clicky.hermes.v1",
+                "ok": True,
+                "status": "executed",
+                "proposalId": params["proposal"]["id"],
+                "actionType": params["proposal"]["actionType"],
+            }
+
+        plugin.tools._bridge_or_error = fake_bridge
+
+        with tempfile.TemporaryDirectory() as tmp:
+            audit_path = Path(tmp) / "audit.jsonl"
+            result = json.loads(plugin.tools.execute_clicky_action({
+                "proposalId": "proposal-audit",
+                "actionType": "typeText",
+                "target": "Login password field",
+                "text": "password=hunter2",
+                "expectedState": "masked password dots appear",
+                "postActionObservation": {"matchedExpectedState": True, "screenChanged": True},
+                "auditLogPath": str(audit_path),
+            }))
+
+            self.assertEqual(result["verificationStatus"], "success")
+            rows = [json.loads(line) for line in audit_path.read_text(encoding="utf-8").splitlines()]
+
+        self.assertEqual([row["event"] for row in rows], ["execution", "verification"])
+        self.assertEqual([row["requestId"] for row in rows], ["proposal-audit", "proposal-audit"])
+        dumped = json.dumps(rows).lower()
+        self.assertNotIn("hunter2", dumped)
+        self.assertNotIn("password=", dumped)
+        self.assertIn("[redacted]", dumped)
+
+    def test_execute_action_tool_rejects_missing_action_type_before_bridge(self):
+        plugin = load_plugin_package()
+
+        result = json.loads(plugin.tools.execute_clicky_action({"target": "Google Chrome"}))
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status"], "invalid_request")
+        self.assertEqual(result["error"]["code"], "missing_action_type")
 
     def test_tool_handlers_do_not_make_ad_hoc_subprocess_calls(self):
         tools_text = (ROOT / "tools.py").read_text(encoding="utf-8")

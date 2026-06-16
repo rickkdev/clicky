@@ -45,6 +45,9 @@ restart hermes. the plugin should register these tools:
 - `observe_clicky_screen`
 - `explain_clicky_screen`
 - `point_clicky_target`
+- `execute_clicky_action`
+
+If Hermes was already running before this tool existed, reload the plugin or start a new Hermes session. Hermes caches tool schemas for a session, so `execute_clicky_action` will not appear until the plugin schema is reloaded.
 
 ## current state
 
@@ -99,11 +102,13 @@ native side:
 
 ## macOS bridge
 
-Configure Hermes to use the macOS stdio bridge:
+Configure Hermes to use the macOS stdio bridge explicitly:
 
 ```bash
 export CLICKY_BRIDGE_COMMAND="python3 /Users/rick81/clicky/mac/hermes-clicky-bridge/clicky_macos_bridge.py"
 ```
+
+When the plugin is loaded from this repo on macOS, it also auto-detects `../mac/hermes-clicky-bridge/clicky_macos_bridge.py` if `CLICKY_BRIDGE_COMMAND` is unset. Explicit env config still wins.
 
 The macOS bridge supports `getCapabilities`, `observeScreen`, `explainScreen`, `pointToTarget`, and gated `executeAction` through the shared protocol. It does not launch the tray app. Explanation, pointing, and action execution expose deterministic env seams for tests/smoke before touching real desktop APIs:
 
@@ -114,6 +119,15 @@ The macOS bridge supports `getCapabilities`, `observeScreen`, `explainScreen`, `
 Manual observe/explain/point smoke checklist: `../mac/docs/hermes-bridge-macos-smoke.md`.
 
 Manual action executor smoke checklist: `../mac/docs/hermes-bridge-action-executor-smoke.md`.
+
+Quick macOS native-action smoke after reloading Hermes:
+
+1. Open Chrome with `execute_clicky_action` (`openApplication`, app name `Google Chrome` or `Chrome`).
+2. Press `cmd+l` with `execute_clicky_action` (`hotkey`).
+3. Type a YouTube URL or search text with `execute_clicky_action` (`typeText`).
+4. Press Enter with `execute_clicky_action` (`hotkey`, key `enter`). The previous Enter issue is fixed by macOS key-code handling.
+
+Leave `CLICKY_BRIDGE_COMMAND` unset to use the repo-local macOS bridge auto-detect path, or set it explicitly to override auto-detection.
 
 End-to-end desktop task smoke fixtures are opt-in and documented here:
 
@@ -133,8 +147,8 @@ Real desktop runs require `CLICKY_RUN_DESKTOP_SMOKE=1`; they only use harmless N
 `get_clicky_capabilities(platform="macos")` reports permission state without launching the native app:
 
 - Screen Recording gates screen capture, observe, explain, and point.
-- Accessibility gates overlay rendering and any future OS-control path.
-- OS control remains disabled with `phase_2_not_implemented` even when Accessibility is granted.
+- Accessibility gates overlay rendering and native OS-control actions.
+- `execute_clicky_action` forwards gated actions to the native bridge; blocked, unconfirmed, or unsafe requests are not executed.
 
 Enable permissions manually in System Settings:
 

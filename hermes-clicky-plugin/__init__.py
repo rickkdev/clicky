@@ -33,3 +33,9 @@ def register(ctx):
         schema=schemas.POINT_CLICKY_TARGET,
         handler=tools.point_clicky_target,
     )
+    ctx.register_tool(
+        name="execute_clicky_action",
+        toolset="clicky",
+        schema=schemas.EXECUTE_CLICKY_ACTION,
+        handler=tools.execute_clicky_action,
+    )

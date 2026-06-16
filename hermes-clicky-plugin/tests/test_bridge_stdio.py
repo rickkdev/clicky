@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import unittest
@@ -83,6 +84,21 @@ class ClickyBridgeClientStdioTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, "bridge_invalid_json")
         self.assertTrue(raised.exception.retryable)
 
+    def test_from_env_autodetects_repo_local_macos_bridge_on_darwin(self):
+        original_env = os.environ.pop("CLICKY_BRIDGE_COMMAND", None)
+        original_platform = self.bridge_client.platform.system
+        try:
+            self.bridge_client.platform.system = lambda: "Darwin"
+
+            config = self.bridge_client.BridgeConfig.from_env()
+
+            self.assertIsNotNone(config.command)
+            self.assertIn("mac/hermes-clicky-bridge/clicky_macos_bridge.py", config.command)
+        finally:
+            self.bridge_client.platform.system = original_platform
+            if original_env is not None:
+                os.environ["CLICKY_BRIDGE_COMMAND"] = original_env
+
 
 class FakeBridgeRouterTests(unittest.TestCase):
     def bridge_roundtrip(self, method, params=None):
@@ -140,6 +156,29 @@ class FakeBridgeRouterTests(unittest.TestCase):
         self.assertEqual(result["status"], "pointed")
         self.assertEqual(result["target"], "settings")
         self.assertFalse(result["overlayRendered"])
+
+
+    def test_clicky_execute_action_route_works(self):
+        response = self.bridge_roundtrip("clicky.executeAction", {
+            "actionType": "openApplication",
+            "target": "Google Chrome",
+            "reason": "open youtube for the user",
+            "confirmationApproved": True,
+        })
+
+        result = response["result"]
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["status"], "executed")
+        self.assertEqual(result["actionType"], "openApplication")
+        self.assertEqual(result["target"], "Google Chrome")
+        self.assertTrue(result["forwardedToExecutor"])
+
+    def test_clicky_execute_action_rejects_missing_action_type(self):
+        response = self.bridge_roundtrip("clicky.executeAction", {"target": "Google Chrome"})
+
+        error = response["error"]
+        self.assertEqual(error["code"], "invalid_request")
+        self.assertIn("actionType", error["message"])
 
     def test_unknown_method_returns_structured_protocol_error(self):
         response = self.bridge_roundtrip("clicky.nope")

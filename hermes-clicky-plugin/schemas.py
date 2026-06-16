@@ -97,3 +97,52 @@ POINT_CLICKY_TARGET = {
         "required": ["target"],
     },
 }
+
+
+EXECUTE_CLICKY_ACTION = {
+    "name": "execute_clicky_action",
+    "description": "Ask Clicky to execute a permissioned native desktop action such as opening an app, focusing a window, pressing a hotkey, typing text, or clicking. Use only after checking capabilities and when the user has requested desktop control.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "actionType": {
+                "type": "string",
+                "enum": ["openApplication", "focusWindow", "hotkey", "typeText", "click", "doubleClick"],
+                "description": "Native action to execute.",
+            },
+            "target": {"type": "string", "description": "Application/window/control target."},
+            "text": {"type": "string", "description": "Text to type for typeText actions. Avoid secrets."},
+            "inputPreview": {"type": "string", "description": "Alias for text/input preview for typeText actions. Avoid secrets."},
+            "keys": {"type": "array", "items": {"type": "string"}, "description": "Keys/modifiers for hotkey actions."},
+            "hotkey": {"type": "array", "items": {"type": "string"}, "description": "Alias for keys/modifiers for hotkey actions."},
+            "position": {
+                "type": "object",
+                "properties": {
+                    "x": {"type": "number"},
+                    "y": {"type": "number"},
+                    "displayId": {"type": "string"},
+                },
+                "description": "Optional position for click actions.",
+            },
+            "reason": {"type": "string", "description": "Short user-facing reason for the action."},
+            "confirmationApproved": {"type": "boolean", "description": "Whether confirmation was approved.", "default": False},
+            "expectedState": {"type": "string", "description": "Optional deterministic hint describing the expected screen/app state after execution."},
+            "postActionObservation": {
+                "type": "object",
+                "description": "Optional already-collected observation to verify after execution. The tool does not capture the screen itself.",
+                "properties": {
+                    "matchedExpectedState": {"type": "boolean"},
+                    "screenChanged": {"type": "boolean"},
+                    "permissionPromptVisible": {"type": "boolean"},
+                    "errorDialogVisible": {"type": "boolean"},
+                    "targetStillUnchanged": {"type": "boolean"},
+                    "appLostFocus": {"type": "boolean"},
+                    "summary": {"type": "string"},
+                    "explanation": {"type": "string"},
+                },
+            },
+            "auditLogPath": {"type": "string", "description": "Optional JSONL path for privacy-preserving execution/verification audit records."},
+        },
+        "required": ["actionType"],
+    },
+}
