@@ -2,6 +2,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -80,6 +81,34 @@ class DesktopTaskSmokeFixtureTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.smoke.build_macos_youtube_action_smoke_steps("https://example.com")
 
+    def test_macos_youtube_action_smoke_executes_only_when_opted_in_with_bridge(self):
+        calls = []
+
+        def fake_bridge_call(method, params):
+            calls.append({"method": method, "params": params})
+            return {"protocolVersion": "clicky.hermes.v1", "ok": True, "status": "executed", "proposalId": params["proposal"]["id"], "actionType": params["proposal"]["actionType"]}
+
+        result = self.smoke.run_macos_youtube_action_smoke(
+            "https://www.youtube.com/watch?v=pAgnJDJN4VA",
+            env={"CLICKY_RUN_DESKTOP_SMOKE": "1"},
+            bridge_call=fake_bridge_call,
+        )
+
+        self.assertEqual(result["status"], "passed")
+        self.assertTrue(result["desktopActionsExecuted"])
+        self.assertEqual(result["stepsExecuted"], 4)
+        self.assertEqual([call["params"]["proposal"]["actionType"] for call in calls], ["openApplication", "hotkey", "typeText", "hotkey"])
+
+    def test_macos_youtube_action_smoke_blocks_without_opt_in(self):
+        result = self.smoke.run_macos_youtube_action_smoke(
+            "https://www.youtube.com/watch?v=pAgnJDJN4VA",
+            env={},
+            bridge_call=lambda method, params: self.fail("bridge must not be called without opt-in"),
+        )
+
+        self.assertEqual(result["status"], "blocked")
+        self.assertFalse(result["desktopActionsExecuted"])
+
     def test_run_desktop_smoke_emits_macos_youtube_plan_without_executing_actions(self):
         completed = subprocess.run(
             [sys.executable, str(ROOT / "scripts" / "run_desktop_smoke.py"), "--platform", "macos", "--macos-youtube-url", "https://www.youtube.com/watch?v=pAgnJDJN4VA"],
@@ -95,6 +124,33 @@ class DesktopTaskSmokeFixtureTests(unittest.TestCase):
         self.assertEqual(result["status"], "planned")
         self.assertFalse(result["desktopActionsExecuted"])
         self.assertEqual(result["steps"][3]["params"]["proposal"]["hotkey"], ["enter"])
+
+    def test_run_desktop_smoke_real_macos_youtube_uses_fake_bridge_command_when_opted_in(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as handle:
+            handle.write(
+                "#!/usr/bin/env python3\n"
+                "import json, sys\n"
+                "req=json.loads(sys.stdin.readline())\n"
+                "proposal=req['params']['proposal']\n"
+                "print(json.dumps({'jsonrpc':'2.0','id':req['id'],'result':{'protocolVersion':'clicky.hermes.v1','ok':True,'status':'executed','proposalId':proposal['id'],'actionType':proposal['actionType']}}), flush=True)\n"
+            )
+            bridge = handle.name
+        Path(bridge).chmod(0o755)
+        completed = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "run_desktop_smoke.py"), "--platform", "macos", "--real", "--macos-youtube-url", "https://www.youtube.com/watch?v=pAgnJDJN4VA"],
+            env={"CLICKY_RUN_DESKTOP_SMOKE": "1", "CLICKY_BRIDGE_COMMAND": f"{sys.executable} {bridge}"},
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=5,
+            check=False,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        result = json.loads(completed.stdout)
+        self.assertEqual(result["status"], "passed")
+        self.assertTrue(result["desktopActionsExecuted"])
+        self.assertEqual(result["stepsExecuted"], 4)
 
     def test_smoke_docs_document_opt_in_commands_and_log_locations(self):
         docs = [

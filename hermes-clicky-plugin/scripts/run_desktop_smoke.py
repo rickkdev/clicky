@@ -31,6 +31,13 @@ def main() -> int:
         if args.platform != "macos":
             print(json.dumps({"status": "blocked", "reason": "--macos-youtube-url requires --platform macos", "desktopActionsExecuted": False}, indent=2))
             return 2
+        if args.real:
+            if os.environ.get(smoke_fixtures.OPT_IN_ENV) != "1":
+                print(json.dumps({"status": "blocked", "reason": "real macOS YouTube smoke requires CLICKY_RUN_DESKTOP_SMOKE=1", "desktopActionsExecuted": False}, indent=2))
+                return 2
+            result = smoke_fixtures.run_macos_youtube_action_smoke(args.macos_youtube_url, env=os.environ)
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 0 if result["status"] == "passed" else 1
         print(json.dumps({
             "platform": "macos",
             "fixture": "chrome-youtube-execute-action",

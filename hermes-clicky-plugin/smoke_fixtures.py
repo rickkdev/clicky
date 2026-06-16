@@ -7,8 +7,13 @@ with CLICKY_RUN_DESKTOP_SMOKE=1 and a platform bridge command by the operator.
 
 from __future__ import annotations
 
+import json
+import os
+import shlex
+import subprocess
+import sys
 from copy import deepcopy
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 from urllib.parse import urlparse
 
 OPT_IN_ENV = "CLICKY_RUN_DESKTOP_SMOKE"
@@ -112,6 +117,53 @@ def build_macos_youtube_action_smoke_steps(url: str) -> list[dict[str, Any]]:
         _execute_step("macos-youtube-type-url", "typeText", inputPreview=url, targetLabel="Chrome address bar"),
         _execute_step("macos-youtube-enter", "hotkey", hotkey=["enter"], targetLabel="Chrome address bar"),
     ]
+
+
+BridgeCall = Callable[[str, dict[str, Any]], dict[str, Any]]
+
+
+def _default_bridge_call(command: str) -> BridgeCall:
+    argv = shlex.split(command)
+
+    def call(method: str, params: dict[str, Any]) -> dict[str, Any]:
+        request = {"jsonrpc": "2.0", "id": params["proposal"]["id"], "method": method, "params": params}
+        completed = subprocess.run(
+            argv,
+            input=json.dumps(request) + "\n",
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=15,
+            check=False,
+        )
+        if completed.returncode != 0:
+            return {"ok": False, "status": "bridge_error", "error": {"message": completed.stderr.strip()}}
+        response = json.loads(completed.stdout)
+        if "error" in response:
+            return {"ok": False, "status": response["error"].get("code", "bridge_error"), "error": response["error"]}
+        return response["result"]
+
+    return call
+
+
+def run_macos_youtube_action_smoke(url: str, env: Mapping[str, str] | None = None, bridge_call: BridgeCall | None = None) -> dict[str, Any]:
+    env = env or {}
+    if env.get(OPT_IN_ENV) != "1":
+        return {"platform": "macos", "fixture": "chrome-youtube-execute-action", "status": "blocked", "reason": f"requires {OPT_IN_ENV}=1", "desktopActionsExecuted": False}
+    steps = build_macos_youtube_action_smoke_steps(url)
+    if bridge_call is None:
+        bridge_command = env.get("CLICKY_BRIDGE_COMMAND") or os.environ.get("CLICKY_BRIDGE_COMMAND")
+        if not bridge_command:
+            repo_bridge = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "mac", "hermes-clicky-bridge", "clicky_macos_bridge.py"))
+            bridge_command = f"{sys.executable} {repo_bridge}"
+        bridge_call = _default_bridge_call(bridge_command)
+    results = []
+    for step in steps:
+        result = bridge_call(step["method"], step["params"])
+        results.append(result)
+        if not result.get("ok") or result.get("status") != "executed":
+            return {"platform": "macos", "fixture": "chrome-youtube-execute-action", "status": "failed", "desktopActionsExecuted": True, "stepsExecuted": len(results), "results": results}
+    return {"platform": "macos", "fixture": "chrome-youtube-execute-action", "status": "passed", "desktopActionsExecuted": True, "stepsExecuted": len(results), "results": results}
 
 
 def run_fixture(platform: str, env: Mapping[str, str] | None = None) -> dict[str, Any]:

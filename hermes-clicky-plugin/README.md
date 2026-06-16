@@ -133,6 +133,14 @@ To emit the same smoke as a deterministic non-executing plan:
 python3 scripts/run_desktop_smoke.py --platform macos --macos-youtube-url 'https://www.youtube.com/watch?v=pAgnJDJN4VA'
 ```
 
+To actually execute it through the macOS bridge, opt in explicitly:
+
+```bash
+CLICKY_RUN_DESKTOP_SMOKE=1 python3 scripts/run_desktop_smoke.py --platform macos --real --macos-youtube-url 'https://www.youtube.com/watch?v=pAgnJDJN4VA'
+```
+
+This is intentionally guarded. Without `CLICKY_RUN_DESKTOP_SMOKE=1`, no desktop actions run.
+
 Leave `CLICKY_BRIDGE_COMMAND` unset to use the repo-local macOS bridge auto-detect path, or set it explicitly to override auto-detection.
 
 End-to-end desktop task smoke fixtures are opt-in and documented here:
