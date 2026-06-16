@@ -177,7 +177,7 @@ class MacOSBridgeStdioTests(unittest.TestCase):
         self.assertFalse(result["forwardedToExecutor"])
 
     def test_execute_action_routes_allowed_actions_through_fake_executor(self):
-        for action_type in ["click", "doubleClick", "typeText", "hotkey", "openApplication", "focusWindow"]:
+        for action_type in ["click", "doubleClick", "typeText", "hotkey", "openApplication", "focusWindow", "openUrl"]:
             with self.subTest(action_type=action_type):
                 response = self.bridge_roundtrip(
                     "clicky.executeAction",
@@ -214,6 +214,9 @@ def execution_request(action_type, permission_decision="allow", requires_confirm
         proposal["application"] = "TextEdit"
     if action_type == "focusWindow":
         proposal["nativeSelector"] = {"kind": "windowTitle", "value": "Untitled"}
+    if action_type == "openUrl":
+        proposal["url"] = "https://www.youtube.com/watch?v=pAgnJDJN4VA"
+        proposal["browser"] = "Google Chrome"
     return {
         "proposal": proposal,
         "permissionDecision": {

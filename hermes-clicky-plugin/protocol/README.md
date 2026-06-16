@@ -177,6 +177,7 @@ proposal action types:
 - `typeText`
 - `hotkey`
 - `openApplication`
+- `openUrl`
 - `focusWindow`
 - `waitForScreenChange`
 - `stop`
@@ -256,6 +257,7 @@ Rules:
 - `typeText`
 - `hotkey`
 - `openApplication`
+- `openUrl`
 - `focusWindow`
 
 request rules:

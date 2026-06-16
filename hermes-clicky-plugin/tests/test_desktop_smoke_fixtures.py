@@ -62,13 +62,11 @@ class DesktopTaskSmokeFixtureTests(unittest.TestCase):
     def test_macos_youtube_action_smoke_builds_safe_clicky_execute_steps(self):
         steps = self.smoke.build_macos_youtube_action_smoke_steps("https://www.youtube.com/watch?v=pAgnJDJN4VA")
 
-        self.assertEqual([step["method"] for step in steps], ["clicky.executeAction", "clicky.executeAction", "clicky.executeAction", "clicky.executeAction"])
+        self.assertEqual([step["method"] for step in steps], ["clicky.executeAction"])
         proposals = [step["params"]["proposal"] for step in steps]
-        self.assertEqual([proposal["actionType"] for proposal in proposals], ["openApplication", "hotkey", "typeText", "hotkey"])
-        self.assertEqual(proposals[0]["application"], "Google Chrome")
-        self.assertEqual(proposals[1]["hotkey"], ["cmd", "l"])
-        self.assertEqual(proposals[2]["inputPreview"], "https://www.youtube.com/watch?v=pAgnJDJN4VA")
-        self.assertEqual(proposals[3]["hotkey"], ["enter"])
+        self.assertEqual([proposal["actionType"] for proposal in proposals], ["openUrl"])
+        self.assertEqual(proposals[0]["url"], "https://www.youtube.com/watch?v=pAgnJDJN4VA")
+        self.assertEqual(proposals[0]["browser"], "Google Chrome")
         for step in steps:
             params = step["params"]
             proposal = params["proposal"]
@@ -96,8 +94,8 @@ class DesktopTaskSmokeFixtureTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "passed")
         self.assertTrue(result["desktopActionsExecuted"])
-        self.assertEqual(result["stepsExecuted"], 4)
-        self.assertEqual([call["params"]["proposal"]["actionType"] for call in calls], ["openApplication", "hotkey", "typeText", "hotkey"])
+        self.assertEqual(result["stepsExecuted"], 1)
+        self.assertEqual([call["params"]["proposal"]["actionType"] for call in calls], ["openUrl"])
 
     def test_macos_youtube_action_smoke_blocks_without_opt_in(self):
         result = self.smoke.run_macos_youtube_action_smoke(
@@ -123,7 +121,7 @@ class DesktopTaskSmokeFixtureTests(unittest.TestCase):
         result = json.loads(completed.stdout)
         self.assertEqual(result["status"], "planned")
         self.assertFalse(result["desktopActionsExecuted"])
-        self.assertEqual(result["steps"][3]["params"]["proposal"]["hotkey"], ["enter"])
+        self.assertEqual(result["steps"][0]["params"]["proposal"]["actionType"], "openUrl")
 
     def test_run_desktop_smoke_real_macos_youtube_uses_fake_bridge_command_when_opted_in(self):
         with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as handle:
@@ -150,7 +148,7 @@ class DesktopTaskSmokeFixtureTests(unittest.TestCase):
         result = json.loads(completed.stdout)
         self.assertEqual(result["status"], "passed")
         self.assertTrue(result["desktopActionsExecuted"])
-        self.assertEqual(result["stepsExecuted"], 4)
+        self.assertEqual(result["stepsExecuted"], 1)
 
     def test_smoke_docs_document_opt_in_commands_and_log_locations(self):
         docs = [

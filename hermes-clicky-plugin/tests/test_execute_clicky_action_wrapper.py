@@ -66,6 +66,22 @@ class ExecuteClickyActionWrapperTests(unittest.TestCase):
         self.assertEqual(params["proposal"]["application"], "Google Chrome")
         self.assertEqual(params["proposal"]["targetLabel"], "Google Chrome")
 
+    def test_open_url_builds_native_proposal_url_and_optional_browser(self):
+        params = self.execute({"actionType": "openUrl", "url": "https://www.youtube.com/watch?v=pAgnJDJN4VA", "browser": "Google Chrome"})
+
+        self.assert_common_native_gate_params(params, "openUrl")
+        self.assertEqual(params["proposal"]["url"], "https://www.youtube.com/watch?v=pAgnJDJN4VA")
+        self.assertEqual(params["proposal"]["browser"], "Google Chrome")
+        self.assertEqual(params["proposal"]["targetLabel"], "https://www.youtube.com/watch?v=pAgnJDJN4VA")
+
+    def test_open_url_rejects_non_https_url_before_bridge(self):
+        result = json.loads(self.plugin.tools.execute_clicky_action({"actionType": "openUrl", "url": "file:///etc/passwd"}))
+
+        self.assertFalse(self.bridge_called)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status"], "invalid_request")
+        self.assertEqual(result["error"]["code"], "invalid_url")
+
     def test_type_text_builds_native_proposal_input_preview(self):
         params = self.execute({"actionType": "typeText", "text": "hello world"})
 
@@ -128,6 +144,9 @@ class ExecuteClickyActionWrapperTests(unittest.TestCase):
         self.assertIn("hotkey", properties)
         self.assertIn("text", properties)
         self.assertIn("inputPreview", properties)
+        self.assertIn("url", properties)
+        self.assertIn("browser", properties)
+        self.assertIn("openUrl", properties["actionType"]["enum"])
         self.assertEqual(properties["hotkey"]["type"], "array")
         self.assertEqual(properties["inputPreview"]["type"], "string")
 

@@ -66,6 +66,7 @@ class ProtocolContractTests(unittest.TestCase):
                 "typeText",
                 "hotkey",
                 "openApplication",
+                "openUrl",
                 "focusWindow",
                 "waitForScreenChange",
                 "stop",

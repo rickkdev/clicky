@@ -652,6 +652,7 @@
             "typeText",
             "hotkey",
             "openApplication",
+            "openUrl",
             "focusWindow",
             "waitForScreenChange",
             "stop"
@@ -702,6 +703,13 @@
           "minItems": 1
         },
         "application": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "browser": {
           "type": "string"
         },
         "waitCondition": {
@@ -817,6 +825,7 @@
             "typeText",
             "hotkey",
             "openApplication",
+            "openUrl",
             "focusWindow",
             "waitForScreenChange",
             "stop"
@@ -867,6 +876,7 @@
             "typeText",
             "hotkey",
             "openApplication",
+            "openUrl",
             "focusWindow",
             "waitForScreenChange",
             "stop"
@@ -1128,6 +1138,7 @@
             "typeText",
             "hotkey",
             "openApplication",
+            "openUrl",
             "focusWindow"
           ]
         },
@@ -1183,6 +1194,7 @@
             "typeText",
             "hotkey",
             "openApplication",
+            "openUrl",
             "focusWindow"
           ]
         },
@@ -1267,6 +1279,7 @@
                 "typeText",
                 "hotkey",
                 "openApplication",
+                "openUrl",
                 "focusWindow",
                 "waitForScreenChange",
                 "stop"

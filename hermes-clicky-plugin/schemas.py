@@ -107,10 +107,12 @@ EXECUTE_CLICKY_ACTION = {
         "properties": {
             "actionType": {
                 "type": "string",
-                "enum": ["openApplication", "focusWindow", "hotkey", "typeText", "click", "doubleClick"],
+                "enum": ["openApplication", "focusWindow", "openUrl", "hotkey", "typeText", "click", "doubleClick"],
                 "description": "Native action to execute.",
             },
             "target": {"type": "string", "description": "Application/window/control target."},
+            "url": {"type": "string", "description": "HTTPS URL to open for openUrl actions."},
+            "browser": {"type": "string", "description": "Optional browser/app name for openUrl actions, e.g. Google Chrome."},
             "text": {"type": "string", "description": "Text to type for typeText actions. Avoid secrets."},
             "inputPreview": {"type": "string", "description": "Alias for text/input preview for typeText actions. Avoid secrets."},
             "keys": {"type": "array", "items": {"type": "string"}, "description": "Keys/modifiers for hotkey actions."},

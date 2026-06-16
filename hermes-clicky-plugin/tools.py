@@ -6,6 +6,7 @@ import json
 import platform as platform_module
 import uuid
 from typing import Any
+from urllib.parse import urlparse
 
 from . import macos_capabilities
 from .audit_log import ActionAuditLog
@@ -19,7 +20,7 @@ def _json(data: dict[str, Any]) -> str:
 
 
 SUPPORTED_PLATFORMS = ("windows", "macos")
-SUPPORTED_EXECUTE_ACTION_TYPES = {"openApplication", "focusWindow", "hotkey", "typeText", "click", "doubleClick"}
+SUPPORTED_EXECUTE_ACTION_TYPES = {"openApplication", "focusWindow", "hotkey", "typeText", "click", "doubleClick", "openUrl"}
 
 def _platform_name(requested: str | None = None) -> str:
     if requested and requested != "auto":
@@ -160,8 +161,14 @@ def execute_clicky_action(args: dict, **kwargs) -> str:
     if action_type not in SUPPORTED_EXECUTE_ACTION_TYPES:
         return _json({"protocolVersion": "clicky.hermes.v1", "ok": False, "status": "invalid_request", "error": {"code": "invalid_action_type", "message": f"unsupported actionType: {action_type}", "retryable": False}})
 
+    if action_type == "openUrl":
+        url = str(args.get("url") or args.get("target") or "").strip()
+        parsed_url = urlparse(url)
+        if parsed_url.scheme != "https" or not parsed_url.netloc:
+            return _json({"protocolVersion": "clicky.hermes.v1", "ok": False, "status": "invalid_request", "error": {"code": "invalid_url", "message": "openUrl requires an https URL", "retryable": False}})
+
     proposal_id = str(args.get("proposalId") or f"hermes-action-{uuid.uuid4().hex[:12]}")
-    target = str(args.get("target") or "").strip()
+    target = str(args.get("target") or args.get("url") or "").strip()
     proposal: dict[str, Any] = {
         "id": proposal_id,
         "actionType": action_type,
@@ -172,6 +179,10 @@ def execute_clicky_action(args: dict, **kwargs) -> str:
         proposal["reason"] = args.get("reason")
     if action_type == "openApplication" and target:
         proposal["application"] = target
+    if action_type == "openUrl":
+        proposal["url"] = str(args.get("url") or target)
+        if args.get("browser"):
+            proposal["browser"] = str(args.get("browser"))
     if action_type == "typeText":
         proposal["inputPreview"] = str(args.get("text") or args.get("inputPreview") or "")
     if action_type == "hotkey":

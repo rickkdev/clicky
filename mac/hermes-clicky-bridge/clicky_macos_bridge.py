@@ -17,6 +17,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 PROTOCOL_VERSION = "clicky.hermes.v1"
 
@@ -254,7 +255,7 @@ def point_to_target(params: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-SUPPORTED_ACTIONS = {"click", "doubleClick", "typeText", "hotkey", "openApplication", "focusWindow"}
+SUPPORTED_ACTIONS = {"click", "doubleClick", "typeText", "hotkey", "openApplication", "focusWindow", "openUrl"}
 
 
 def timestamp() -> str:
@@ -375,6 +376,17 @@ def run_action_executor(proposal: dict[str, Any]) -> dict[str, Any]:
         if not app:
             raise BridgeProtocolError("invalid_request", "application is required", retryable=False)
         subprocess.run(["/usr/bin/open", "-a", app], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+    elif action_type == "openUrl":
+        url = str(proposal.get("url") or proposal.get("targetLabel") or "").strip()
+        parsed = urlparse(url)
+        if parsed.scheme != "https" or not parsed.netloc:
+            raise BridgeProtocolError("invalid_request", "openUrl requires an https URL", retryable=False)
+        browser = str(proposal.get("browser") or proposal.get("application") or "").strip()
+        command = ["/usr/bin/open"]
+        if browser:
+            command.extend(["-a", browser])
+        command.append(url)
+        subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
     elif action_type == "focusWindow":
         selector = proposal.get("nativeSelector") or {}
         title = str(selector.get("value") or proposal.get("targetLabel") or "").replace('"', '\\"')

@@ -112,10 +112,7 @@ def build_macos_youtube_action_smoke_steps(url: str) -> list[dict[str, Any]]:
     if parsed.scheme != "https" or host not in {"www.youtube.com", "youtube.com", "youtu.be"}:
         raise ValueError("macOS YouTube smoke requires an https YouTube URL")
     return [
-        _execute_step("macos-youtube-open-chrome", "openApplication", application="Google Chrome", targetLabel="Google Chrome"),
-        _execute_step("macos-youtube-focus-address", "hotkey", hotkey=["cmd", "l"], targetLabel="Chrome address bar"),
-        _execute_step("macos-youtube-type-url", "typeText", inputPreview=url, targetLabel="Chrome address bar"),
-        _execute_step("macos-youtube-enter", "hotkey", hotkey=["enter"], targetLabel="Chrome address bar"),
+        _execute_step("macos-youtube-open-url", "openUrl", url=url, browser="Google Chrome", targetLabel=url),
     ]
 
 
